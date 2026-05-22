@@ -984,6 +984,7 @@ function getScheduleContext(event: SlackMessageEvent) {
     ownerUserId: event.user,
     channel: event.channel,
     threadTs: event.thread_ts ?? event.ts,
+    sourceTs: event.ts,
     mentionedChannels: extractMentionedChannels(event.text)
   };
 }

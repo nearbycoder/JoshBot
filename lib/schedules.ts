@@ -26,6 +26,7 @@ export type SlackScheduleContext = {
   ownerUserId: string;
   channel: string;
   threadTs: string;
+  sourceTs: string;
   mentionedChannels: Array<{
     id: string;
     name?: string;
@@ -115,10 +116,17 @@ type ParsedSchedule =
       firstRunAt: Date;
     };
 
+type CreatedScheduleToolResult = {
+  id: string;
+  summary: string;
+  nextRunAt: string | null;
+};
+
 const SCHEDULE_DUE_KEY = "schedules:due";
 const SCHEDULE_JOB_PREFIX = "schedules:job:";
 const SCHEDULE_USER_PREFIX = "schedules:user:";
 const DEFAULT_SCHEDULER_INTERVAL_MS = 30_000;
+const DEFAULT_SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS = 60 * 10;
 const MAX_DUE_JOBS_PER_TICK = 10;
 const MIN_INTERVAL_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -199,13 +207,30 @@ export async function createScheduleFromTool(
 ) {
   const parsed = scheduleToolInputToParsedSchedule(input);
   const destination = getScheduleDestination(context, input);
-  const schedule = await createSchedule(context, parsed, destination);
+  const idempotencyResult = await getIdempotentCreatedSchedule(context);
 
-  return {
+  if (idempotencyResult.status === "exists") {
+    return idempotencyResult.schedule;
+  }
+
+  if (idempotencyResult.status === "locked") {
+    return {
+      id: idempotencyResult.lockedId,
+      summary: "Schedule creation is already in progress for this Slack message.",
+      nextRunAt: null
+    };
+  }
+
+  const schedule = await createSchedule(context, parsed, destination);
+  const result = {
     id: schedule.id,
     summary: formatScheduleSummary(schedule),
     nextRunAt: schedule.nextRunAt
   };
+
+  await saveIdempotentCreatedSchedule(context, result);
+
+  return result;
 }
 
 export async function listSchedulesFromTool(context: SlackScheduleContext) {
@@ -285,6 +310,55 @@ async function createSchedule(
   await redis.sAdd(getScheduleUserKey(schedule.ownerUserId), id);
 
   return schedule;
+}
+
+async function getIdempotentCreatedSchedule(context: SlackScheduleContext): Promise<
+  | { status: "ready" }
+  | { status: "exists"; schedule: CreatedScheduleToolResult }
+  | { status: "locked"; lockedId: string }
+> {
+  const redis = await requireRedis();
+  const resultKey = getScheduleCreateResultKey(context);
+  const existingResult = await redis.get(resultKey);
+
+  if (existingResult) {
+    return {
+      status: "exists",
+      schedule: JSON.parse(existingResult) as CreatedScheduleToolResult
+    };
+  }
+
+  const lockedId = randomUUID();
+  const lockResult = await redis.set(getScheduleCreateLockKey(context), lockedId, {
+    condition: "NX",
+    expiration: {
+      type: "EX",
+      value: getScheduleCreateIdempotencyTtlSeconds()
+    }
+  });
+
+  if (lockResult === "OK") {
+    return { status: "ready" };
+  }
+
+  return {
+    status: "locked",
+    lockedId
+  };
+}
+
+async function saveIdempotentCreatedSchedule(
+  context: SlackScheduleContext,
+  result: CreatedScheduleToolResult
+) {
+  const redis = await requireRedis();
+
+  await redis.set(getScheduleCreateResultKey(context), JSON.stringify(result), {
+    expiration: {
+      type: "EX",
+      value: getScheduleCreateIdempotencyTtlSeconds()
+    }
+  });
 }
 
 function getScheduleDestination(
@@ -819,12 +893,31 @@ function getScheduleUserKey(userId: string) {
   return `${SCHEDULE_USER_PREFIX}${userId}`;
 }
 
+function getScheduleCreateLockKey(context: SlackScheduleContext) {
+  return `schedules:create-lock:${context.ownerUserId}:${context.channel}:${context.threadTs}:${context.sourceTs}`;
+}
+
+function getScheduleCreateResultKey(context: SlackScheduleContext) {
+  return `schedules:create-result:${context.ownerUserId}:${context.channel}:${context.threadTs}:${context.sourceTs}`;
+}
+
 function getSchedulerIntervalMs() {
   const rawValue = process.env.SCHEDULER_INTERVAL_MS;
   const parsedValue = Number(rawValue);
 
   if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 5_000) {
     return DEFAULT_SCHEDULER_INTERVAL_MS;
+  }
+
+  return parsedValue;
+}
+
+function getScheduleCreateIdempotencyTtlSeconds() {
+  const rawValue = process.env.SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 60) {
+    return DEFAULT_SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS;
   }
 
   return parsedValue;
