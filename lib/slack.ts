@@ -315,7 +315,7 @@ async function loadSlackThread({
   });
 
   const botUserId = process.env.SLACK_BOT_USER_ID;
-  const rawThreadMessages = await Promise.all(
+  const rawThreadMessages: Array<CachedThreadMessage | null> = await Promise.all(
     response.messages.map(async (message) => {
       const normalizedContent = await buildSlackMessageContent(token, {
         text: message.text,
@@ -329,12 +329,14 @@ async function loadSlackThread({
       const isAssistantMessage =
         Boolean(message.bot_id) || (botUserId ? message.user === botUserId : false);
 
-      return {
+      const cachedMessage: CachedThreadMessage = {
         role: isAssistantMessage ? "assistant" : "user",
         content: normalizedContent,
         ts: message.ts,
         userId: isAssistantMessage ? undefined : message.user
       };
+
+      return cachedMessage;
     })
   );
   const threadMessages = trimThreadContext(
