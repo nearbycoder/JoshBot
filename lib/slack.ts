@@ -1,7 +1,13 @@
 import crypto from "node:crypto";
 import { type ModelMessage } from "ai";
-import { createSlackReply } from "./ai.js";
+import { createSlackReplyWithMemory } from "./ai.js";
 import { requireEnv } from "./env.js";
+import {
+  addUserMemory,
+  clearUserMemories,
+  getUserMemories,
+  removeUserMemory
+} from "./memory.js";
 import { getRedisClient } from "./redis.js";
 
 type SlackHeaders = Headers | Record<string, string | string[] | undefined>;
@@ -84,6 +90,27 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   const threadTs = event.thread_ts ?? event.ts;
   const incomingMessage = createCachedUserMessage(event);
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
+  const commandReply = await maybeHandleMemoryCommand(event);
+
+  if (commandReply) {
+    const postedReply = await postSlackMessage({
+      token,
+      channel: event.channel,
+      threadTs,
+      text: commandReply
+    });
+
+    await saveCachedThreadMessages(
+      event.channel,
+      threadTs,
+      appendCachedThreadMessage(threadMessages, {
+        role: "assistant",
+        content: commandReply,
+        ts: postedReply.ts
+      })
+    );
+    return;
+  }
 
   try {
     if (event.thread_ts && event.thread_ts !== event.ts) {
@@ -98,7 +125,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
     console.warn("Falling back to current Slack event text:", error);
   }
 
-  const reply = await createSlackReply(toModelMessages(threadMessages));
+  const memories = event.user ? await getUserMemories(event.user) : [];
+  const reply = await createSlackReplyWithMemory(toModelMessages(threadMessages), memories);
 
   if (!reply) {
     return;
@@ -129,6 +157,29 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
 
   const token = requireEnv("SLACK_BOT_TOKEN");
   const incomingMessage = createCachedUserMessage(event);
+  const commandReply = await maybeHandleMemoryCommand(event);
+  const minimalThreadMessages = [incomingMessage];
+
+  if (commandReply) {
+    const postedReply = await postSlackMessage({
+      token,
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      text: commandReply
+    });
+
+    await saveCachedThreadMessages(
+      event.channel,
+      event.thread_ts,
+      appendCachedThreadMessage(minimalThreadMessages, {
+        role: "assistant",
+        content: commandReply,
+        ts: postedReply.ts
+      })
+    );
+    return;
+  }
+
   const { threadMessages, hasAssistantReply } = await loadThreadMessagesForReply({
     token,
     channel: event.channel,
@@ -140,7 +191,8 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     return;
   }
 
-  const reply = await createSlackReply(toModelMessages(threadMessages));
+  const memories = event.user ? await getUserMemories(event.user) : [];
+  const reply = await createSlackReplyWithMemory(toModelMessages(threadMessages), memories);
 
   if (!reply) {
     return;
@@ -308,6 +360,67 @@ async function slackApi<T extends { ok: boolean }>({
   }
 
   return payload as Extract<T, { ok: true }>;
+}
+
+async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
+  if (!event.user) {
+    return null;
+  }
+
+  const text = stripSlackFormatting(event.text);
+  const trimmed = text.trim();
+
+  const rememberMatch = trimmed.match(/^remember(?:\s+that)?\s+(.+)$/i);
+  if (rememberMatch) {
+    const result = await addUserMemory(event.user, rememberMatch[1] ?? "");
+
+    if (!result.ok) {
+      return `Couldn't save that memory: ${result.reason}`;
+    }
+
+    if (result.status === "exists") {
+      return "I already had that in memory.";
+    }
+
+    return "Saved to memory.";
+  }
+
+  const forgetMatch = trimmed.match(/^forget(?:\s+that)?\s+(.+)$/i);
+  if (forgetMatch) {
+    const result = await removeUserMemory(event.user, forgetMatch[1] ?? "");
+
+    if (!result.ok) {
+      return `Couldn't update memory: ${result.reason}`;
+    }
+
+    if (result.status === "missing") {
+      return "I didn't have that in memory.";
+    }
+
+    return "Removed from memory.";
+  }
+
+  if (/^(show|list)\s+(my\s+)?memory$/i.test(trimmed) || /^what do you remember about me\??$/i.test(trimmed)) {
+    const memories = await getUserMemories(event.user);
+
+    if (memories.length === 0) {
+      return "I don't have any saved memory for you yet.";
+    }
+
+    return `Here's what I remember:\n${memories.map((memory) => `- ${memory}`).join("\n")}`;
+  }
+
+  if (/^(clear|reset)\s+(my\s+)?memory$/i.test(trimmed) || /^forget everything$/i.test(trimmed)) {
+    const result = await clearUserMemories(event.user);
+
+    if (!result.ok) {
+      return `Couldn't clear memory: ${result.reason}`;
+    }
+
+    return "Cleared your saved memory.";
+  }
+
+  return null;
 }
 
 function createCachedUserMessage(event: SlackMessageEvent): CachedThreadMessage {

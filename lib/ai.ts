@@ -33,9 +33,18 @@ function getModel() {
 }
 
 export async function createSlackReply(messages: ModelMessage[]) {
+  return createSlackReplyWithMemory(messages, []);
+}
+
+export async function createSlackReplyWithMemory(
+  messages: ModelMessage[],
+  memories: string[]
+) {
   const result = await generateText({
     model: getModel(),
     system: `${SYSTEM_PROMPT}
+
+${formatMemoryPrompt(memories)}
 
 Extra Slack rules:
 - Reply in plain text only.
@@ -52,6 +61,17 @@ Extra Slack rules:
   });
 
   return normalizeSlackMrkdwn(result.text.trim());
+}
+
+function formatMemoryPrompt(memories: string[]) {
+  if (memories.length === 0) {
+    return "";
+  }
+
+  return `Known persistent user memory:
+${memories.map((memory) => `- ${memory}`).join("\n")}
+
+Use these memories only when relevant. Do not invent new memories. Do not mention this memory list unless it helps answer the user.`;
 }
 
 function createExaSearchTool() {
