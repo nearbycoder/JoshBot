@@ -64,6 +64,7 @@ Create a Slack app and configure:
   - `app_mentions:read`
   - `chat:write`
   - `channels:history` for thread context in public channels
+  - `files:read` so uploaded attachment metadata and previews can be passed into the model
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
 

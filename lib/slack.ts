@@ -18,6 +18,7 @@ type SlackReply = {
   user?: string;
   bot_id?: string;
   subtype?: string;
+  files?: SlackFile[];
 };
 
 type SlackApiSuccess<T> = T & { ok: true };
@@ -39,6 +40,7 @@ type SlackMessageEvent = {
   user?: string;
   bot_id?: string;
   subtype?: string;
+  files?: SlackFile[];
 };
 
 type CachedThreadMessage = {
@@ -47,6 +49,31 @@ type CachedThreadMessage = {
   ts?: string;
   userId?: string;
 };
+
+type SlackFile = {
+  id: string;
+  mode?: string;
+  file_access?: string;
+  title?: string;
+  name?: string;
+  mimetype?: string;
+  filetype?: string;
+  pretty_type?: string;
+  preview?: string;
+  preview_plain_text?: string;
+  plain_text?: string;
+  contents?: string;
+  alt_txt?: string;
+  permalink?: string;
+  external_url?: string | null;
+  initial_comment?: {
+    comment?: string;
+  };
+};
+
+type SlackFileInfoResponse =
+  | SlackApiSuccess<{ file: SlackFile }>
+  | SlackApiFailure;
 
 const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
 const DEFAULT_REDIS_THREAD_TTL_SECONDS = 60 * 60 * 24 * 7;
@@ -89,7 +116,7 @@ export function isDirectMentionToBot(text: string) {
 export async function respondToSlackMention(event: SlackMessageEvent) {
   const token = requireEnv("SLACK_BOT_TOKEN");
   const threadTs = event.thread_ts ?? event.ts;
-  const incomingMessage = createCachedUserMessage(event);
+  const incomingMessage = await createCachedUserMessage(token, event);
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
   const commandReply = await maybeHandleMemoryCommand(event);
 
@@ -161,7 +188,7 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   }
 
   const token = requireEnv("SLACK_BOT_TOKEN");
-  const incomingMessage = createCachedUserMessage(event);
+  const incomingMessage = await createCachedUserMessage(token, event);
   const commandReply = await maybeHandleMemoryCommand(event);
   const minimalThreadMessages = [incomingMessage];
 
@@ -288,25 +315,30 @@ async function loadSlackThread({
   });
 
   const botUserId = process.env.SLACK_BOT_USER_ID;
+  const rawThreadMessages = await Promise.all(
+    response.messages.map(async (message) => {
+      const normalizedContent = await buildSlackMessageContent(token, {
+        text: message.text,
+        files: message.files
+      });
+
+      if (!normalizedContent) {
+        return null;
+      }
+
+      const isAssistantMessage =
+        Boolean(message.bot_id) || (botUserId ? message.user === botUserId : false);
+
+      return {
+        role: isAssistantMessage ? "assistant" : "user",
+        content: normalizedContent,
+        ts: message.ts,
+        userId: isAssistantMessage ? undefined : message.user
+      };
+    })
+  );
   const threadMessages = trimThreadContext(
-    response.messages
-      .map<CachedThreadMessage | null>((message) => {
-        const cleanedText = stripSlackFormatting(message.text).trim();
-        if (!cleanedText) {
-          return null;
-        }
-
-        const isAssistantMessage =
-          Boolean(message.bot_id) || (botUserId ? message.user === botUserId : false);
-
-        return {
-          role: isAssistantMessage ? "assistant" : "user",
-          content: cleanedText,
-          ts: message.ts,
-          userId: isAssistantMessage ? undefined : message.user
-        };
-      })
-      .filter((message): message is CachedThreadMessage => message !== null)
+    rawThreadMessages.filter((message): message is CachedThreadMessage => message !== null)
   );
 
   return {
@@ -433,10 +465,10 @@ async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
   return null;
 }
 
-function createCachedUserMessage(event: SlackMessageEvent): CachedThreadMessage {
+async function createCachedUserMessage(token: string, event: SlackMessageEvent): Promise<CachedThreadMessage> {
   return {
     role: "user",
-    content: stripSlackFormatting(event.text),
+    content: await buildSlackMessageContent(token, event),
     ts: event.ts,
     userId: event.user
   };
@@ -467,11 +499,78 @@ function stripSlackFormatting(input: string) {
   );
 }
 
+async function buildSlackMessageContent(
+  token: string,
+  message: {
+    text?: string;
+    files?: SlackFile[];
+  }
+) {
+  const text = stripSlackFormatting(message.text ?? "");
+  const files = await enrichSlackFiles(token, message.files ?? []);
+  const fileContext = files.map(formatSlackFileForModel).filter(Boolean).join("\n");
+
+  return [text, fileContext].filter(Boolean).join("\n\n").trim();
+}
+
+async function enrichSlackFiles(token: string, files: SlackFile[]) {
+  return Promise.all(
+    files.map(async (file) => {
+      if (file.file_access !== "check_file_info") {
+        return file;
+      }
+
+      try {
+        const response = await slackApi<SlackFileInfoResponse>({
+          token,
+          method: "GET",
+          path: `files.info?file=${encodeURIComponent(file.id)}`
+        });
+
+        return response.file;
+      } catch (error) {
+        console.warn(`Unable to hydrate Slack file ${file.id}:`, error);
+        return file;
+      }
+    })
+  );
+}
+
+function formatSlackFileForModel(file: SlackFile) {
+  const title = file.title || file.name || file.id;
+  const typeLabel = file.pretty_type || file.filetype || file.mimetype || "file";
+  const parts = [`Attached ${typeLabel}: ${title}`];
+
+  const preview =
+    file.plain_text ||
+    file.preview_plain_text ||
+    file.preview ||
+    file.contents ||
+    file.alt_txt ||
+    file.initial_comment?.comment ||
+    "";
+
+  if (preview) {
+    parts.push(`Attachment details: ${collapseWhitespace(preview).slice(0, 1200)}`);
+  }
+
+  const link = file.external_url || file.permalink;
+  if (link) {
+    parts.push(`Attachment link: ${link}`);
+  }
+
+  return parts.join("\n");
+}
+
 function decodeSlackEntities(input: string) {
   return input
     .replaceAll("&amp;", "&")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">");
+}
+
+function collapseWhitespace(input: string) {
+  return input.replace(/\s+/g, " ").trim();
 }
 
 function getHeader(headers: SlackHeaders, name: string) {
