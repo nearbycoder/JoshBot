@@ -13,7 +13,7 @@ import {
   type SlackScheduleContext
 } from "./schedules.js";
 
-const SYSTEM_PROMPT = `You are Joshbot, a concise and pragmatic assistant.
+const SYSTEM_PROMPT = `You are NoBo, a concise and pragmatic assistant.
 
 You are replying inside Slack.
 
@@ -27,8 +27,8 @@ Rules:
 - When web search is used, ground the answer in the retrieved sources instead of guessing.
 - Use current time context for relative dates and schedule requests. Default timezone is America/Chicago unless the user specifies another timezone.
 - When the user asks you to create a standalone HTML page, Markdown document, report, note, draft, or other file-like artifact, use the createArtifact tool and include its preview link in your Slack reply.
-- Joshbot can send proactive Slack reminders and recurring cron-style messages. When the user asks for a reminder, cron, recurring task, or scheduled proactive message, use the createSchedule tool. When the user asks to view, update, edit, delete, remove, or cancel schedules, use the schedule management tools. Do not say Joshbot cannot read, update, or delete schedules.
-- Joshbot can summarize recent Slack channel history when the Slack app has channel history access. Use the readSlackChannelHistory tool when the user asks about messages in a channel.`;
+- NoBo can send proactive Slack reminders and recurring cron-style messages. When the user asks for a reminder, cron, recurring task, or scheduled proactive message, use the createSchedule tool. When the user asks to view, update, edit, delete, remove, or cancel schedules, use the schedule management tools. Do not say NoBo cannot read, update, or delete schedules.
+- NoBo can summarize recent Slack channel history when the Slack app has channel history access. Use the readSlackChannelHistory tool when the user asks about messages in a channel.`;
 
 function getModel(modelId: string) {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -97,9 +97,9 @@ export async function shouldReplyToSlackThread({
   const modelId = selectSlackModel(messages);
   const result = await generateText({
     model: getModel(modelId),
-    system: `You decide whether Joshbot should reply to the latest Slack thread message.
+    system: `You decide whether NoBo should reply to the latest Slack thread message.
 
-Joshbot is an assistant inside Slack. It should reply only when the latest user message is directed at Joshbot, asks Joshbot for follow-up help, clearly continues an active assistant task, or depends on Joshbot's previous answer.
+NoBo is an assistant inside Slack. It should reply only when the latest user message is directed at NoBo, asks NoBo for follow-up help, clearly continues an active assistant task, or depends on NoBo's previous answer.
 
 Do not reply when the latest message is ordinary human-to-human discussion, thanks/acknowledgement that needs no answer, side chatter, status updates, or a message intended for someone else.
 
@@ -111,7 +111,7 @@ Return exactly one word: RESPOND or SILENT.`,
       {
         role: "user",
         content:
-          "Should Joshbot reply to the latest user message in this Slack thread? Return exactly RESPOND or SILENT."
+          "Should NoBo reply to the latest user message in this Slack thread? Return exactly RESPOND or SILENT."
       }
     ],
     stopWhen: stepCountIs(1)
@@ -136,7 +136,7 @@ export async function createScheduledSlackMessage({
     ],
     memories: [],
     currentUserId: ownerUserId,
-    extraSystem: `You are running a scheduled proactive Joshbot task.
+    extraSystem: `You are running a scheduled proactive NoBo task.
 - Produce the message to post now.
 - If the task asks for current information, use web search when available.
 - Do not say you will do it later; the scheduled time is now.
@@ -270,7 +270,7 @@ function createScheduleTools(scheduleContext: SlackScheduleContext) {
     .enum(["reminder", "prompt"])
     .optional()
     .describe(
-      "Use reminder to send the task text later. Use prompt when Joshbot should answer/research/do the task at run time, e.g. 'post what is trending on Hacker News'."
+      "Use reminder to send the task text later. Use prompt when NoBo should answer/research/do the task at run time, e.g. 'post what is trending on Hacker News'."
     );
   const targetChannelId = z
     .string()

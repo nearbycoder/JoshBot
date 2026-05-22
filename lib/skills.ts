@@ -14,11 +14,11 @@ type ParsedSkillCommand = {
 };
 
 const SKILL_HELP = [
-  "`@JoshBot skills` or `@JoshBot help`: list available skills",
-  "`@JoshBot summarize-thread [focus]`: summarize the current thread",
-  "`@JoshBot thread-todos`: extract action items and owners from the thread",
-  "`@JoshBot web-search <query>`: run an explicit web search",
-  "`@JoshBot remember ...`, `show my memory`, `clear my memory`: personal memory commands"
+  "`@NoBo skills` or `@NoBo help`: list available skills",
+  "`@NoBo summarize-thread [focus]`: summarize the current thread",
+  "`@NoBo thread-todos`: extract action items and owners from the thread",
+  "`@NoBo web-search <query>`: run an explicit web search",
+  "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
 ].join("\n");
 
 export async function maybeHandleSlackSkillCommand({
@@ -76,7 +76,7 @@ export async function maybeHandleSlackSkillCommand({
       });
     case "web-search":
       if (!command.args) {
-        return "Usage: `@JoshBot web-search <query>`";
+        return "Usage: `@NoBo web-search <query>`";
       }
 
       return createSlackSkillReply({

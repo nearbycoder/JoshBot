@@ -56,7 +56,7 @@ const server = createServer(async (request, response) => {
   if (method === "GET" && (url.pathname === "/" || url.pathname === "/healthz")) {
     sendJson(response, 200, {
       ok: true,
-      service: "joshbot",
+      service: "nobo",
       status: "running"
     });
     return;
@@ -113,7 +113,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, () => {
-  console.log(`Joshbot listening on http://localhost:${port}`);
+  console.log(`NoBo listening on http://localhost:${port}`);
 });
 
 startScheduleRunner({
