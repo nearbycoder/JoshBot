@@ -1,6 +1,7 @@
 import { config as loadEnv } from "dotenv";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  isDirectMentionToBot,
   isIgnorableSlackEvent,
   respondToSlackMention,
   respondToSlackThreadReply,
@@ -77,7 +78,7 @@ const server = createServer(async (request, response) => {
         });
       }
 
-      if (payload.event.type === "message") {
+      if (payload.event.type === "message" && !isDirectMentionToBot(payload.event.text)) {
         void respondToSlackThreadReply(payload.event).catch((error) => {
           console.error("Slack thread reply handling failed:", error);
         });

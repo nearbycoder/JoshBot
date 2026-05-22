@@ -59,6 +59,16 @@ export function isIgnorableSlackEvent(event: SlackMessageEvent) {
   return Boolean(event.bot_id || event.subtype);
 }
 
+export function isDirectMentionToBot(text: string) {
+  const botUserId = process.env.SLACK_BOT_USER_ID;
+
+  if (!botUserId) {
+    return false;
+  }
+
+  return new RegExp(`<@${botUserId}>`).test(text);
+}
+
 export async function respondToSlackMention(event: SlackMessageEvent) {
   const token = requireEnv("SLACK_BOT_TOKEN");
   const threadTs = event.thread_ts ?? event.ts;
