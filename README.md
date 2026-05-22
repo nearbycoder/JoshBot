@@ -70,6 +70,7 @@ Create a Slack app and configure:
   - `app_mentions:read`
   - `chat:write`
   - `channels:history` for thread context in public channels
+  - `groups:history` if Joshbot should summarize private channels it has joined
   - `files:read` so uploaded attachment metadata and previews can be passed into the model
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
@@ -120,6 +121,8 @@ If `REDIS_URL` is set, Joshbot also caches trimmed thread state in Redis, so nor
 Joshbot also uses Redis to lock each Slack message event before generating a reply. This prevents duplicate Slack deliveries or multiple running instances from replying to the same message more than once. Without Redis, a local in-memory lock still protects a single process.
 
 Schedule creation also uses a per-message idempotency key, so repeated `createSchedule` tool calls from one Slack ask return the already-created schedule instead of creating duplicate jobs.
+
+Joshbot can also summarize recent channel history when asked with a channel mention, such as `@JoshBot summarize #ai over the past week`. This uses Slack `conversations.history`, so the bot must be in the channel and have the matching Slack history scope.
 
 ## Memory
 

@@ -3,6 +3,7 @@ import { Exa } from "exa-js";
 import { generateText, stepCountIs, tool, type ModelMessage } from "ai";
 import { z } from "zod";
 import { createArtifact } from "./artifacts.js";
+import { fetchSlackChannelHistory } from "./channel-history.js";
 import {
   cancelScheduleFromTool,
   createScheduleFromTool,
@@ -25,7 +26,8 @@ Rules:
 - Use web search when the request depends on recent, fast-changing, or hard-to-recall facts.
 - When web search is used, ground the answer in the retrieved sources instead of guessing.
 - When the user asks you to create a standalone HTML page, Markdown document, report, note, draft, or other file-like artifact, use the createArtifact tool and include its preview link in your Slack reply.
-- Joshbot can send proactive Slack reminders and recurring cron-style messages. When the user asks for a reminder, cron, recurring task, or scheduled proactive message, use the createSchedule tool. When the user asks to view, update, edit, delete, remove, or cancel schedules, use the schedule management tools. Do not say Joshbot cannot read, update, or delete schedules.`;
+- Joshbot can send proactive Slack reminders and recurring cron-style messages. When the user asks for a reminder, cron, recurring task, or scheduled proactive message, use the createSchedule tool. When the user asks to view, update, edit, delete, remove, or cancel schedules, use the schedule management tools. Do not say Joshbot cannot read, update, or delete schedules.
+- Joshbot can summarize recent Slack channel history when the Slack app has channel history access. Use the readSlackChannelHistory tool when the user asks about messages in a channel.`;
 
 function getModel(modelId: string) {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -184,9 +186,62 @@ Extra Slack rules:
 function createSlackTools(scheduleContext?: SlackScheduleContext) {
   return {
     ...(process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : {}),
-    ...(scheduleContext ? createScheduleTools(scheduleContext) : {}),
+    ...(scheduleContext ? createSlackContextTools(scheduleContext) : {}),
     createArtifact: createArtifactTool()
   };
+}
+
+function createSlackContextTools(scheduleContext: SlackScheduleContext) {
+  return {
+    ...createScheduleTools(scheduleContext),
+    readSlackChannelHistory: createSlackChannelHistoryTool(scheduleContext)
+  };
+}
+
+function createSlackChannelHistoryTool(scheduleContext: SlackScheduleContext) {
+  return tool({
+    description:
+      `Read recent Slack channel messages for summarization or analysis. Use when the user asks about messages/history in a channel. Raw channel mentions available in this request: ${JSON.stringify(scheduleContext.mentionedChannels)}.`,
+    inputSchema: z.object({
+      channelId: z
+        .string()
+        .optional()
+        .describe("Slack channel ID, such as C123ABC. If omitted and exactly one channel was mentioned, that channel is used."),
+      days: z
+        .union([z.number().int().positive(), z.string().regex(/^\d+$/)])
+        .optional()
+        .describe("How many days back to read. Defaults to 7."),
+      limit: z
+        .union([z.number().int().positive(), z.string().regex(/^\d+$/)])
+        .optional()
+        .describe("Maximum number of messages to read. Defaults to 150, max 250.")
+    }),
+    execute: async ({ channelId, days, limit }) => {
+      const targetChannel = resolveMentionedChannel(scheduleContext, channelId);
+
+      if (!targetChannel) {
+        return {
+          error:
+            "I couldn't determine which channel to read. Ask again with a channel mention, like #ai."
+        };
+      }
+
+      const parsedDays = parseOptionalPositiveInteger(days, 7);
+      const parsedLimit = parseOptionalPositiveInteger(limit, 150);
+      const messages = await fetchSlackChannelHistory({
+        channel: targetChannel.id,
+        days: Math.min(parsedDays, 30),
+        limit: Math.min(parsedLimit, 250)
+      });
+
+      return {
+        channel: targetChannel,
+        days: parsedDays,
+        messageCount: messages.length,
+        messages
+      };
+    }
+  });
 }
 
 function createScheduleTools(scheduleContext: SlackScheduleContext) {
@@ -330,6 +385,49 @@ function createArtifactTool() {
       };
     }
   });
+}
+
+function resolveMentionedChannel(scheduleContext: SlackScheduleContext, channelId: string | undefined) {
+  const normalizedChannelId = normalizeSlackChannelId(channelId);
+
+  if (normalizedChannelId) {
+    const mentionedChannel = scheduleContext.mentionedChannels.find(
+      (channel) => channel.id === normalizedChannelId
+    );
+    return {
+      id: normalizedChannelId,
+      name: mentionedChannel?.name
+    };
+  }
+
+  if (scheduleContext.mentionedChannels.length === 1) {
+    return scheduleContext.mentionedChannels[0] ?? null;
+  }
+
+  return null;
+}
+
+function normalizeSlackChannelId(input: string | undefined) {
+  if (!input) {
+    return null;
+  }
+
+  const match = input.trim().match(/#?([CGD][A-Z0-9]+)/i);
+  return match?.[1]?.toUpperCase() ?? null;
+}
+
+function parseOptionalPositiveInteger(input: number | string | undefined, fallback: number) {
+  if (input === undefined) {
+    return fallback;
+  }
+
+  const value = typeof input === "string" ? Number(input.trim()) : input;
+
+  if (!Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+
+  return value;
 }
 
 function selectSlackModel(messages: ModelMessage[]) {
