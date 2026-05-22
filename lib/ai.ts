@@ -41,12 +41,55 @@ export async function createSlackReplyWithMemory(
   memories: string[],
   currentUserId: string | undefined
 ) {
+  return generateSlackResponse({
+    messages,
+    memories,
+    currentUserId
+  });
+}
+
+export async function createSlackSkillReply({
+  messages,
+  memories,
+  currentUserId,
+  skillName,
+  instructions
+}: {
+  messages: ModelMessage[];
+  memories: string[];
+  currentUserId: string | undefined;
+  skillName: string;
+  instructions: string;
+}) {
+  return generateSlackResponse({
+    messages,
+    memories,
+    currentUserId,
+    extraSystem: `You are executing the Slack skill '${skillName}'.
+
+${instructions}`
+  });
+}
+
+async function generateSlackResponse({
+  messages,
+  memories,
+  currentUserId,
+  extraSystem
+}: {
+  messages: ModelMessage[];
+  memories: string[];
+  currentUserId: string | undefined;
+  extraSystem?: string;
+}) {
   const modelId = selectSlackModel(messages);
   const result = await generateText({
     model: getModel(modelId),
     system: `${SYSTEM_PROMPT}
 
 ${formatMemoryPrompt(memories, currentUserId)}
+
+${extraSystem ? `\n\n${extraSystem}` : ""}
 
 Extra Slack rules:
 - Reply in plain text only.

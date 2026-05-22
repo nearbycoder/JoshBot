@@ -89,6 +89,7 @@ npm start
 ## Files to edit first
 
 - `lib/ai.ts`: assistant prompt and OpenCode Go model selection
+- `lib/skills.ts`: Slack skill registry and command handlers
 - `lib/slack.ts`: Slack history loading, text cleanup, and reply posting
 - `server.ts`: HTTP routing and Slack event handling
 
@@ -112,6 +113,23 @@ Joshbot can persist simple per-user memory in Redis across threads. Supported co
 - `clear my memory`
 
 Saved memories are injected into future replies for that Slack user when relevant.
+
+## Skills
+
+Joshbot supports explicit Slack skills triggered with `@JoshBot <skill> ...`.
+
+Current skills:
+
+- `@JoshBot skills` or `@JoshBot help`
+- `@JoshBot summarize-thread [focus]`
+- `@JoshBot thread-todos`
+- `@JoshBot web-search <query>`
+
+Memory commands also remain available:
+
+- `@JoshBot remember ...`
+- `@JoshBot show my memory`
+- `@JoshBot clear my memory`
 
 ## Attachments
 

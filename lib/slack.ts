@@ -9,6 +9,7 @@ import {
   removeUserMemory
 } from "./memory.js";
 import { getRedisClient } from "./redis.js";
+import { maybeHandleSlackSkillCommand } from "./skills.js";
 
 type SlackHeaders = Headers | Record<string, string | string[] | undefined>;
 
@@ -157,11 +158,43 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
+  const modelMessages = await toModelMessages(threadMessages, event.user, {
+    token,
+    liveEvent: event
+  });
+  const skillReply = await maybeHandleSlackSkillCommand({
+    commandText: stripSlackFormatting(event.text),
+    modelMessages,
+    memories,
+    currentUserId: event.user
+  });
+
+  if (skillReply) {
+    const postedReply = await postSlackMessage({
+      token,
+      channel: event.channel,
+      threadTs,
+      text: skillReply
+    });
+
+    await saveCachedThreadMessages(
+      event.channel,
+      threadTs,
+      appendCachedThreadMessage(threadMessages, {
+        role: "assistant",
+        content: skillReply,
+        ts: postedReply.ts
+      })
+    );
+    return;
+  }
+
   const reply = await createReplyForSlackEvent({
     token,
     threadMessages,
     event,
-    memories
+    memories,
+    modelMessages
   });
 
   if (!reply) {
@@ -510,18 +543,22 @@ async function createReplyForSlackEvent({
   token,
   threadMessages,
   event,
-  memories
+  memories,
+  modelMessages
 }: {
   token: string;
   threadMessages: CachedThreadMessage[];
   event: SlackMessageEvent;
   memories: string[];
+  modelMessages?: ModelMessage[];
 }) {
   try {
-    const multimodalMessages = await toModelMessages(threadMessages, event.user, {
-      token,
-      liveEvent: event
-    });
+    const multimodalMessages =
+      modelMessages ??
+      (await toModelMessages(threadMessages, event.user, {
+        token,
+        liveEvent: event
+      }));
 
     return await createSlackReplyWithMemory(multimodalMessages, memories, event.user);
   } catch (error) {
