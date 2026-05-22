@@ -4,8 +4,10 @@ import { handleArtifactRequest } from "./lib/artifacts.js";
 import { createScheduledSlackMessage } from "./lib/ai.js";
 import {
   isDirectMentionToBot,
+  isSlackDirectMessage,
   isIgnorableSlackEvent,
   postSlackMessage,
+  respondToSlackDirectMessage,
   respondToSlackMention,
   respondToSlackThreadReply,
   verifySlackRequest
@@ -31,6 +33,7 @@ type SlackEventCallbackPayload = {
     user?: string;
     bot_id?: string;
     subtype?: string;
+    channel_type?: string;
   };
 };
 
@@ -91,9 +94,15 @@ const server = createServer(async (request, response) => {
       }
 
       if (payload.event.type === "message" && !isDirectMentionToBot(payload.event.text)) {
-        void respondToSlackThreadReply(payload.event).catch((error) => {
-          console.error(`Slack thread reply handling failed: ${summarizeError(error)}`);
-        });
+        if (isSlackDirectMessage(payload.event)) {
+          void respondToSlackDirectMessage(payload.event).catch((error) => {
+            console.error(`Slack direct message handling failed: ${summarizeError(error)}`);
+          });
+        } else {
+          void respondToSlackThreadReply(payload.event).catch((error) => {
+            console.error(`Slack thread reply handling failed: ${summarizeError(error)}`);
+          });
+        }
       }
     }
 

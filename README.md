@@ -66,14 +66,18 @@ Create a Slack app and configure:
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
+- Subscribe to bot events: `message.im` so direct messages to Joshbot trigger responses
 - OAuth scopes:
   - `app_mentions:read`
   - `chat:write`
+  - `im:history` for direct messages
   - `channels:history` for thread context in public channels
   - `groups:history` if Joshbot should summarize private channels it has joined
   - `files:read` so uploaded attachment metadata and previews can be passed into the model
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
+
+To allow users to type directly in Joshbot's App DM, enable the Messages tab in Slack App Home and turn on "Allow users to send Slash commands and messages from the messages tab", then reinstall the app after adding `message.im` and `im:history`.
 
 For local development, expose the app with a tunnel:
 

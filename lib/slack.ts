@@ -36,6 +36,7 @@ type SlackPostMessageResponse =
 
 type SlackMessageEvent = {
   channel: string;
+  channel_type?: string;
   text: string;
   thread_ts?: string;
   ts: string;
@@ -126,6 +127,10 @@ export function isDirectMentionToBot(text: string) {
   }
 
   return new RegExp(`<@${botUserId}>`).test(text);
+}
+
+export function isSlackDirectMessage(event: SlackMessageEvent) {
+  return event.channel_type === "im" || event.channel.startsWith("D");
 }
 
 export async function respondToSlackMention(event: SlackMessageEvent) {
@@ -345,6 +350,48 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     appendCachedThreadMessage(threadMessages, {
       role: "assistant",
       content: reply,
+      ts: postedReply.ts
+    })
+  );
+}
+
+export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
+  const lock = await acquireSlackEventLock(event, "direct-message");
+  if (!lock.acquired) {
+    return;
+  }
+
+  const token = requireEnv("SLACK_BOT_TOKEN");
+  const incomingMessage = await createCachedUserMessage(token, event);
+  const threadMessages: CachedThreadMessage[] = [incomingMessage];
+  const commandReply = await maybeHandleMemoryCommand(event);
+  const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
+  const replyText =
+    commandReply ??
+    scheduleReply ??
+    (await createReplyForSlackEvent({
+      token,
+      threadMessages,
+      event,
+      memories: event.user ? await getUserMemories(event.user) : []
+    }));
+
+  if (!replyText) {
+    return;
+  }
+
+  const postedReply = await postSlackMessage({
+    token,
+    channel: event.channel,
+    text: replyText
+  });
+
+  await saveCachedThreadMessages(
+    event.channel,
+    event.ts,
+    appendCachedThreadMessage(threadMessages, {
+      role: "assistant",
+      content: replyText,
       ts: postedReply.ts
     })
   );
