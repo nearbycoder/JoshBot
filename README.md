@@ -103,6 +103,10 @@ npm start
 
 If `EXA_API_KEY` is set, Joshbot can call Exa web search during response generation for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
 
+## Time awareness
+
+Joshbot injects the current UTC and America/Chicago time into every model call and exposes a `getCurrentTime` tool for exact time questions. Relative schedule phrases like "in 5 minutes" and "next Monday" should be interpreted from America/Chicago unless the user specifies another timezone.
+
 ## Artifacts
 
 Joshbot can generate browser-previewable artifacts when a Slack user asks for a standalone HTML page or Markdown document. Generated files are written under `ARTIFACT_DIR` and served from:

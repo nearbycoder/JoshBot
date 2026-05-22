@@ -25,6 +25,7 @@ Rules:
 - If context is missing, make the smallest reasonable assumption and say so briefly.
 - Use web search when the request depends on recent, fast-changing, or hard-to-recall facts.
 - When web search is used, ground the answer in the retrieved sources instead of guessing.
+- Use current time context for relative dates and schedule requests. Default timezone is America/Chicago unless the user specifies another timezone.
 - When the user asks you to create a standalone HTML page, Markdown document, report, note, draft, or other file-like artifact, use the createArtifact tool and include its preview link in your Slack reply.
 - Joshbot can send proactive Slack reminders and recurring cron-style messages. When the user asks for a reminder, cron, recurring task, or scheduled proactive message, use the createSchedule tool. When the user asks to view, update, edit, delete, remove, or cancel schedules, use the schedule management tools. Do not say Joshbot cannot read, update, or delete schedules.
 - Joshbot can summarize recent Slack channel history when the Slack app has channel history access. Use the readSlackChannelHistory tool when the user asks about messages in a channel.`;
@@ -163,6 +164,8 @@ async function generateSlackResponse({
 
 ${formatMemoryPrompt(memories, currentUserId)}
 
+${formatCurrentTimePrompt()}
+
 ${extraSystem ? `\n\n${extraSystem}` : ""}
 
 Extra Slack rules:
@@ -187,8 +190,23 @@ function createSlackTools(scheduleContext?: SlackScheduleContext) {
   return {
     ...(process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : {}),
     ...(scheduleContext ? createSlackContextTools(scheduleContext) : {}),
+    getCurrentTime: createCurrentTimeTool(),
     createArtifact: createArtifactTool()
   };
+}
+
+function createCurrentTimeTool() {
+  return tool({
+    description:
+      "Get the current date and time. Use for questions about the current time or for grounding relative dates and schedules.",
+    inputSchema: z.object({
+      timeZone: z
+        .string()
+        .optional()
+        .describe("IANA timezone name. Defaults to America/Chicago.")
+    }),
+    execute: async ({ timeZone }) => formatCurrentTime(timeZone || "America/Chicago")
+  });
 }
 
 function createSlackContextTools(scheduleContext: SlackScheduleContext) {
@@ -428,6 +446,53 @@ function parseOptionalPositiveInteger(input: number | string | undefined, fallba
   }
 
   return value;
+}
+
+function formatCurrentTimePrompt() {
+  const currentTime = formatCurrentTime("America/Chicago");
+
+  return `Current time:
+- UTC: ${currentTime.utc}
+- America/Chicago: ${currentTime.local}
+- Timezone: ${currentTime.timeZone}
+
+Use this for relative phrases like now, today, tomorrow, yesterday, in 5 minutes, next Monday, and over the past week.`;
+}
+
+function formatCurrentTime(timeZone: string) {
+  const now = new Date();
+
+  try {
+    return {
+      iso: now.toISOString(),
+      utc: new Intl.DateTimeFormat("en-US", {
+        dateStyle: "full",
+        timeStyle: "long",
+        timeZone: "UTC"
+      }).format(now),
+      local: new Intl.DateTimeFormat("en-US", {
+        dateStyle: "full",
+        timeStyle: "long",
+        timeZone
+      }).format(now),
+      timeZone
+    };
+  } catch {
+    return {
+      iso: now.toISOString(),
+      utc: new Intl.DateTimeFormat("en-US", {
+        dateStyle: "full",
+        timeStyle: "long",
+        timeZone: "UTC"
+      }).format(now),
+      local: new Intl.DateTimeFormat("en-US", {
+        dateStyle: "full",
+        timeStyle: "long",
+        timeZone: "America/Chicago"
+      }).format(now),
+      timeZone: "America/Chicago"
+    };
+  }
 }
 
 function selectSlackModel(messages: ModelMessage[]) {
