@@ -17,6 +17,11 @@ type SlackPostMessage = (options: {
   text: string;
 }) => Promise<unknown>;
 
+type ScheduledTaskRunner = (options: {
+  task: string;
+  ownerUserId: string;
+}) => Promise<string>;
+
 export type SlackScheduleContext = {
   ownerUserId: string;
   channel: string;
@@ -27,38 +32,40 @@ type ScheduleDestination = {
   channel: string;
   threadTs?: string;
   channelName?: string;
+  responseMode: "reminder" | "prompt";
 };
 
 type OptionalScheduleDestination = {
   targetChannelId?: string;
   targetChannelName?: string;
+  responseMode?: "reminder" | "prompt";
 };
 
 export type ScheduleToolInput =
   | {
       kind: "once";
       task: string;
-      amount: number;
+      amount: number | string;
       unit: "minutes" | "hours" | "days";
     } & OptionalScheduleDestination
   | {
       kind: "interval";
       task: string;
-      amount: number;
+      amount: number | string;
       unit: "minutes" | "hours" | "days";
     } & OptionalScheduleDestination
   | {
       kind: "daily";
       task: string;
-      hour: number;
-      minute: number;
+      hour: number | string;
+      minute: number | string;
     } & OptionalScheduleDestination
   | {
       kind: "weekly";
       task: string;
       weekday: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
-      hour: number;
-      minute: number;
+      hour: number | string;
+      minute: number | string;
     } & OptionalScheduleDestination;
 
 type ScheduleKind = "once" | "interval" | "daily" | "weekly";
@@ -70,6 +77,7 @@ type ScheduleRecord = {
   threadTs?: string;
   channelName?: string;
   task: string;
+  responseMode?: "reminder" | "prompt";
   kind: ScheduleKind;
   createdAt: string;
   nextRunAt: string;
@@ -157,9 +165,11 @@ export async function maybeHandleScheduleCommand(event: SlackMessageEvent) {
 }
 
 export function startScheduleRunner({
-  postSlackMessage
+  postSlackMessage,
+  runScheduledTask
 }: {
   postSlackMessage: SlackPostMessage;
+  runScheduledTask?: ScheduledTaskRunner;
 }) {
   if (schedulerStarted) {
     return;
@@ -168,12 +178,12 @@ export function startScheduleRunner({
   schedulerStarted = true;
   const intervalMs = getSchedulerIntervalMs();
 
-  void runDueSchedules(postSlackMessage).catch((error) => {
+  void runDueSchedules({ postSlackMessage, runScheduledTask }).catch((error) => {
     console.error(`Schedule runner failed: ${summarizeError(error)}`);
   });
 
   setInterval(() => {
-    void runDueSchedules(postSlackMessage).catch((error) => {
+    void runDueSchedules({ postSlackMessage, runScheduledTask }).catch((error) => {
       console.error(`Schedule runner failed: ${summarizeError(error)}`);
     });
   }, intervalMs).unref();
@@ -209,6 +219,7 @@ async function createSchedule(
     threadTs: destination.threadTs,
     channelName: destination.channelName,
     task: parsed.task,
+    responseMode: destination.responseMode,
     kind: parsed.kind,
     createdAt: now.toISOString(),
     nextRunAt: parsed.firstRunAt.toISOString(),
@@ -246,21 +257,32 @@ async function createSchedule(
 
 function getScheduleDestination(
   context: SlackScheduleContext,
-  input: OptionalScheduleDestination
+  input: ScheduleToolInput
 ): ScheduleDestination {
   const targetChannelId = normalizeSlackChannelId(input.targetChannelId);
+  const responseMode = input.responseMode ?? inferResponseMode(input.task);
 
   if (!targetChannelId) {
     return {
       channel: context.channel,
-      threadTs: context.threadTs
+      threadTs: context.threadTs,
+      responseMode
     };
   }
 
   return {
     channel: targetChannelId,
-    channelName: input.targetChannelName?.trim() || undefined
+    channelName: input.targetChannelName?.trim() || undefined,
+    responseMode
   };
+}
+
+function inferResponseMode(task: string): "reminder" | "prompt" {
+  if (/[?]/.test(task) || /\b(what|who|when|where|why|how|search|find|trending|latest|current|summarize|report)\b/i.test(task)) {
+    return "prompt";
+  }
+
+  return "reminder";
 }
 
 function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSchedule {
@@ -286,26 +308,30 @@ function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSche
   }
 
   if (input.kind === "daily") {
-    validateTime(input.hour, input.minute);
+    const hour = parseInteger(input.hour, "hour");
+    const minute = parseInteger(input.minute, "minute");
+    validateTime(hour, minute);
 
     return {
       kind: "daily",
       task,
-      hour: input.hour,
-      minute: input.minute,
-      firstRunAt: nextDailyRun(input.hour, input.minute)
+      hour,
+      minute,
+      firstRunAt: nextDailyRun(hour, minute)
     };
   }
 
-  validateTime(input.hour, input.minute);
+  const hour = parseInteger(input.hour, "hour");
+  const minute = parseInteger(input.minute, "minute");
+  validateTime(hour, minute);
 
   return {
     kind: "weekly",
     task,
     weekday: WEEKDAYS.get(input.weekday) ?? 0,
-    hour: input.hour,
-    minute: input.minute,
-    firstRunAt: nextWeeklyRun(WEEKDAYS.get(input.weekday) ?? 0, input.hour, input.minute)
+    hour,
+    minute,
+    firstRunAt: nextWeeklyRun(WEEKDAYS.get(input.weekday) ?? 0, hour, minute)
   };
 }
 
@@ -349,7 +375,13 @@ async function cancelUserSchedule(userId: string, idPrefix: string) {
   return `Canceled schedule \`${id.slice(0, 8)}\`.`;
 }
 
-async function runDueSchedules(postSlackMessage: SlackPostMessage) {
+async function runDueSchedules({
+  postSlackMessage,
+  runScheduledTask
+}: {
+  postSlackMessage: SlackPostMessage;
+  runScheduledTask?: ScheduledTaskRunner;
+}) {
   if (schedulerRunning) {
     return;
   }
@@ -382,11 +414,19 @@ async function runDueSchedules(postSlackMessage: SlackPostMessage) {
       }
 
       try {
+        const dueText =
+          schedule.responseMode === "prompt" && runScheduledTask
+            ? await runScheduledTask({
+                task: schedule.task,
+                ownerUserId: schedule.ownerUserId
+              })
+            : schedule.task;
+
         await postSlackMessage({
           token: requireEnv("SLACK_BOT_TOKEN"),
           channel: schedule.channel,
           threadTs: schedule.threadTs,
-          text: `<@${schedule.ownerUserId}> ${schedule.task}`
+          text: `<@${schedule.ownerUserId}> ${dueText}`
         });
 
         const nextRunAt = getNextRunAt(schedule);
@@ -414,10 +454,8 @@ async function runDueSchedules(postSlackMessage: SlackPostMessage) {
   }
 }
 
-function amountToMs(amount: number, unit: "minutes" | "hours" | "days") {
-  if (!Number.isInteger(amount) || amount <= 0) {
-    throw new Error("Schedule amount must be a positive whole number.");
-  }
+function amountToMs(amountInput: number | string, unit: "minutes" | "hours" | "days") {
+  const amount = parseWholeNumber(amountInput, "amount");
 
   if (unit === "minutes") {
     return amount * 60 * 1000;
@@ -428,6 +466,26 @@ function amountToMs(amount: number, unit: "minutes" | "hours" | "days") {
   }
 
   return amount * DAY_MS;
+}
+
+function parseWholeNumber(input: number | string, label: string) {
+  const value = parseInteger(input, label);
+
+  if (value <= 0) {
+    throw new Error(`Schedule ${label} must be a positive whole number.`);
+  }
+
+  return value;
+}
+
+function parseInteger(input: number | string, label: string) {
+  const value = typeof input === "string" ? Number(input.trim()) : input;
+
+  if (!Number.isInteger(value)) {
+    throw new Error(`Schedule ${label} must be a whole number.`);
+  }
+
+  return value;
 }
 
 function validateTime(hour: number, minute: number) {

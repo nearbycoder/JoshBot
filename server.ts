@@ -1,6 +1,7 @@
 import { config as loadEnv } from "dotenv";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleArtifactRequest } from "./lib/artifacts.js";
+import { createScheduledSlackMessage } from "./lib/ai.js";
 import {
   isDirectMentionToBot,
   isIgnorableSlackEvent,
@@ -106,7 +107,10 @@ server.listen(port, () => {
   console.log(`Joshbot listening on http://localhost:${port}`);
 });
 
-startScheduleRunner({ postSlackMessage });
+startScheduleRunner({
+  postSlackMessage,
+  runScheduledTask: createScheduledSlackMessage
+});
 
 function readBody(request: NodeJS.ReadableStream) {
   return new Promise<string>((resolve, reject) => {

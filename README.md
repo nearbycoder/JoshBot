@@ -139,6 +139,7 @@ Supported examples:
 
 - `@JoshBot remind me about the deploy in 10 minutes`
 - `@JoshBot remind me in #josh to check the logs in 5 minutes`
+- `@JoshBot post in #ai in 5 minutes what is currently trending on Hacker News`
 - `@JoshBot in 2 hours remind me to check the logs`
 - `@JoshBot every 30 minutes do check the queue`
 - `@JoshBot every monday at 6pm CST do send the weekly metrics`
@@ -146,7 +147,7 @@ Supported examples:
 - `@JoshBot list my reminders`
 - `@JoshBot cancel reminder abc12345`
 
-Recurring daily and weekly schedules are interpreted in America/Chicago time. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal Joshbot replies.
+Recurring daily and weekly schedules are interpreted in America/Chicago time. Reminder-style schedules post the saved reminder text. Prompt-style schedules, such as "post what is trending", run Joshbot at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal Joshbot replies.
 
 ## Skills
 
