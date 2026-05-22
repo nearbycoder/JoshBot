@@ -605,3 +605,9 @@ function normalizeSlackMrkdwn(input: string) {
     })
     .replace(/\n{3,}/g, "\n\n");
 }
+
+export const __testing = {
+  formatCurrentTime,
+  formatCurrentTimePrompt,
+  normalizeSlackMrkdwn
+};

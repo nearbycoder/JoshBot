@@ -971,3 +971,10 @@ function summarizeError(error: unknown) {
 
   return String(error);
 }
+
+export const __testing = {
+  getScheduleDestination,
+  getScheduleDestinationForUpdate,
+  inferResponseMode,
+  scheduleToolInputToParsedSchedule
+};

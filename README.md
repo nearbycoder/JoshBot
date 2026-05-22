@@ -92,6 +92,12 @@ npm run build
 npm start
 ```
 
+## CI and deployments
+
+GitHub Actions runs `npm test` and `npm run build` on pull requests and pushes to `main`.
+
+For Railway GitHub autodeploys, enable `Wait for CI` on the `joshbot` service deploy trigger so Railway waits for the GitHub Actions check to pass before deploying `main`.
+
 ## Files to edit first
 
 - `lib/ai.ts`: assistant prompt and OpenCode Go model selection
