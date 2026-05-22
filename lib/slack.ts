@@ -45,6 +45,7 @@ type CachedThreadMessage = {
   role: "user" | "assistant";
   content: string;
   ts?: string;
+  userId?: string;
 };
 
 const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
@@ -126,7 +127,11 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
-  const reply = await createSlackReplyWithMemory(toModelMessages(threadMessages), memories);
+  const reply = await createSlackReplyWithMemory(
+    toModelMessages(threadMessages, event.user),
+    memories,
+    event.user
+  );
 
   if (!reply) {
     return;
@@ -192,7 +197,11 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
-  const reply = await createSlackReplyWithMemory(toModelMessages(threadMessages), memories);
+  const reply = await createSlackReplyWithMemory(
+    toModelMessages(threadMessages, event.user),
+    memories,
+    event.user
+  );
 
   if (!reply) {
     return;
@@ -293,7 +302,8 @@ async function loadSlackThread({
         return {
           role: isAssistantMessage ? "assistant" : "user",
           content: cleanedText,
-          ts: message.ts
+          ts: message.ts,
+          userId: isAssistantMessage ? undefined : message.user
         };
       })
       .filter((message): message is CachedThreadMessage => message !== null)
@@ -427,7 +437,8 @@ function createCachedUserMessage(event: SlackMessageEvent): CachedThreadMessage 
   return {
     role: "user",
     content: stripSlackFormatting(event.text),
-    ts: event.ts
+    ts: event.ts,
+    userId: event.user
   };
 }
 
@@ -489,10 +500,13 @@ function trimThreadContext(messages: CachedThreadMessage[]) {
   return [rootMessage, ...recentMessages];
 }
 
-function toModelMessages(messages: CachedThreadMessage[]): ModelMessage[] {
+function toModelMessages(messages: CachedThreadMessage[], currentUserId: string | undefined): ModelMessage[] {
   return messages.map((message) => ({
     role: message.role,
-    content: message.content
+    content:
+      message.role === "user"
+        ? `${formatSpeakerLabel(message.userId, currentUserId)}: ${message.content}`
+        : message.content
   }));
 }
 
@@ -521,7 +535,8 @@ async function loadCachedThreadMessages(channel: string, threadTs: string) {
         Boolean(
           message &&
             (message.role === "user" || message.role === "assistant") &&
-            typeof message.content === "string"
+            typeof message.content === "string" &&
+            (message.userId === undefined || typeof message.userId === "string")
         )
     )
   );
@@ -561,6 +576,18 @@ function getRedisThreadTtlSeconds() {
   }
 
   return parsedValue;
+}
+
+function formatSpeakerLabel(userId: string | undefined, currentUserId: string | undefined) {
+  if (!userId) {
+    return "Unknown user";
+  }
+
+  if (currentUserId && userId === currentUserId) {
+    return `Current user (${userId})`;
+  }
+
+  return `Other user (${userId})`;
 }
 
 function getSlackContextMessageLimit() {

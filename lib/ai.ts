@@ -33,18 +33,19 @@ function getModel() {
 }
 
 export async function createSlackReply(messages: ModelMessage[]) {
-  return createSlackReplyWithMemory(messages, []);
+  return createSlackReplyWithMemory(messages, [], undefined);
 }
 
 export async function createSlackReplyWithMemory(
   messages: ModelMessage[],
-  memories: string[]
+  memories: string[],
+  currentUserId: string | undefined
 ) {
   const result = await generateText({
     model: getModel(),
     system: `${SYSTEM_PROMPT}
 
-${formatMemoryPrompt(memories)}
+${formatMemoryPrompt(memories, currentUserId)}
 
 Extra Slack rules:
 - Reply in plain text only.
@@ -63,15 +64,25 @@ Extra Slack rules:
   return normalizeSlackMrkdwn(result.text.trim());
 }
 
-function formatMemoryPrompt(memories: string[]) {
+function formatMemoryPrompt(memories: string[], currentUserId: string | undefined) {
+  const currentUserLabel = currentUserId ? `Slack user ${currentUserId}` : "the current speaker";
+
   if (memories.length === 0) {
-    return "";
+    return `The thread may contain messages from multiple human speakers.
+Speaker labels in user messages matter.
+Only treat stored memory as belonging to ${currentUserLabel}.`;
   }
 
-  return `Known persistent user memory:
+  return `The thread may contain messages from multiple human speakers.
+Speaker labels in user messages matter.
+
+Known persistent memory for ${currentUserLabel}:
 ${memories.map((memory) => `- ${memory}`).join("\n")}
 
-Use these memories only when relevant. Do not invent new memories. Do not mention this memory list unless it helps answer the user.`;
+Use these memories only when relevant to ${currentUserLabel}.
+Do not apply them to other speakers in the thread.
+Do not invent new memories.
+Do not mention this memory list unless it helps answer the user.`;
 }
 
 function createExaSearchTool() {
