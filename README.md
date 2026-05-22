@@ -112,6 +112,8 @@ Joshbot can persist simple per-user memory in Redis across threads. Supported co
 - `show my memory`
 - `clear my memory`
 
+`show my memory` returns a numbered list, and `forget ...` can remove by exact text, unique partial match, or number.
+
 Saved memories are injected into future replies for that Slack user when relevant.
 
 ## Skills

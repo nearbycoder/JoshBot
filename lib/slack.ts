@@ -487,7 +487,11 @@ async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
       return "I didn't have that in memory.";
     }
 
-    return "Removed from memory.";
+    if (result.status === "ambiguous") {
+      return `That matched more than one memory. Try again with the exact text or a number from \`show my memory\`:\n${result.matches.map((match) => `${match.index + 1}. ${match.memory}`).join("\n")}`;
+    }
+
+    return `Removed from memory: ${result.removed}`;
   }
 
   if (/^(show|list)\s+(my\s+)?memory$/i.test(trimmed) || /^what do you remember about me\??$/i.test(trimmed)) {
@@ -497,7 +501,7 @@ async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
       return "I don't have any saved memory for you yet.";
     }
 
-    return `Here's what I remember:\n${memories.map((memory) => `- ${memory}`).join("\n")}`;
+    return `Here's what I remember:\n${memories.map((memory, index) => `${index + 1}. ${memory}`).join("\n")}`;
   }
 
   if (/^(clear|reset)\s+(my\s+)?memory$/i.test(trimmed) || /^forget everything$/i.test(trimmed)) {

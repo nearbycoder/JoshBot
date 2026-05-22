@@ -75,9 +75,18 @@ export async function removeUserMemory(userId: string, memory: string) {
   }
 
   const memories = await getUserMemories(userId);
-  const filtered = memories.filter((entry) => normalize(entry) !== normalize(memory));
+  const match = findMemoryMatch(memories, memory);
 
-  if (filtered.length === memories.length) {
+  if (match.status === "ambiguous") {
+    return {
+      ok: true as const,
+      status: "ambiguous" as const,
+      memories,
+      matches: match.matches
+    };
+  }
+
+  if (match.status === "missing") {
     return {
       ok: true as const,
       status: "missing" as const,
@@ -85,12 +94,15 @@ export async function removeUserMemory(userId: string, memory: string) {
     };
   }
 
+  const filtered = memories.filter((_entry, index) => index !== match.index);
+
   await saveUserMemories(userId, filtered);
 
   return {
     ok: true as const,
     status: "removed" as const,
-    memories: filtered
+    memories: filtered,
+    removed: match.memory
   };
 }
 
@@ -138,4 +150,69 @@ function getMemoryMaxItems() {
 
 function normalize(value: string) {
   return value.trim().toLowerCase();
+}
+
+function simplify(value: string) {
+  return normalize(value)
+    .replace(/[`"'“”‘’()[\]{}.,!?;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findMemoryMatch(memories: string[], query: string) {
+  const trimmedQuery = query.trim();
+  const indexMatch = trimmedQuery.match(/^#?(\d+)$/);
+
+  if (indexMatch) {
+    const index = Number(indexMatch[1]) - 1;
+
+    if (index >= 0 && index < memories.length) {
+      return {
+        status: "removed" as const,
+        index,
+        memory: memories[index]
+      };
+    }
+  }
+
+  const normalizedQuery = normalize(trimmedQuery);
+  const exactIndex = memories.findIndex((entry) => normalize(entry) === normalizedQuery);
+
+  if (exactIndex >= 0) {
+    return {
+      status: "removed" as const,
+      index: exactIndex,
+      memory: memories[exactIndex]
+    };
+  }
+
+  const simplifiedQuery = simplify(trimmedQuery);
+  const partialMatches = memories
+    .map((entry, index) => ({ entry, index, simplified: simplify(entry) }))
+    .filter(({ simplified }) =>
+      simplifiedQuery.length > 0 &&
+      (simplified.includes(simplifiedQuery) || simplifiedQuery.includes(simplified))
+    );
+
+  if (partialMatches.length === 1) {
+    return {
+      status: "removed" as const,
+      index: partialMatches[0].index,
+      memory: partialMatches[0].entry
+    };
+  }
+
+  if (partialMatches.length > 1) {
+    return {
+      status: "ambiguous" as const,
+      matches: partialMatches.map(({ entry, index }) => ({
+        index,
+        memory: entry
+      }))
+    };
+  }
+
+  return {
+    status: "missing" as const
+  };
 }
