@@ -8,6 +8,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
 - TypeScript
 - Vercel AI SDK 6
 - OpenCode Go via the AI SDK OpenAI-compatible provider
+- Exa Search API via `exa-js`
 - Slack Events API
 
 ## Local setup
@@ -31,6 +32,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `PORT`: defaults to `3000`
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: defaults to `kimi-k2.6`
+   - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `SLACK_BOT_TOKEN`: Bot User OAuth Token from your Slack app
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
@@ -82,3 +84,7 @@ npm start
 - `lib/ai.ts`: assistant prompt and OpenCode Go model selection
 - `lib/slack.ts`: Slack history loading, text cleanup, and reply posting
 - `server.ts`: HTTP routing and Slack event handling
+
+## Web search
+
+If `EXA_API_KEY` is set, Joshbot can call Exa web search during response generation for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
