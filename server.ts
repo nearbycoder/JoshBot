@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { handleArtifactRequest } from "./lib/artifacts.js";
 import {
   isDirectMentionToBot,
   isIgnorableSlackEvent,
@@ -37,6 +38,14 @@ const port = Number(process.env.PORT ?? "3000");
 const server = createServer(async (request, response) => {
   const method = request.method ?? "GET";
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+  if (url.pathname.startsWith("/artifacts/")) {
+    const handled = await handleArtifactRequest(request, response, url);
+
+    if (handled) {
+      return;
+    }
+  }
 
   if (method === "GET" && (url.pathname === "/" || url.pathname === "/healthz")) {
     sendJson(response, 200, {

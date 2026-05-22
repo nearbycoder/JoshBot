@@ -2,6 +2,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Exa } from "exa-js";
 import { generateText, stepCountIs, tool, type ModelMessage } from "ai";
 import { z } from "zod";
+import { createArtifact } from "./artifacts.js";
 
 const SYSTEM_PROMPT = `You are Joshbot, a concise and pragmatic assistant.
 
@@ -14,7 +15,8 @@ Rules:
 - Do not claim to have done actions in Slack unless the app actually did them.
 - If context is missing, make the smallest reasonable assumption and say so briefly.
 - Use web search when the request depends on recent, fast-changing, or hard-to-recall facts.
-- When web search is used, ground the answer in the retrieved sources instead of guessing.`;
+- When web search is used, ground the answer in the retrieved sources instead of guessing.
+- When the user asks you to create a standalone HTML page, Markdown document, report, note, draft, or other file-like artifact, use the createArtifact tool and include its preview link in your Slack reply.`;
 
 function getModel(modelId: string) {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -71,6 +73,39 @@ ${instructions}`
   });
 }
 
+export async function shouldReplyToSlackThread({
+  messages,
+  currentUserId
+}: {
+  messages: ModelMessage[];
+  currentUserId: string | undefined;
+}) {
+  const modelId = selectSlackModel(messages);
+  const result = await generateText({
+    model: getModel(modelId),
+    system: `You decide whether Joshbot should reply to the latest Slack thread message.
+
+Joshbot is an assistant inside Slack. It should reply only when the latest user message is directed at Joshbot, asks Joshbot for follow-up help, clearly continues an active assistant task, or depends on Joshbot's previous answer.
+
+Do not reply when the latest message is ordinary human-to-human discussion, thanks/acknowledgement that needs no answer, side chatter, status updates, or a message intended for someone else.
+
+The thread may contain multiple speakers. Speaker labels matter. The current speaker is ${currentUserId ? `Slack user ${currentUserId}` : "unknown"}.
+
+Return exactly one word: RESPOND or SILENT.`,
+    messages: [
+      ...messages,
+      {
+        role: "user",
+        content:
+          "Should Joshbot reply to the latest user message in this Slack thread? Return exactly RESPOND or SILENT."
+      }
+    ],
+    stopWhen: stepCountIs(1)
+  });
+
+  return /\bRESPOND\b/i.test(result.text) && !/\bSILENT\b/i.test(result.text);
+}
+
 async function generateSlackResponse({
   messages,
   memories,
@@ -101,11 +136,52 @@ Extra Slack rules:
 - For links, use <https://example.com|label> and never [label](https://example.com).
 - If you use web search, end with a short 'Sources:' list using the URLs you relied on.`,
     messages,
-    tools: process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : undefined,
+    tools: createSlackTools(),
     stopWhen: stepCountIs(5)
   });
 
   return normalizeSlackMrkdwn(result.text.trim());
+}
+
+function createSlackTools() {
+  return {
+    ...(process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : {}),
+    createArtifact: createArtifactTool()
+  };
+}
+
+function createArtifactTool() {
+  return tool({
+    description:
+      "Create a browser-previewable artifact file. Use for standalone HTML pages and Markdown documents that should be linked back to the user.",
+    inputSchema: z.object({
+      kind: z
+        .enum(["html", "markdown"])
+        .describe("Use html for complete HTML documents. Use markdown for .md documents."),
+      title: z.string().min(1).max(120).describe("Short human-readable title for the artifact."),
+      filename: z
+        .string()
+        .min(1)
+        .max(120)
+        .optional()
+        .describe("Optional filename. The extension is normalized based on kind."),
+      content: z
+        .string()
+        .min(1)
+        .describe("The complete file content to write. HTML artifacts should be complete documents.")
+    }),
+    execute: async ({ kind, title, filename, content }) => {
+      const artifact = await createArtifact({ kind, title, filename, content });
+
+      return {
+        id: artifact.id,
+        title: artifact.title,
+        filename: artifact.filename,
+        previewUrl: artifact.previewUrl,
+        rawUrl: artifact.rawUrl
+      };
+    }
+  });
 }
 
 function selectSlackModel(messages: ModelMessage[]) {

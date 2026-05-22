@@ -42,6 +42,8 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
    - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
+   - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
+   - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
 
 4. Start the process:
 
@@ -96,6 +98,15 @@ npm start
 ## Web search
 
 If `EXA_API_KEY` is set, Joshbot can call Exa web search during response generation for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
+
+## Artifacts
+
+Joshbot can generate browser-previewable artifacts when a Slack user asks for a standalone HTML page or Markdown document. Generated files are written under `ARTIFACT_DIR` and served from:
+
+- `GET /artifacts/:id/:filename` for the raw `.html` or `.md` file
+- `GET /artifacts/:id/preview` for a rendered Markdown preview
+
+Set `ARTIFACT_BASE_URL` to the same public HTTPS origin you use for Slack events, such as your ngrok URL in local development, so links posted in Slack are clickable by teammates.
 
 ## Thread context
 

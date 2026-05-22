@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { type ModelMessage } from "ai";
-import { createSlackReplyWithMemory } from "./ai.js";
+import { createSlackReplyWithMemory, shouldReplyToSlackThread } from "./ai.js";
 import { requireEnv } from "./env.js";
 import {
   addUserMemory,
@@ -269,11 +269,26 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
+  const modelMessages = await toModelMessages(threadMessages, event.user, {
+    token,
+    liveEvent: event
+  });
+  const shouldReply = await shouldReplyToSlackThread({
+    messages: modelMessages,
+    currentUserId: event.user
+  });
+
+  if (!shouldReply) {
+    await saveCachedThreadMessages(event.channel, event.thread_ts, threadMessages);
+    return;
+  }
+
   const reply = await createReplyForSlackEvent({
     token,
     threadMessages,
     event,
-    memories
+    memories,
+    modelMessages
   });
 
   if (!reply) {
