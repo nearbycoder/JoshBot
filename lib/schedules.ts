@@ -13,9 +13,53 @@ type SlackMessageEvent = {
 type SlackPostMessage = (options: {
   token: string;
   channel: string;
-  threadTs: string;
+  threadTs?: string;
   text: string;
 }) => Promise<unknown>;
+
+export type SlackScheduleContext = {
+  ownerUserId: string;
+  channel: string;
+  threadTs: string;
+};
+
+type ScheduleDestination = {
+  channel: string;
+  threadTs?: string;
+  channelName?: string;
+};
+
+type OptionalScheduleDestination = {
+  targetChannelId?: string;
+  targetChannelName?: string;
+};
+
+export type ScheduleToolInput =
+  | {
+      kind: "once";
+      task: string;
+      amount: number;
+      unit: "minutes" | "hours" | "days";
+    } & OptionalScheduleDestination
+  | {
+      kind: "interval";
+      task: string;
+      amount: number;
+      unit: "minutes" | "hours" | "days";
+    } & OptionalScheduleDestination
+  | {
+      kind: "daily";
+      task: string;
+      hour: number;
+      minute: number;
+    } & OptionalScheduleDestination
+  | {
+      kind: "weekly";
+      task: string;
+      weekday: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
+      hour: number;
+      minute: number;
+    } & OptionalScheduleDestination;
 
 type ScheduleKind = "once" | "interval" | "daily" | "weekly";
 
@@ -23,7 +67,8 @@ type ScheduleRecord = {
   id: string;
   ownerUserId: string;
   channel: string;
-  threadTs: string;
+  threadTs?: string;
+  channelName?: string;
   task: string;
   kind: ScheduleKind;
   createdAt: string;
@@ -108,13 +153,7 @@ export async function maybeHandleScheduleCommand(event: SlackMessageEvent) {
     return cancelUserSchedule(event.user, cancelMatch[2] ?? "");
   }
 
-  const parsed = parseScheduleRequest(trimmed);
-  if (!parsed) {
-    return null;
-  }
-
-  const schedule = await createSchedule(event, parsed);
-  return `Scheduled ${formatScheduleSummary(schedule)}.\nID: \`${schedule.id.slice(0, 8)}\``;
+  return null;
 }
 
 export function startScheduleRunner({
@@ -140,15 +179,35 @@ export function startScheduleRunner({
   }, intervalMs).unref();
 }
 
-async function createSchedule(event: SlackMessageEvent, parsed: ParsedSchedule) {
+export async function createScheduleFromTool(
+  context: SlackScheduleContext,
+  input: ScheduleToolInput
+) {
+  const parsed = scheduleToolInputToParsedSchedule(input);
+  const destination = getScheduleDestination(context, input);
+  const schedule = await createSchedule(context, parsed, destination);
+
+  return {
+    id: schedule.id,
+    summary: formatScheduleSummary(schedule),
+    nextRunAt: schedule.nextRunAt
+  };
+}
+
+async function createSchedule(
+  context: SlackScheduleContext,
+  parsed: ParsedSchedule,
+  destination: ScheduleDestination
+) {
   const redis = await requireRedis();
   const now = new Date();
   const id = randomUUID();
   const base = {
     id,
-    ownerUserId: event.user ?? "",
-    channel: event.channel,
-    threadTs: event.thread_ts ?? event.ts,
+    ownerUserId: context.ownerUserId,
+    channel: destination.channel,
+    threadTs: destination.threadTs,
+    channelName: destination.channelName,
     task: parsed.task,
     kind: parsed.kind,
     createdAt: now.toISOString(),
@@ -183,6 +242,71 @@ async function createSchedule(event: SlackMessageEvent, parsed: ParsedSchedule) 
   await redis.sAdd(getScheduleUserKey(schedule.ownerUserId), id);
 
   return schedule;
+}
+
+function getScheduleDestination(
+  context: SlackScheduleContext,
+  input: OptionalScheduleDestination
+): ScheduleDestination {
+  const targetChannelId = normalizeSlackChannelId(input.targetChannelId);
+
+  if (!targetChannelId) {
+    return {
+      channel: context.channel,
+      threadTs: context.threadTs
+    };
+  }
+
+  return {
+    channel: targetChannelId,
+    channelName: input.targetChannelName?.trim() || undefined
+  };
+}
+
+function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSchedule {
+  const task = cleanTask(input.task);
+
+  if (!task) {
+    throw new Error("Schedule task cannot be empty.");
+  }
+
+  if (input.kind === "once" || input.kind === "interval") {
+    const intervalMs = amountToMs(input.amount, input.unit);
+
+    if (intervalMs < MIN_INTERVAL_MS) {
+      throw new Error("Schedule delay must be at least 1 minute.");
+    }
+
+    return {
+      kind: input.kind,
+      task,
+      intervalMs,
+      firstRunAt: new Date(Date.now() + intervalMs)
+    };
+  }
+
+  if (input.kind === "daily") {
+    validateTime(input.hour, input.minute);
+
+    return {
+      kind: "daily",
+      task,
+      hour: input.hour,
+      minute: input.minute,
+      firstRunAt: nextDailyRun(input.hour, input.minute)
+    };
+  }
+
+  validateTime(input.hour, input.minute);
+
+  return {
+    kind: "weekly",
+    task,
+    weekday: WEEKDAYS.get(input.weekday) ?? 0,
+    hour: input.hour,
+    minute: input.minute,
+    firstRunAt: nextWeeklyRun(WEEKDAYS.get(input.weekday) ?? 0, input.hour, input.minute)
+  };
 }
 
 async function listUserSchedules(userId: string) {
@@ -290,158 +414,33 @@ async function runDueSchedules(postSlackMessage: SlackPostMessage) {
   }
 }
 
-function parseScheduleRequest(input: string): ParsedSchedule | null {
-  const text = input.replace(/^schedule\s+/i, "").trim();
-
-  const listLike = /^(list|show|cancel|delete|remove)\b/i.test(text);
-  if (!text || listLike) {
-    return null;
+function amountToMs(amount: number, unit: "minutes" | "hours" | "days") {
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error("Schedule amount must be a positive whole number.");
   }
 
-  const weeklyLeading = text.match(
-    /^every\s+(sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\s+at\s+([0-9]{1,2}(?::[0-9]{2})?)\s*(am|pm)?\s*(?:cst|cdt|ct)?\s+(?:do|remind\s+me\s+(?:to|about))\s+(.+)$/i
-  );
-  if (weeklyLeading) {
-    return parseWeekly(weeklyLeading[1] ?? "", weeklyLeading[2] ?? "", weeklyLeading[3], weeklyLeading[4] ?? "");
+  if (unit === "minutes") {
+    return amount * 60 * 1000;
   }
 
-  const dailyLeading = text.match(
-    /^every\s+day\s+at\s+([0-9]{1,2}(?::[0-9]{2})?)\s*(am|pm)?\s*(?:cst|cdt|ct)?\s+(?:do|remind\s+me\s+(?:to|about))\s+(.+)$/i
-  );
-  if (dailyLeading) {
-    return parseDaily(dailyLeading[1] ?? "", dailyLeading[2], dailyLeading[3] ?? "");
+  if (unit === "hours") {
+    return amount * 60 * 60 * 1000;
   }
 
-  const intervalLeading = text.match(
-    /^every\s+(\d+)\s+(minute|minutes|hour|hours|day|days)\s+(?:do|remind\s+me\s+(?:to|about))\s+(.+)$/i
-  );
-  if (intervalLeading) {
-    return parseInterval(intervalLeading[1] ?? "", intervalLeading[2] ?? "", intervalLeading[3] ?? "", true);
-  }
-
-  const inTrailing = text.match(
-    /^(?:remind\s+me\s+(?:to|about)?\s*)?(.+?)\s+in\s+(\d+)\s+(minute|minutes|hour|hours|day|days)$/i
-  );
-  if (inTrailing) {
-    return parseInterval(inTrailing[2] ?? "", inTrailing[3] ?? "", inTrailing[1] ?? "", false);
-  }
-
-  const inLeading = text.match(
-    /^in\s+(\d+)\s+(minute|minutes|hour|hours|day|days)\s+(?:remind\s+me\s+(?:to|about)?\s*)?(.+)$/i
-  );
-  if (inLeading) {
-    return parseInterval(inLeading[1] ?? "", inLeading[2] ?? "", inLeading[3] ?? "", false);
-  }
-
-  const weeklyTrailing = text.match(
-    /^(?:remind\s+me\s+(?:to|about)?\s*)?(.+?)\s+every\s+(sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)\s+at\s+([0-9]{1,2}(?::[0-9]{2})?)\s*(am|pm)?\s*(?:cst|cdt|ct)?$/i
-  );
-  if (weeklyTrailing) {
-    return parseWeekly(weeklyTrailing[2] ?? "", weeklyTrailing[3] ?? "", weeklyTrailing[4], weeklyTrailing[1] ?? "");
-  }
-
-  const dailyTrailing = text.match(
-    /^(?:remind\s+me\s+(?:to|about)?\s*)?(.+?)\s+every\s+day\s+at\s+([0-9]{1,2}(?::[0-9]{2})?)\s*(am|pm)?\s*(?:cst|cdt|ct)?$/i
-  );
-  if (dailyTrailing) {
-    return parseDaily(dailyTrailing[2] ?? "", dailyTrailing[3], dailyTrailing[1] ?? "");
-  }
-
-  return null;
+  return amount * DAY_MS;
 }
 
-function parseInterval(amountText: string, unit: string, taskText: string, repeats: boolean): ParsedSchedule | null {
-  const amount = Number(amountText);
-  const multiplier = unit.toLowerCase().startsWith("minute")
-    ? 60 * 1000
-    : unit.toLowerCase().startsWith("hour")
-      ? 60 * 60 * 1000
-      : DAY_MS;
-  const intervalMs = amount * multiplier;
-  const task = cleanTask(taskText);
-
-  if (!Number.isInteger(amount) || amount <= 0 || intervalMs < MIN_INTERVAL_MS || !task) {
-    return null;
+function validateTime(hour: number, minute: number) {
+  if (
+    !Number.isInteger(hour) ||
+    !Number.isInteger(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    throw new Error("Schedule time must use hour 0-23 and minute 0-59.");
   }
-
-  return {
-    kind: repeats ? "interval" : "once",
-    task,
-    intervalMs,
-    firstRunAt: new Date(Date.now() + intervalMs)
-  };
-}
-
-function parseDaily(timeText: string, meridiem: string | undefined, taskText: string): ParsedSchedule | null {
-  const time = parseTime(timeText, meridiem);
-  const task = cleanTask(taskText);
-
-  if (!time || !task) {
-    return null;
-  }
-
-  return {
-    kind: "daily",
-    task,
-    hour: time.hour,
-    minute: time.minute,
-    firstRunAt: nextDailyRun(time.hour, time.minute)
-  };
-}
-
-function parseWeekly(
-  weekdayText: string,
-  timeText: string,
-  meridiem: string | undefined,
-  taskText: string
-): ParsedSchedule | null {
-  const weekday = WEEKDAYS.get(weekdayText.toLowerCase());
-  const time = parseTime(timeText, meridiem);
-  const task = cleanTask(taskText);
-
-  if (weekday === undefined || !time || !task) {
-    return null;
-  }
-
-  return {
-    kind: "weekly",
-    task,
-    weekday,
-    hour: time.hour,
-    minute: time.minute,
-    firstRunAt: nextWeeklyRun(weekday, time.hour, time.minute)
-  };
-}
-
-function parseTime(timeText: string, meridiem: string | undefined) {
-  const [hourText, minuteText = "0"] = timeText.split(":");
-  let hour = Number(hourText);
-  const minute = Number(minuteText);
-
-  if (!Number.isInteger(hour) || !Number.isInteger(minute) || minute < 0 || minute > 59) {
-    return null;
-  }
-
-  if (meridiem) {
-    const normalized = meridiem.toLowerCase();
-    if (hour < 1 || hour > 12) {
-      return null;
-    }
-
-    if (normalized === "pm" && hour !== 12) {
-      hour += 12;
-    }
-
-    if (normalized === "am" && hour === 12) {
-      hour = 0;
-    }
-  }
-
-  if (hour < 0 || hour > 23) {
-    return null;
-  }
-
-  return { hour, minute };
 }
 
 function nextDailyRun(hour: number, minute: number) {
@@ -494,20 +493,33 @@ function getNextRunAt(schedule: ScheduleRecord) {
 
 function formatScheduleSummary(schedule: ScheduleRecord) {
   const next = formatDateTime(new Date(schedule.nextRunAt));
+  const destination = formatScheduleDestination(schedule);
 
   if (schedule.kind === "once") {
-    return `one-time reminder for ${next}: ${schedule.task}`;
+    return `one-time reminder for ${next}${destination}: ${schedule.task}`;
   }
 
   if (schedule.kind === "interval") {
-    return `every ${formatDuration(schedule.intervalMs ?? MIN_INTERVAL_MS)}, next ${next}: ${schedule.task}`;
+    return `every ${formatDuration(schedule.intervalMs ?? MIN_INTERVAL_MS)}, next ${next}${destination}: ${schedule.task}`;
   }
 
   if (schedule.kind === "daily") {
-    return `daily at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0)} CT, next ${next}: ${schedule.task}`;
+    return `daily at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0)} CT, next ${next}${destination}: ${schedule.task}`;
   }
 
-  return `every ${formatWeekday(schedule.weekday ?? 0)} at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0)} CT, next ${next}: ${schedule.task}`;
+  return `every ${formatWeekday(schedule.weekday ?? 0)} at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0)} CT, next ${next}${destination}: ${schedule.task}`;
+}
+
+function formatScheduleDestination(schedule: ScheduleRecord) {
+  if (schedule.threadTs) {
+    return "";
+  }
+
+  if (schedule.channelName) {
+    return ` in #${schedule.channelName}`;
+  }
+
+  return ` in <#${schedule.channel}>`;
 }
 
 function formatDuration(intervalMs: number) {
@@ -644,6 +656,21 @@ function getSchedulerIntervalMs() {
   }
 
   return parsedValue;
+}
+
+function normalizeSlackChannelId(input: string | undefined) {
+  if (!input) {
+    return null;
+  }
+
+  const trimmed = input.trim();
+  const channelIdMatch = trimmed.match(/#?(C[A-Z0-9]+|G[A-Z0-9]+|D[A-Z0-9]+)/i);
+
+  if (!channelIdMatch) {
+    return null;
+  }
+
+  return channelIdMatch[1]?.toUpperCase() ?? null;
 }
 
 function cleanTask(input: string) {

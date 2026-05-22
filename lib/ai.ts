@@ -3,6 +3,11 @@ import { Exa } from "exa-js";
 import { generateText, stepCountIs, tool, type ModelMessage } from "ai";
 import { z } from "zod";
 import { createArtifact } from "./artifacts.js";
+import {
+  createScheduleFromTool,
+  type ScheduleToolInput,
+  type SlackScheduleContext
+} from "./schedules.js";
 
 const SYSTEM_PROMPT = `You are Joshbot, a concise and pragmatic assistant.
 
@@ -16,7 +21,8 @@ Rules:
 - If context is missing, make the smallest reasonable assumption and say so briefly.
 - Use web search when the request depends on recent, fast-changing, or hard-to-recall facts.
 - When web search is used, ground the answer in the retrieved sources instead of guessing.
-- When the user asks you to create a standalone HTML page, Markdown document, report, note, draft, or other file-like artifact, use the createArtifact tool and include its preview link in your Slack reply.`;
+- When the user asks you to create a standalone HTML page, Markdown document, report, note, draft, or other file-like artifact, use the createArtifact tool and include its preview link in your Slack reply.
+- Joshbot can send proactive Slack reminders and recurring cron-style messages. When the user asks for a reminder, cron, recurring task, or scheduled proactive message, use the createSchedule tool. Do not say Joshbot cannot send proactive Slack messages.`;
 
 function getModel(modelId: string) {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -41,12 +47,14 @@ export async function createSlackReply(messages: ModelMessage[]) {
 export async function createSlackReplyWithMemory(
   messages: ModelMessage[],
   memories: string[],
-  currentUserId: string | undefined
+  currentUserId: string | undefined,
+  scheduleContext?: SlackScheduleContext
 ) {
   return generateSlackResponse({
     messages,
     memories,
-    currentUserId
+    currentUserId,
+    scheduleContext
   });
 }
 
@@ -110,12 +118,14 @@ async function generateSlackResponse({
   messages,
   memories,
   currentUserId,
-  extraSystem
+  extraSystem,
+  scheduleContext
 }: {
   messages: ModelMessage[];
   memories: string[];
   currentUserId: string | undefined;
   extraSystem?: string;
+  scheduleContext?: SlackScheduleContext;
 }) {
   const modelId = selectSlackModel(messages);
   const result = await generateText({
@@ -134,20 +144,94 @@ Extra Slack rules:
 - Use Slack mrkdwn, not standard Markdown.
 - For bold, use *bold* and never **bold**.
 - For links, use <https://example.com|label> and never [label](https://example.com).
+- If you create a schedule, confirm the schedule briefly and include the schedule ID returned by the tool.
 - If you use web search, end with a short 'Sources:' list using the URLs you relied on.`,
     messages,
-    tools: createSlackTools(),
+    tools: createSlackTools(scheduleContext),
     stopWhen: stepCountIs(5)
   });
 
   return normalizeSlackMrkdwn(result.text.trim());
 }
 
-function createSlackTools() {
+function createSlackTools(scheduleContext?: SlackScheduleContext) {
   return {
     ...(process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : {}),
+    ...(scheduleContext ? { createSchedule: createScheduleTool(scheduleContext) } : {}),
     createArtifact: createArtifactTool()
   };
+}
+
+function createScheduleTool(scheduleContext: SlackScheduleContext) {
+  return tool({
+    description:
+      "Create a proactive Slack reminder or recurring cron-style message for the current Slack user. Use this for natural-language scheduling requests. If the user mentions a channel, set targetChannelId to the Slack channel ID from text like 'josh (#C123...)' and targetChannelName to the visible channel name.",
+    inputSchema: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("once").describe("A one-time reminder after a delay."),
+        task: z.string().min(1).max(1000).describe("The reminder text to send later."),
+        amount: z.number().int().positive().describe("Delay amount."),
+        unit: z.enum(["minutes", "hours", "days"]).describe("Delay unit."),
+        targetChannelId: z
+          .string()
+          .optional()
+          .describe("Optional Slack channel ID to post into, such as C123ABC. Use only when the user mentions a channel."),
+        targetChannelName: z.string().optional().describe("Optional visible channel name, without #.")
+      }),
+      z.object({
+        kind: z.literal("interval").describe("A recurring reminder every N minutes, hours, or days."),
+        task: z.string().min(1).max(1000).describe("The message to send each time."),
+        amount: z.number().int().positive().describe("Repeat interval amount."),
+        unit: z.enum(["minutes", "hours", "days"]).describe("Repeat interval unit."),
+        targetChannelId: z
+          .string()
+          .optional()
+          .describe("Optional Slack channel ID to post into, such as C123ABC. Use only when the user mentions a channel."),
+        targetChannelName: z.string().optional().describe("Optional visible channel name, without #.")
+      }),
+      z.object({
+        kind: z.literal("daily").describe("A recurring daily reminder in America/Chicago time."),
+        task: z.string().min(1).max(1000).describe("The message to send each day."),
+        hour: z.number().int().min(0).max(23).describe("24-hour clock hour in America/Chicago time."),
+        minute: z.number().int().min(0).max(59).describe("Minute in America/Chicago time."),
+        targetChannelId: z
+          .string()
+          .optional()
+          .describe("Optional Slack channel ID to post into, such as C123ABC. Use only when the user mentions a channel."),
+        targetChannelName: z.string().optional().describe("Optional visible channel name, without #.")
+      }),
+      z.object({
+        kind: z.literal("weekly").describe("A recurring weekly reminder in America/Chicago time."),
+        task: z.string().min(1).max(1000).describe("The message to send each week."),
+        weekday: z.enum([
+          "sunday",
+          "monday",
+          "tuesday",
+          "wednesday",
+          "thursday",
+          "friday",
+          "saturday"
+        ]),
+        hour: z.number().int().min(0).max(23).describe("24-hour clock hour in America/Chicago time."),
+        minute: z.number().int().min(0).max(59).describe("Minute in America/Chicago time."),
+        targetChannelId: z
+          .string()
+          .optional()
+          .describe("Optional Slack channel ID to post into, such as C123ABC. Use only when the user mentions a channel."),
+        targetChannelName: z.string().optional().describe("Optional visible channel name, without #.")
+      })
+    ]),
+    execute: async (input) => {
+      const schedule = await createScheduleFromTool(scheduleContext, input as ScheduleToolInput);
+
+      return {
+        id: schedule.id.slice(0, 8),
+        fullId: schedule.id,
+        summary: schedule.summary,
+        nextRunAt: schedule.nextRunAt
+      };
+    }
+  });
 }
 
 function createArtifactTool() {

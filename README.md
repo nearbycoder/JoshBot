@@ -135,6 +135,7 @@ Joshbot can persist user-owned reminders and recurring jobs in Redis. Each sched
 Supported examples:
 
 - `@JoshBot remind me about the deploy in 10 minutes`
+- `@JoshBot remind me in #josh to check the logs in 5 minutes`
 - `@JoshBot in 2 hours remind me to check the logs`
 - `@JoshBot every 30 minutes do check the queue`
 - `@JoshBot every monday at 6pm CST do send the weekly metrics`

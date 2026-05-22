@@ -443,7 +443,7 @@ export async function postSlackMessage({
 }: {
   token: string;
   channel: string;
-  threadTs: string;
+  threadTs?: string;
   text: string;
 }) {
   return slackApi<SlackPostMessageResponse>({
@@ -452,7 +452,7 @@ export async function postSlackMessage({
     path: "chat.postMessage",
     body: {
       channel,
-      thread_ts: threadTs,
+      ...(threadTs ? { thread_ts: threadTs } : {}),
       text,
       mrkdwn: true
     }
@@ -612,7 +612,12 @@ async function createReplyForSlackEvent({
         liveEvent: event
       }));
 
-    return await createSlackReplyWithMemory(multimodalMessages, memories, event.user);
+    return await createSlackReplyWithMemory(
+      multimodalMessages,
+      memories,
+      event.user,
+      getScheduleContext(event)
+    );
   } catch (error) {
     if (!hasImageAttachments(event)) {
       throw error;
@@ -628,7 +633,8 @@ async function createReplyForSlackEvent({
     const fallbackReply = await createSlackReplyWithMemory(
       await toModelMessages(threadMessages, event.user),
       memories,
-      event.user
+      event.user,
+      getScheduleContext(event)
     );
 
     if (!fallbackReply) {
@@ -902,6 +908,18 @@ function formatSpeakerLabel(userId: string | undefined, currentUserId: string | 
   }
 
   return `Other user (${userId})`;
+}
+
+function getScheduleContext(event: SlackMessageEvent) {
+  if (!event.user) {
+    return undefined;
+  }
+
+  return {
+    ownerUserId: event.user,
+    channel: event.channel,
+    threadTs: event.thread_ts ?? event.ts
+  };
 }
 
 function hasImageAttachments(event: SlackMessageEvent) {
