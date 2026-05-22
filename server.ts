@@ -4,10 +4,12 @@ import { handleArtifactRequest } from "./lib/artifacts.js";
 import {
   isDirectMentionToBot,
   isIgnorableSlackEvent,
+  postSlackMessage,
   respondToSlackMention,
   respondToSlackThreadReply,
   verifySlackRequest
 } from "./lib/slack.js";
+import { startScheduleRunner } from "./lib/schedules.js";
 
 loadEnv({ path: ".env.local" });
 loadEnv();
@@ -103,6 +105,8 @@ const server = createServer(async (request, response) => {
 server.listen(port, () => {
   console.log(`Joshbot listening on http://localhost:${port}`);
 });
+
+startScheduleRunner({ postSlackMessage });
 
 function readBody(request: NodeJS.ReadableStream) {
   return new Promise<string>((resolve, reject) => {

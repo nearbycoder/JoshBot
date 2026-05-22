@@ -9,6 +9,7 @@ import {
   removeUserMemory
 } from "./memory.js";
 import { getRedisClient } from "./redis.js";
+import { maybeHandleScheduleCommand } from "./schedules.js";
 import { maybeHandleSlackSkillCommand } from "./skills.js";
 
 type SlackHeaders = Headers | Record<string, string | string[] | undefined>;
@@ -131,13 +132,15 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   const incomingMessage = await createCachedUserMessage(token, event);
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
   const commandReply = await maybeHandleMemoryCommand(event);
+  const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
 
-  if (commandReply) {
+  if (commandReply || scheduleReply) {
+    const replyText = commandReply ?? scheduleReply ?? "";
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
       threadTs,
-      text: commandReply
+      text: replyText
     });
 
     await saveCachedThreadMessages(
@@ -145,7 +148,7 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       threadTs,
       appendCachedThreadMessage(threadMessages, {
         role: "assistant",
-        content: commandReply,
+        content: replyText,
         ts: postedReply.ts
       })
     );
@@ -265,6 +268,28 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   });
 
   if (!hasAssistantReply) {
+    return;
+  }
+
+  const scheduleReply = await maybeHandleScheduleCommand(event);
+
+  if (scheduleReply) {
+    const postedReply = await postSlackMessage({
+      token,
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      text: scheduleReply
+    });
+
+    await saveCachedThreadMessages(
+      event.channel,
+      event.thread_ts,
+      appendCachedThreadMessage(threadMessages, {
+        role: "assistant",
+        content: scheduleReply,
+        ts: postedReply.ts
+      })
+    );
     return;
   }
 
@@ -410,7 +435,7 @@ async function loadSlackThread({
   };
 }
 
-async function postSlackMessage({
+export async function postSlackMessage({
   token,
   channel,
   threadTs,

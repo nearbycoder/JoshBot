@@ -44,6 +44,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
+   - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often Joshbot checks Redis for due reminders and crons
 
 4. Start the process:
 
@@ -126,6 +127,22 @@ Joshbot can persist simple per-user memory in Redis across threads. Supported co
 `show my memory` returns a numbered list, and `forget ...` can remove by exact text, unique partial match, or number.
 
 Saved memories are injected into future replies for that Slack user when relevant.
+
+## Reminders and crons
+
+Joshbot can persist user-owned reminders and recurring jobs in Redis. Each schedule is owned by the Slack user who created it and posts back into the channel/thread where it was created.
+
+Supported examples:
+
+- `@JoshBot remind me about the deploy in 10 minutes`
+- `@JoshBot in 2 hours remind me to check the logs`
+- `@JoshBot every 30 minutes do check the queue`
+- `@JoshBot every monday at 6pm CST do send the weekly metrics`
+- `@JoshBot every day at 9am CT remind me to triage alerts`
+- `@JoshBot list my reminders`
+- `@JoshBot cancel reminder abc12345`
+
+Recurring daily and weekly schedules are interpreted in America/Chicago time. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal Joshbot replies.
 
 ## Skills
 
