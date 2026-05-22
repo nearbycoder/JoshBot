@@ -42,13 +42,16 @@ Extra Slack rules:
 - Keep formatting light.
 - Aim for a response that fits naturally in a Slack thread.
 - If the request is ambiguous, answer the likeliest interpretation instead of stalling.
+- Use Slack mrkdwn, not standard Markdown.
+- For bold, use *bold* and never **bold**.
+- For links, use <https://example.com|label> and never [label](https://example.com).
 - If you use web search, end with a short 'Sources:' list using the URLs you relied on.`,
     messages,
     tools: process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : undefined,
     stopWhen: stepCountIs(5)
   });
 
-  return result.text.trim();
+  return normalizeSlackMrkdwn(result.text.trim());
 }
 
 function createExaSearchTool() {
@@ -107,4 +110,16 @@ function createExaSearchTool() {
       };
     }
   });
+}
+
+function normalizeSlackMrkdwn(input: string) {
+  return input
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "<$2|$1>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "*$1*")
+    .replace(/__(.+?)__/g, "_$1_")
+    .replace(/`{3}(\w+)?\n([\s\S]*?)```/g, (_match, language: string | undefined, code: string) => {
+      const prefix = language ? `${language}\n` : "";
+      return `\`\`\`${prefix}${code.trimEnd()}\`\`\``;
+    })
+    .replace(/\n{3,}/g, "\n\n");
 }
