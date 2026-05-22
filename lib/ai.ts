@@ -204,7 +204,7 @@ function createScheduleTool(scheduleContext: SlackScheduleContext) {
 
   return tool({
     description:
-      "Create a proactive Slack reminder or recurring cron-style message for the current Slack user. Use this for natural-language scheduling requests. If the user mentions a channel, set targetChannelId to the Slack channel ID from text like 'josh (#C123...)' and targetChannelName to the visible channel name.",
+      `Create a proactive Slack reminder or recurring cron-style message for the current Slack user. Use this for natural-language scheduling requests. If the user mentions a channel, set targetChannelId and targetChannelName from these raw Slack channel mentions when available: ${JSON.stringify(scheduleContext.mentionedChannels)}.`,
     inputSchema: z.discriminatedUnion("kind", [
       z.object({
         kind: z.literal("once").describe("A one-time reminder after a delay."),

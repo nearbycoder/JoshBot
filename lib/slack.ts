@@ -983,8 +983,16 @@ function getScheduleContext(event: SlackMessageEvent) {
   return {
     ownerUserId: event.user,
     channel: event.channel,
-    threadTs: event.thread_ts ?? event.ts
+    threadTs: event.thread_ts ?? event.ts,
+    mentionedChannels: extractMentionedChannels(event.text)
   };
+}
+
+function extractMentionedChannels(input: string) {
+  return Array.from(input.matchAll(/<#([CGD][A-Z0-9]+)(?:\|([^>]+))?>/gi)).map((match) => ({
+    id: (match[1] ?? "").toUpperCase(),
+    name: match[2]
+  }));
 }
 
 function hasImageAttachments(event: SlackMessageEvent) {

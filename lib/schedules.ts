@@ -26,6 +26,10 @@ export type SlackScheduleContext = {
   ownerUserId: string;
   channel: string;
   threadTs: string;
+  mentionedChannels: Array<{
+    id: string;
+    name?: string;
+  }>;
 };
 
 type ScheduleDestination = {
@@ -259,10 +263,10 @@ function getScheduleDestination(
   context: SlackScheduleContext,
   input: ScheduleToolInput
 ): ScheduleDestination {
-  const targetChannelId = normalizeSlackChannelId(input.targetChannelId);
+  const targetChannel = getTargetChannel(context, input);
   const responseMode = input.responseMode ?? inferResponseMode(input.task);
 
-  if (!targetChannelId) {
+  if (!targetChannel) {
     return {
       channel: context.channel,
       threadTs: context.threadTs,
@@ -271,10 +275,39 @@ function getScheduleDestination(
   }
 
   return {
-    channel: targetChannelId,
-    channelName: input.targetChannelName?.trim() || undefined,
+    channel: targetChannel.id,
+    channelName: targetChannel.name,
     responseMode
   };
+}
+
+function getTargetChannel(context: SlackScheduleContext, input: OptionalScheduleDestination) {
+  const targetChannelId = normalizeSlackChannelId(input.targetChannelId);
+
+  if (targetChannelId) {
+    const mentionedChannel = context.mentionedChannels.find((channel) => channel.id === targetChannelId);
+    return {
+      id: targetChannelId,
+      name: input.targetChannelName?.trim() || mentionedChannel?.name
+    };
+  }
+
+  const targetChannelName = input.targetChannelName?.trim().replace(/^#/, "").toLowerCase();
+  if (targetChannelName) {
+    const mentionedChannel = context.mentionedChannels.find(
+      (channel) => channel.name?.toLowerCase() === targetChannelName
+    );
+
+    if (mentionedChannel) {
+      return mentionedChannel;
+    }
+  }
+
+  if (context.mentionedChannels.length === 1) {
+    return context.mentionedChannels[0] ?? null;
+  }
+
+  return null;
 }
 
 function inferResponseMode(task: string): "reminder" | "prompt" {
