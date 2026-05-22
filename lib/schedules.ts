@@ -208,6 +208,34 @@ export async function createScheduleFromTool(
   };
 }
 
+export async function listSchedulesFromTool(context: SlackScheduleContext) {
+  return getUserScheduleSummaries(context.ownerUserId);
+}
+
+export async function cancelScheduleFromTool(context: SlackScheduleContext, idPrefix: string) {
+  return cancelUserSchedule(context.ownerUserId, idPrefix);
+}
+
+export async function updateScheduleFromTool(
+  context: SlackScheduleContext,
+  idPrefix: string,
+  input: ScheduleToolInput
+) {
+  const existingSchedule = await findUserScheduleByPrefix(context.ownerUserId, idPrefix);
+
+  if (!existingSchedule.ok) {
+    return existingSchedule.message;
+  }
+
+  await deleteSchedule(existingSchedule.schedule.id, context.ownerUserId);
+
+  const parsed = scheduleToolInputToParsedSchedule(input);
+  const destination = getScheduleDestinationForUpdate(context, input, existingSchedule.schedule);
+  const schedule = await createSchedule(context, parsed, destination);
+
+  return `Updated schedule \`${existingSchedule.schedule.id.slice(0, 8)}\` -> \`${schedule.id.slice(0, 8)}\`: ${formatScheduleSummary(schedule)}`;
+}
+
 async function createSchedule(
   context: SlackScheduleContext,
   parsed: ParsedSchedule,
@@ -278,6 +306,29 @@ function getScheduleDestination(
     channel: targetChannel.id,
     channelName: targetChannel.name,
     responseMode
+  };
+}
+
+function getScheduleDestinationForUpdate(
+  context: SlackScheduleContext,
+  input: ScheduleToolInput,
+  existingSchedule: ScheduleRecord
+): ScheduleDestination {
+  const requestedDestination = getScheduleDestination(context, input);
+  const requestedChannelId = normalizeSlackChannelId(input.targetChannelId);
+  const requestedChannelName = input.targetChannelName?.trim();
+  const hasExplicitDestination =
+    Boolean(requestedChannelId || requestedChannelName || context.mentionedChannels.length === 1);
+
+  if (hasExplicitDestination) {
+    return requestedDestination;
+  }
+
+  return {
+    channel: existingSchedule.channel,
+    threadTs: existingSchedule.threadTs,
+    channelName: existingSchedule.channelName,
+    responseMode: input.responseMode ?? existingSchedule.responseMode ?? inferResponseMode(input.task)
   };
 }
 
@@ -369,6 +420,10 @@ function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSche
 }
 
 async function listUserSchedules(userId: string) {
+  return getUserScheduleSummaries(userId);
+}
+
+async function getUserScheduleSummaries(userId: string) {
   const redis = await requireRedis();
   const ids = await redis.sMembers(getScheduleUserKey(userId));
   const schedules = (
@@ -389,23 +444,14 @@ async function listUserSchedules(userId: string) {
 }
 
 async function cancelUserSchedule(userId: string, idPrefix: string) {
-  const redis = await requireRedis();
-  const ids = await redis.sMembers(getScheduleUserKey(userId));
-  const matches = ids.filter((id) => id.startsWith(idPrefix));
+  const match = await findUserScheduleByPrefix(userId, idPrefix);
 
-  if (matches.length === 0) {
-    return "I couldn't find one of your reminders or crons with that ID.";
+  if (!match.ok) {
+    return match.message;
   }
 
-  if (matches.length > 1) {
-    return `That ID matches more than one schedule. Use a longer ID:\n${matches
-      .map((id) => `- \`${id.slice(0, 12)}\``)
-      .join("\n")}`;
-  }
-
-  const id = matches[0] ?? "";
-  await deleteSchedule(id, userId);
-  return `Canceled schedule \`${id.slice(0, 8)}\`.`;
+  await deleteSchedule(match.schedule.id, userId);
+  return `Canceled schedule \`${match.schedule.id.slice(0, 8)}\`.`;
 }
 
 async function runDueSchedules({
@@ -711,6 +757,41 @@ async function loadSchedule(id: string) {
   }
 
   return JSON.parse(payload) as ScheduleRecord;
+}
+
+async function findUserScheduleByPrefix(userId: string, idPrefix: string): Promise<
+  | { ok: true; schedule: ScheduleRecord }
+  | { ok: false; message: string }
+> {
+  const redis = await requireRedis();
+  const normalizedPrefix = idPrefix.trim();
+
+  if (!normalizedPrefix) {
+    return { ok: false, message: "Tell me the schedule ID to use." };
+  }
+
+  const ids = await redis.sMembers(getScheduleUserKey(userId));
+  const matches = ids.filter((id) => id.startsWith(normalizedPrefix));
+
+  if (matches.length === 0) {
+    return { ok: false, message: "I couldn't find one of your reminders or crons with that ID." };
+  }
+
+  if (matches.length > 1) {
+    return {
+      ok: false,
+      message: `That ID matches more than one schedule. Use a longer ID:\n${matches
+        .map((id) => `- \`${id.slice(0, 12)}\``)
+        .join("\n")}`
+    };
+  }
+
+  const schedule = await loadSchedule(matches[0] ?? "");
+  if (!schedule) {
+    return { ok: false, message: "That schedule no longer exists." };
+  }
+
+  return { ok: true, schedule };
 }
 
 async function deleteSchedule(id: string, userId: string) {

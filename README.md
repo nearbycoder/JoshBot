@@ -146,6 +146,7 @@ Supported examples:
 - `@JoshBot every day at 9am CT remind me to triage alerts`
 - `@JoshBot list my reminders`
 - `@JoshBot cancel reminder abc12345`
+- `@JoshBot update schedule abc12345 to every weekday at 9am remind me to triage alerts`
 
 Recurring daily and weekly schedules are interpreted in America/Chicago time. Reminder-style schedules post the saved reminder text. Prompt-style schedules, such as "post what is trending", run Joshbot at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal Joshbot replies.
 
