@@ -37,6 +37,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `REDIS_URL`: optional Redis connection string for caching Slack thread state
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
+   - `SLACK_EVENT_LOCK_TTL_SECONDS`: defaults to `600`; prevents duplicate Slack event processing across retries or concurrent instances
    - `MEMORY_MAX_ITEMS`: defaults to `20`; cap for saved per-user memory items
    - `SLACK_BOT_TOKEN`: Bot User OAuth Token from your Slack app
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
@@ -114,6 +115,8 @@ Set `ARTIFACT_BASE_URL` to the same public HTTPS origin you use for Slack events
 Joshbot does not send the entire Slack thread back to the model on every reply. It keeps the first message in the thread plus the most recent turns, controlled by `SLACK_CONTEXT_MESSAGES`. This keeps latency and token cost from growing linearly with long threads.
 
 If `REDIS_URL` is set, Joshbot also caches trimmed thread state in Redis, so normal follow-up replies can avoid fetching the full Slack thread again. On a cold cache or restart, it falls back to Slack and repopulates Redis.
+
+Joshbot also uses Redis to lock each Slack message event before generating a reply. This prevents duplicate Slack deliveries or multiple running instances from replying to the same message more than once. Without Redis, a local in-memory lock still protects a single process.
 
 ## Memory
 

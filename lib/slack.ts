@@ -81,7 +81,9 @@ type SlackFileInfoResponse =
 
 const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
 const DEFAULT_REDIS_THREAD_TTL_SECONDS = 60 * 60 * 24 * 7;
+const DEFAULT_SLACK_EVENT_LOCK_TTL_SECONDS = 60 * 10;
 const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
+const localEventLocks = new Map<string, number>();
 
 export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const signature = getHeader(headers, "x-slack-signature");
@@ -127,6 +129,11 @@ export function isDirectMentionToBot(text: string) {
 }
 
 export async function respondToSlackMention(event: SlackMessageEvent) {
+  const lock = await acquireSlackEventLock(event, "mention");
+  if (!lock.acquired) {
+    return;
+  }
+
   const token = requireEnv("SLACK_BOT_TOKEN");
   const threadTs = event.thread_ts ?? event.ts;
   const incomingMessage = await createCachedUserMessage(token, event);
@@ -232,6 +239,11 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
 
 export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   if (!event.thread_ts || event.thread_ts === event.ts) {
+    return;
+  }
+
+  const lock = await acquireSlackEventLock(event, "thread-reply");
+  if (!lock.acquired) {
     return;
   }
 
@@ -896,6 +908,59 @@ function getRedisThreadTtlSeconds() {
   }
 
   return parsedValue;
+}
+
+async function acquireSlackEventLock(event: SlackMessageEvent, eventType: string) {
+  const key = getSlackEventLockKey(event, eventType);
+  const ttlSeconds = getSlackEventLockTtlSeconds();
+  const redis = await getRedisClient();
+
+  if (redis) {
+    const result = await redis.set(key, "1", {
+      condition: "NX",
+      expiration: {
+        type: "EX",
+        value: ttlSeconds
+      }
+    });
+
+    return { acquired: result === "OK" };
+  }
+
+  pruneLocalEventLocks();
+
+  if (localEventLocks.has(key)) {
+    return { acquired: false };
+  }
+
+  localEventLocks.set(key, Date.now() + ttlSeconds * 1000);
+  return { acquired: true };
+}
+
+function getSlackEventLockKey(event: SlackMessageEvent, eventType: string) {
+  const threadTs = event.thread_ts ?? event.ts;
+  return `slack-event-lock:${eventType}:${event.channel}:${threadTs}:${event.ts}`;
+}
+
+function getSlackEventLockTtlSeconds() {
+  const rawValue = process.env.SLACK_EVENT_LOCK_TTL_SECONDS;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 60) {
+    return DEFAULT_SLACK_EVENT_LOCK_TTL_SECONDS;
+  }
+
+  return parsedValue;
+}
+
+function pruneLocalEventLocks() {
+  const now = Date.now();
+
+  for (const [key, expiresAt] of localEventLocks) {
+    if (expiresAt <= now) {
+      localEventLocks.delete(key);
+    }
+  }
 }
 
 function formatSpeakerLabel(userId: string | undefined, currentUserId: string | undefined) {
