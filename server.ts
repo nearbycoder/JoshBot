@@ -74,13 +74,13 @@ const server = createServer(async (request, response) => {
     if (payload.type === "event_callback" && !isIgnorableSlackEvent(payload.event)) {
       if (payload.event.type === "app_mention") {
         void respondToSlackMention(payload.event).catch((error) => {
-          console.error("Slack mention handling failed:", error);
+          console.error(`Slack mention handling failed: ${summarizeError(error)}`);
         });
       }
 
       if (payload.event.type === "message" && !isDirectMentionToBot(payload.event.text)) {
         void respondToSlackThreadReply(payload.event).catch((error) => {
-          console.error("Slack thread reply handling failed:", error);
+          console.error(`Slack thread reply handling failed: ${summarizeError(error)}`);
         });
       }
     }
@@ -127,4 +127,12 @@ function sendText(
   response.statusCode = statusCode;
   response.setHeader("content-type", "text/plain; charset=utf-8");
   response.end(body);
+}
+
+function summarizeError(error: unknown) {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  return String(error);
 }

@@ -91,6 +91,10 @@ export function verifySlackRequest(body: string, headers: SlackHeaders) {
     return false;
   }
 
+  if (!signature.startsWith("v0=")) {
+    return false;
+  }
+
   const ageInSeconds = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
   if (!Number.isFinite(ageInSeconds) || ageInSeconds > 60 * 5) {
     return false;
@@ -99,6 +103,10 @@ export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const payload = `v0:${timestamp}:${body}`;
   const digest = crypto.createHmac("sha256", signingSecret).update(payload).digest("hex");
   const expected = `v0=${digest}`;
+
+  if (expected.length !== signature.length) {
+    return false;
+  }
 
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
@@ -154,7 +162,7 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       });
     }
   } catch (error) {
-    console.warn("Falling back to current Slack event text:", error);
+    console.warn(`Falling back to current Slack event text: ${summarizeError(error)}`);
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
@@ -566,7 +574,7 @@ async function createReplyForSlackEvent({
       throw error;
     }
 
-    console.warn("Falling back to text-only Slack attachment context:", error);
+    console.warn(`Falling back to text-only Slack attachment context: ${summarizeError(error)}`);
 
     const attachmentErrorMessage = explainImageAttachmentError(error);
     if (attachmentErrorMessage) {
@@ -617,7 +625,7 @@ async function enrichSlackFiles(token: string, files: SlackFile[]) {
 
         return response.file;
       } catch (error) {
-        console.warn(`Unable to hydrate Slack file ${file.id}:`, error);
+        console.warn(`Unable to hydrate Slack file ${file.id}: ${summarizeError(error)}`);
         return file;
       }
     })
@@ -921,6 +929,14 @@ function explainImageAttachmentError(error: unknown) {
   }
 
   return null;
+}
+
+function summarizeError(error: unknown) {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  return String(error);
 }
 
 function getSlackContextMessageLimit() {
