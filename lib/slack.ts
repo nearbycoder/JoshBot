@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { type ModelMessage } from "ai";
 import { createSlackReply } from "./ai.js";
 import { requireEnv } from "./env.js";
+import { getRedisClient } from "./redis.js";
 
 type SlackHeaders = Headers | Record<string, string | string[] | undefined>;
 
@@ -34,7 +35,14 @@ type SlackMessageEvent = {
   subtype?: string;
 };
 
+type CachedThreadMessage = {
+  role: "user" | "assistant";
+  content: string;
+  ts?: string;
+};
+
 const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
+const DEFAULT_REDIS_THREAD_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const signature = getHeader(headers, "x-slack-signature");
@@ -74,32 +82,44 @@ export function isDirectMentionToBot(text: string) {
 export async function respondToSlackMention(event: SlackMessageEvent) {
   const token = requireEnv("SLACK_BOT_TOKEN");
   const threadTs = event.thread_ts ?? event.ts;
-  const fallbackPrompt = stripSlackFormatting(event.text);
-
-  let messages: ModelMessage[] = [{ role: "user", content: fallbackPrompt }];
+  const incomingMessage = createCachedUserMessage(event);
+  let threadMessages: CachedThreadMessage[] = [incomingMessage];
 
   try {
-    messages = await loadSlackThreadAsModelMessages({
-      token,
-      channel: event.channel,
-      threadTs
-    });
+    if (event.thread_ts && event.thread_ts !== event.ts) {
+      threadMessages = await loadThreadMessagesForIncomingEvent({
+        token,
+        channel: event.channel,
+        threadTs,
+        incomingMessage
+      });
+    }
   } catch (error) {
     console.warn("Falling back to current Slack event text:", error);
   }
 
-  const reply = await createSlackReply(messages);
+  const reply = await createSlackReply(toModelMessages(threadMessages));
 
   if (!reply) {
     return;
   }
 
-  await postSlackMessage({
+  const postedReply = await postSlackMessage({
     token,
     channel: event.channel,
     threadTs,
     text: reply
   });
+
+  await saveCachedThreadMessages(
+    event.channel,
+    threadTs,
+    appendCachedThreadMessage(threadMessages, {
+      role: "assistant",
+      content: reply,
+      ts: postedReply.ts
+    })
+  );
 }
 
 export async function respondToSlackThreadReply(event: SlackMessageEvent) {
@@ -108,47 +128,87 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   }
 
   const token = requireEnv("SLACK_BOT_TOKEN");
-  const thread = await loadSlackThread({
+  const incomingMessage = createCachedUserMessage(event);
+  const { threadMessages, hasAssistantReply } = await loadThreadMessagesForReply({
     token,
     channel: event.channel,
-    threadTs: event.thread_ts
+    threadTs: event.thread_ts,
+    incomingMessage
   });
-
-  const botUserId = process.env.SLACK_BOT_USER_ID;
-  const hasAssistantReply = thread.messages.some(
-    (message) =>
-      Boolean(message.bot_id) || (botUserId ? message.user === botUserId : false)
-  );
 
   if (!hasAssistantReply) {
     return;
   }
 
-  const reply = await createSlackReply(thread.modelMessages);
+  const reply = await createSlackReply(toModelMessages(threadMessages));
 
   if (!reply) {
     return;
   }
 
-  await postSlackMessage({
+  const postedReply = await postSlackMessage({
     token,
     channel: event.channel,
     threadTs: event.thread_ts,
     text: reply
   });
+
+  await saveCachedThreadMessages(
+    event.channel,
+    event.thread_ts,
+    appendCachedThreadMessage(threadMessages, {
+      role: "assistant",
+      content: reply,
+      ts: postedReply.ts
+    })
+  );
 }
 
-async function loadSlackThreadAsModelMessages({
+async function loadThreadMessagesForIncomingEvent({
   token,
   channel,
-  threadTs
+  threadTs,
+  incomingMessage
 }: {
   token: string;
   channel: string;
   threadTs: string;
+  incomingMessage: CachedThreadMessage;
 }) {
+  const cachedMessages = await loadCachedThreadMessages(channel, threadTs);
+
+  if (cachedMessages) {
+    return appendCachedThreadMessage(cachedMessages, incomingMessage);
+  }
+
   const thread = await loadSlackThread({ token, channel, threadTs });
-  return thread.modelMessages;
+  await saveCachedThreadMessages(channel, threadTs, thread.threadMessages);
+  return thread.threadMessages;
+}
+
+async function loadThreadMessagesForReply({
+  token,
+  channel,
+  threadTs,
+  incomingMessage
+}: {
+  token: string;
+  channel: string;
+  threadTs: string;
+  incomingMessage: CachedThreadMessage;
+}) {
+  const cachedMessages = await loadCachedThreadMessages(channel, threadTs);
+
+  if (cachedMessages) {
+    return {
+      threadMessages: appendCachedThreadMessage(cachedMessages, incomingMessage),
+      hasAssistantReply: cachedMessages.some((message) => message.role === "assistant")
+    };
+  }
+
+  const thread = await loadSlackThread({ token, channel, threadTs });
+  await saveCachedThreadMessages(channel, threadTs, thread.threadMessages);
+  return thread;
 }
 
 async function loadSlackThread({
@@ -167,27 +227,29 @@ async function loadSlackThread({
   });
 
   const botUserId = process.env.SLACK_BOT_USER_ID;
+  const threadMessages = trimThreadContext(
+    response.messages
+      .map<CachedThreadMessage | null>((message) => {
+        const cleanedText = stripSlackFormatting(message.text).trim();
+        if (!cleanedText) {
+          return null;
+        }
 
-  const modelMessages = response.messages
-    .map<ModelMessage | null>((message) => {
-      const cleanedText = stripSlackFormatting(message.text).trim();
-      if (!cleanedText) {
-        return null;
-      }
+        const isAssistantMessage =
+          Boolean(message.bot_id) || (botUserId ? message.user === botUserId : false);
 
-      const isAssistantMessage =
-        Boolean(message.bot_id) || (botUserId ? message.user === botUserId : false);
-
-      return {
-        role: isAssistantMessage ? "assistant" : "user",
-        content: cleanedText
-      };
-    })
-    .filter((message): message is ModelMessage => message !== null);
+        return {
+          role: isAssistantMessage ? "assistant" : "user",
+          content: cleanedText,
+          ts: message.ts
+        };
+      })
+      .filter((message): message is CachedThreadMessage => message !== null)
+  );
 
   return {
-    messages: response.messages,
-    modelMessages: trimThreadContext(modelMessages)
+    threadMessages,
+    hasAssistantReply: threadMessages.some((message) => message.role === "assistant")
   };
 }
 
@@ -202,7 +264,7 @@ async function postSlackMessage({
   threadTs: string;
   text: string;
 }) {
-  await slackApi<SlackPostMessageResponse>({
+  return slackApi<SlackPostMessageResponse>({
     token,
     method: "POST",
     path: "chat.postMessage",
@@ -248,6 +310,27 @@ async function slackApi<T extends { ok: boolean }>({
   return payload as Extract<T, { ok: true }>;
 }
 
+function createCachedUserMessage(event: SlackMessageEvent): CachedThreadMessage {
+  return {
+    role: "user",
+    content: stripSlackFormatting(event.text),
+    ts: event.ts
+  };
+}
+
+function appendCachedThreadMessage(
+  messages: CachedThreadMessage[],
+  message: CachedThreadMessage
+) {
+  const lastMessage = messages.at(-1);
+
+  if (message.ts && lastMessage?.ts === message.ts) {
+    return messages;
+  }
+
+  return trimThreadContext([...messages, message]);
+}
+
 function stripSlackFormatting(input: string) {
   const botUserId = process.env.SLACK_BOT_USER_ID;
 
@@ -276,7 +359,7 @@ function getHeader(headers: SlackHeaders, name: string) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function trimThreadContext(messages: ModelMessage[]) {
+function trimThreadContext(messages: CachedThreadMessage[]) {
   const maxMessages = getSlackContextMessageLimit();
 
   if (messages.length <= maxMessages) {
@@ -286,11 +369,85 @@ function trimThreadContext(messages: ModelMessage[]) {
   const rootMessage = messages[0];
   const recentMessages = messages.slice(-(maxMessages - 1));
 
-  if (recentMessages.includes(rootMessage)) {
+  if (recentMessages.some((message) => message.ts === rootMessage.ts)) {
     return recentMessages;
   }
 
   return [rootMessage, ...recentMessages];
+}
+
+function toModelMessages(messages: CachedThreadMessage[]): ModelMessage[] {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content
+  }));
+}
+
+async function loadCachedThreadMessages(channel: string, threadTs: string) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return null;
+  }
+
+  const payload = await redis.get(getThreadCacheKey(channel, threadTs));
+
+  if (!payload) {
+    return null;
+  }
+
+  const parsed = JSON.parse(payload) as { messages?: CachedThreadMessage[] };
+
+  if (!Array.isArray(parsed.messages)) {
+    return null;
+  }
+
+  return trimThreadContext(
+    parsed.messages.filter(
+      (message): message is CachedThreadMessage =>
+        Boolean(
+          message &&
+            (message.role === "user" || message.role === "assistant") &&
+            typeof message.content === "string"
+        )
+    )
+  );
+}
+
+async function saveCachedThreadMessages(
+  channel: string,
+  threadTs: string,
+  messages: CachedThreadMessage[]
+) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return;
+  }
+
+  await redis.set(getThreadCacheKey(channel, threadTs), JSON.stringify({
+    messages: trimThreadContext(messages)
+  }), {
+    expiration: {
+      type: "EX",
+      value: getRedisThreadTtlSeconds()
+    }
+  });
+}
+
+function getThreadCacheKey(channel: string, threadTs: string) {
+  return `slack-thread:${channel}:${threadTs}`;
+}
+
+function getRedisThreadTtlSeconds() {
+  const rawValue = process.env.REDIS_TTL_SECONDS;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 60) {
+    return DEFAULT_REDIS_THREAD_TTL_SECONDS;
+  }
+
+  return parsedValue;
 }
 
 function getSlackContextMessageLimit() {

@@ -9,6 +9,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
 - Vercel AI SDK 6
 - OpenCode Go via the AI SDK OpenAI-compatible provider
 - Exa Search API via `exa-js`
+- Redis thread-state cache
 - Slack Events API
 
 ## Local setup
@@ -33,6 +34,8 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
+   - `REDIS_URL`: optional Redis connection string for caching Slack thread state
+   - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
    - `SLACK_BOT_TOKEN`: Bot User OAuth Token from your Slack app
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
@@ -93,3 +96,5 @@ If `EXA_API_KEY` is set, Joshbot can call Exa web search during response generat
 ## Thread context
 
 Joshbot does not send the entire Slack thread back to the model on every reply. It keeps the first message in the thread plus the most recent turns, controlled by `SLACK_CONTEXT_MESSAGES`. This keeps latency and token cost from growing linearly with long threads.
+
+If `REDIS_URL` is set, Joshbot also caches trimmed thread state in Redis, so normal follow-up replies can avoid fetching the full Slack thread again. On a cold cache or restart, it falls back to Slack and repopulates Redis.
