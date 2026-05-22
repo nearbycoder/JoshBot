@@ -517,12 +517,12 @@ async function createReplyForSlackEvent({
   event: SlackMessageEvent;
   memories: string[];
 }) {
-  const multimodalMessages = await toModelMessages(threadMessages, event.user, {
-    token,
-    liveEvent: event
-  });
-
   try {
+    const multimodalMessages = await toModelMessages(threadMessages, event.user, {
+      token,
+      liveEvent: event
+    });
+
     return await createSlackReplyWithMemory(multimodalMessages, memories, event.user);
   } catch (error) {
     if (!hasImageAttachments(event)) {
@@ -530,6 +530,11 @@ async function createReplyForSlackEvent({
     }
 
     console.warn("Falling back to text-only Slack attachment context:", error);
+
+    const attachmentErrorMessage = explainImageAttachmentError(error);
+    if (attachmentErrorMessage) {
+      return attachmentErrorMessage;
+    }
 
     const fallbackReply = await createSlackReplyWithMemory(
       await toModelMessages(threadMessages, event.user),
@@ -842,10 +847,17 @@ async function buildSlackImagePart(token: string, file: SlackFile) {
   }
 
   const bytes = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get("content-type") ?? "";
 
   if (bytes.byteLength > MAX_SLACK_IMAGE_BYTES) {
     console.warn(`Skipping Slack image ${file.id}: file too large after download`);
     return null;
+  }
+
+  if (contentType.includes("text/html") || looksLikeHtml(bytes)) {
+    throw new Error(
+      "Slack image download returned HTML instead of image bytes. The bot token likely needs files:read and the Slack app may need to be reinstalled."
+    );
   }
 
   return {
@@ -853,6 +865,25 @@ async function buildSlackImagePart(token: string, file: SlackFile) {
     image: bytes,
     mediaType: file.mimetype
   };
+}
+
+function looksLikeHtml(bytes: Buffer) {
+  const prefix = bytes.subarray(0, 64).toString("utf8").trimStart().toLowerCase();
+  return prefix.startsWith("<!doctype") || prefix.startsWith("<html");
+}
+
+function explainImageAttachmentError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (message.includes("files:read") || message.includes("returned HTML instead of image bytes")) {
+    return "I can see the image attachment, but this Slack app still can't download files. Add the `files:read` scope to the app, reinstall it to the workspace, and then try again.";
+  }
+
+  if (message.includes("Failed to decode image")) {
+    return "I can see the image attachment, but the file download Slack returned was not a valid image payload. The most likely fix is adding `files:read` to the Slack app and reinstalling it.";
+  }
+
+  return null;
 }
 
 function getSlackContextMessageLimit() {
