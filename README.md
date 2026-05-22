@@ -36,6 +36,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `SLACK_BOT_TOKEN`: Bot User OAuth Token from your Slack app
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
+   - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
 
 4. Start the process:
 
@@ -88,3 +89,7 @@ npm start
 ## Web search
 
 If `EXA_API_KEY` is set, Joshbot can call Exa web search during response generation for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
+
+## Thread context
+
+Joshbot does not send the entire Slack thread back to the model on every reply. It keeps the first message in the thread plus the most recent turns, controlled by `SLACK_CONTEXT_MESSAGES`. This keeps latency and token cost from growing linearly with long threads.

@@ -33,6 +33,7 @@ function getModel() {
 }
 
 export async function createSlackReply(messages: ModelMessage[]) {
+  const { mode, messages: preparedMessages } = prepareSlackMessages(messages);
   const result = await generateText({
     model: getModel(),
     system: `${SYSTEM_PROMPT}
@@ -45,13 +46,92 @@ Extra Slack rules:
 - Use Slack mrkdwn, not standard Markdown.
 - For bold, use *bold* and never **bold**.
 - For links, use <https://example.com|label> and never [label](https://example.com).
-- If you use web search, end with a short 'Sources:' list using the URLs you relied on.`,
-    messages,
+- If you use web search, end with a short 'Sources:' list using the URLs you relied on.
+${getSlackModePrompt(mode)}`,
+    messages: preparedMessages,
     tools: process.env.EXA_API_KEY ? { webSearch: createExaSearchTool() } : undefined,
     stopWhen: stepCountIs(5)
   });
 
   return normalizeSlackMrkdwn(result.text.trim());
+}
+
+function prepareSlackMessages(messages: ModelMessage[]) {
+  const latestUserMessageIndex = findLatestUserMessageIndex(messages);
+
+  if (latestUserMessageIndex === -1) {
+    return {
+      mode: "default" as const,
+      messages
+    };
+  }
+
+  const latestUserMessage = messages[latestUserMessageIndex];
+
+  if (latestUserMessage.role !== "user") {
+    return {
+      mode: "default" as const,
+      messages
+    };
+  }
+
+  const latestUserText = getPlainTextContent(latestUserMessage.content).trim();
+
+  if (!/^grill-me\b/i.test(latestUserText)) {
+    return {
+      mode: "default" as const,
+      messages
+    };
+  }
+
+  const strippedText = latestUserText.replace(/^grill-me\b[\s:,-]*/i, "").trim();
+  const nextMessages = [...messages];
+  nextMessages[latestUserMessageIndex] = {
+    role: "user",
+    content: strippedText || "Roast me playfully based on this thread."
+  };
+
+  return {
+    mode: "grill-me" as const,
+    messages: nextMessages
+  };
+}
+
+function findLatestUserMessageIndex(messages: ModelMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function getPlainTextContent(content: ModelMessage["content"]) {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => ("text" in part && typeof part.text === "string" ? part.text : ""))
+      .join(" ");
+  }
+
+  return "";
+}
+
+function getSlackModePrompt(mode: "default" | "grill-me") {
+  if (mode !== "grill-me") {
+    return "";
+  }
+
+  return `
+- The user invoked grill-me mode.
+- Roast the user playfully, not cruelly.
+- Keep it witty, light, and short.
+- Avoid hate, slurs, threats, or anything that reads as genuinely hostile.
+- Prefer one compact paragraph or 3 short roast bullets max.`;
 }
 
 function createExaSearchTool() {

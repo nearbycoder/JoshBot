@@ -34,6 +34,8 @@ type SlackMessageEvent = {
   subtype?: string;
 };
 
+const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
+
 export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const signature = getHeader(headers, "x-slack-signature");
   const timestamp = getHeader(headers, "x-slack-request-timestamp");
@@ -185,7 +187,7 @@ async function loadSlackThread({
 
   return {
     messages: response.messages,
-    modelMessages
+    modelMessages: trimThreadContext(modelMessages)
   };
 }
 
@@ -272,4 +274,32 @@ function getHeader(headers: SlackHeaders, name: string) {
 
   const value = headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function trimThreadContext(messages: ModelMessage[]) {
+  const maxMessages = getSlackContextMessageLimit();
+
+  if (messages.length <= maxMessages) {
+    return messages;
+  }
+
+  const rootMessage = messages[0];
+  const recentMessages = messages.slice(-(maxMessages - 1));
+
+  if (recentMessages.includes(rootMessage)) {
+    return recentMessages;
+  }
+
+  return [rootMessage, ...recentMessages];
+}
+
+function getSlackContextMessageLimit() {
+  const rawValue = process.env.SLACK_CONTEXT_MESSAGES;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 2) {
+    return DEFAULT_SLACK_CONTEXT_MESSAGES;
+  }
+
+  return parsedValue;
 }
