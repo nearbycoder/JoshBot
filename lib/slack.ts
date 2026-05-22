@@ -66,6 +66,8 @@ type SlackFile = {
   alt_txt?: string;
   permalink?: string;
   external_url?: string | null;
+  url_private?: string;
+  url_private_download?: string;
   initial_comment?: {
     comment?: string;
   };
@@ -77,6 +79,7 @@ type SlackFileInfoResponse =
 
 const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
 const DEFAULT_REDIS_THREAD_TTL_SECONDS = 60 * 60 * 24 * 7;
+const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const signature = getHeader(headers, "x-slack-signature");
@@ -100,7 +103,7 @@ export function verifySlackRequest(body: string, headers: SlackHeaders) {
 }
 
 export function isIgnorableSlackEvent(event: SlackMessageEvent) {
-  return Boolean(event.bot_id || event.subtype);
+  return Boolean(event.bot_id || (event.subtype && event.subtype !== "file_share"));
 }
 
 export function isDirectMentionToBot(text: string) {
@@ -154,11 +157,12 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
-  const reply = await createSlackReplyWithMemory(
-    toModelMessages(threadMessages, event.user),
-    memories,
-    event.user
-  );
+  const reply = await createReplyForSlackEvent({
+    token,
+    threadMessages,
+    event,
+    memories
+  });
 
   if (!reply) {
     return;
@@ -224,11 +228,12 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   }
 
   const memories = event.user ? await getUserMemories(event.user) : [];
-  const reply = await createSlackReplyWithMemory(
-    toModelMessages(threadMessages, event.user),
-    memories,
-    event.user
-  );
+  const reply = await createReplyForSlackEvent({
+    token,
+    threadMessages,
+    event,
+    memories
+  });
 
   if (!reply) {
     return;
@@ -501,6 +506,45 @@ function stripSlackFormatting(input: string) {
   );
 }
 
+async function createReplyForSlackEvent({
+  token,
+  threadMessages,
+  event,
+  memories
+}: {
+  token: string;
+  threadMessages: CachedThreadMessage[];
+  event: SlackMessageEvent;
+  memories: string[];
+}) {
+  const multimodalMessages = await toModelMessages(threadMessages, event.user, {
+    token,
+    liveEvent: event
+  });
+
+  try {
+    return await createSlackReplyWithMemory(multimodalMessages, memories, event.user);
+  } catch (error) {
+    if (!hasImageAttachments(event)) {
+      throw error;
+    }
+
+    console.warn("Falling back to text-only Slack attachment context:", error);
+
+    const fallbackReply = await createSlackReplyWithMemory(
+      await toModelMessages(threadMessages, event.user),
+      memories,
+      event.user
+    );
+
+    if (!fallbackReply) {
+      return "I saw the image attachment, but I couldn't inspect the image directly with the current model configuration.";
+    }
+
+    return `I saw the image attachment, but I couldn't inspect the image directly with the current model configuration.\n\n${fallbackReply}`;
+  }
+}
+
 async function buildSlackMessageContent(
   token: string,
   message: {
@@ -601,14 +645,89 @@ function trimThreadContext(messages: CachedThreadMessage[]) {
   return [rootMessage, ...recentMessages];
 }
 
-function toModelMessages(messages: CachedThreadMessage[], currentUserId: string | undefined): ModelMessage[] {
-  return messages.map((message) => ({
-    role: message.role,
-    content:
-      message.role === "user"
-        ? `${formatSpeakerLabel(message.userId, currentUserId)}: ${message.content}`
-        : message.content
-  }));
+async function toModelMessages(
+  messages: CachedThreadMessage[],
+  currentUserId: string | undefined,
+  options?: {
+    token?: string;
+    liveEvent?: SlackMessageEvent;
+  }
+): Promise<ModelMessage[]> {
+  const liveEvent = options?.liveEvent;
+  const liveEventTs = liveEvent?.ts;
+  const liveUserContent =
+    liveEvent && options?.token
+      ? await buildLiveUserContent(options.token, liveEvent, currentUserId)
+      : null;
+
+  return messages.map((message) => {
+    if (message.role === "assistant") {
+      return {
+        role: "assistant",
+        content: message.content
+      };
+    }
+
+    if (liveEventTs && liveUserContent && message.ts === liveEventTs) {
+      return {
+        role: "user",
+        content: liveUserContent
+      };
+    }
+
+    return {
+      role: "user",
+      content: `${formatSpeakerLabel(message.userId, currentUserId)}: ${message.content}`
+    };
+  });
+}
+
+async function buildLiveUserContent(
+  token: string,
+  event: SlackMessageEvent,
+  currentUserId: string | undefined
+) {
+  const files = await enrichSlackFiles(token, event.files ?? []);
+  const speakerLabel = formatSpeakerLabel(event.user, currentUserId);
+  const text = stripSlackFormatting(event.text ?? "");
+  const parts: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; image: Buffer; mediaType?: string }
+  > = [];
+
+  if (text) {
+    parts.push({
+      type: "text",
+      text: `${speakerLabel}: ${text}`
+    });
+  } else if (files.length > 0) {
+    parts.push({
+      type: "text",
+      text: `${speakerLabel}: shared attachment${files.length === 1 ? "" : "s"}.`
+    });
+  }
+
+  for (const file of files) {
+    const imagePart = await buildSlackImagePart(token, file);
+
+    if (imagePart) {
+      parts.push(imagePart);
+    }
+
+    const fileSummary = formatSlackFileForModel(file);
+    if (fileSummary) {
+      parts.push({
+        type: "text",
+        text: fileSummary
+      });
+    }
+  }
+
+  if (parts.length === 1 && parts[0]?.type === "text") {
+    return parts[0].text;
+  }
+
+  return parts;
 }
 
 async function loadCachedThreadMessages(channel: string, threadTs: string) {
@@ -689,6 +808,51 @@ function formatSpeakerLabel(userId: string | undefined, currentUserId: string | 
   }
 
   return `Other user (${userId})`;
+}
+
+function hasImageAttachments(event: SlackMessageEvent) {
+  return (event.files ?? []).some((file) => file.mimetype?.startsWith("image/"));
+}
+
+async function buildSlackImagePart(token: string, file: SlackFile) {
+  if (!file.mimetype?.startsWith("image/")) {
+    return null;
+  }
+
+  const url = file.url_private_download || file.url_private;
+
+  if (!url) {
+    return null;
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Slack file download failed with HTTP ${response.status}`);
+  }
+
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+  if (Number.isFinite(contentLength) && contentLength > MAX_SLACK_IMAGE_BYTES) {
+    console.warn(`Skipping Slack image ${file.id}: file too large (${contentLength} bytes)`);
+    return null;
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+
+  if (bytes.byteLength > MAX_SLACK_IMAGE_BYTES) {
+    console.warn(`Skipping Slack image ${file.id}: file too large after download`);
+    return null;
+  }
+
+  return {
+    type: "image" as const,
+    image: bytes,
+    mediaType: file.mimetype
+  };
 }
 
 function getSlackContextMessageLimit() {

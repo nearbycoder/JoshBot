@@ -111,3 +111,11 @@ Joshbot can persist simple per-user memory in Redis across threads. Supported co
 - `clear my memory`
 
 Saved memories are injected into future replies for that Slack user when relevant.
+
+## Attachments
+
+Joshbot passes Slack attachment metadata into the model, and for image uploads it will also attempt to download the image and attach the bytes to the current user message.
+
+This requires the Slack app to have `files:read`.
+
+If the configured `OPENCODE_GO_MODEL` does not support vision inputs, Joshbot falls back to text-only attachment context and says so in the reply instead of failing silently.
