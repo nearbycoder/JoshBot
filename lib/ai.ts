@@ -16,7 +16,7 @@ Rules:
 - Use web search when the request depends on recent, fast-changing, or hard-to-recall facts.
 - When web search is used, ground the answer in the retrieved sources instead of guessing.`;
 
-function getModel() {
+function getModel(modelId: string) {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
 
   if (!apiKey) {
@@ -29,7 +29,7 @@ function getModel() {
     baseURL: "https://opencode.ai/zen/go/v1"
   });
 
-  return provider(process.env.OPENCODE_GO_MODEL ?? "kimi-k2.6");
+  return provider(modelId);
 }
 
 export async function createSlackReply(messages: ModelMessage[]) {
@@ -41,8 +41,9 @@ export async function createSlackReplyWithMemory(
   memories: string[],
   currentUserId: string | undefined
 ) {
+  const modelId = selectSlackModel(messages);
   const result = await generateText({
-    model: getModel(),
+    model: getModel(modelId),
     system: `${SYSTEM_PROMPT}
 
 ${formatMemoryPrompt(memories, currentUserId)}
@@ -62,6 +63,26 @@ Extra Slack rules:
   });
 
   return normalizeSlackMrkdwn(result.text.trim());
+}
+
+function selectSlackModel(messages: ModelMessage[]) {
+  if (containsImageInput(messages)) {
+    return process.env.OPENCODE_GO_VISION_MODEL ?? "kimi-k2.6";
+  }
+
+  return process.env.OPENCODE_GO_MODEL ?? "kimi-k2.6";
+}
+
+function containsImageInput(messages: ModelMessage[]) {
+  return messages.some((message) => {
+    if (message.role !== "user" || typeof message.content === "string") {
+      return false;
+    }
+
+    return message.content.some(
+      (part) => typeof part === "object" && part !== null && "type" in part && part.type === "image"
+    );
+  });
 }
 
 function formatMemoryPrompt(memories: string[], currentUserId: string | undefined) {

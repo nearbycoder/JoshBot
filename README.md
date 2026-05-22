@@ -33,6 +33,7 @@ Joshbot is a small TypeScript process that receives Slack Events API calls and r
    - `PORT`: defaults to `3000`
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: defaults to `kimi-k2.6`
+   - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `REDIS_URL`: optional Redis connection string for caching Slack thread state
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
@@ -118,4 +119,6 @@ Joshbot passes Slack attachment metadata into the model, and for image uploads i
 
 This requires the Slack app to have `files:read`.
 
-If the configured `OPENCODE_GO_MODEL` does not support vision inputs, Joshbot falls back to text-only attachment context and says so in the reply instead of failing silently.
+Joshbot uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k2.6`.
+
+In direct testing here on May 21, 2026, `minimax-m2.7` behaved as if no image was attached, while `kimi-k2.6` successfully described the same image. If your normal text model is not vision-capable, keep it in `OPENCODE_GO_MODEL` and set `OPENCODE_GO_VISION_MODEL` to a model that actually handles image input.
