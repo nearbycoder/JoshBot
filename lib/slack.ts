@@ -986,7 +986,7 @@ async function acquireSlackEventLock(event: SlackMessageEvent, eventType: string
 
 function getSlackEventLockKey(event: SlackMessageEvent, eventType: string) {
   const threadTs = event.thread_ts ?? event.ts;
-  return `slack-event-lock:${eventType}:${event.channel}:${threadTs}:${event.ts}`;
+  return `slack-event-lock:${event.channel}:${threadTs}:${event.ts}`;
 }
 
 function getSlackEventLockTtlSeconds() {
@@ -1121,6 +1121,10 @@ function summarizeError(error: unknown) {
 
   return String(error);
 }
+
+export const __testing = {
+  getSlackEventLockKey
+};
 
 function getSlackContextMessageLimit() {
   const rawValue = process.env.SLACK_CONTEXT_MESSAGES;
