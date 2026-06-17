@@ -329,8 +329,10 @@ function createScheduleTools(scheduleContext: SlackScheduleContext) {
     createSchedule: tool({
       description:
         `Create a proactive Slack reminder or recurring cron-style message for the current Slack user. Use this for natural-language scheduling requests. If the user mentions a channel, set targetChannelId and targetChannelName from these raw Slack channel mentions when available: ${JSON.stringify(scheduleContext.mentionedChannels)}.`,
-      inputSchema: scheduleInputSchema,
-      execute: async (input) => {
+      inputSchema: z.object({
+        schedule: scheduleInputSchema.describe("The schedule details to create.")
+      }),
+      execute: async ({ schedule: input }) => {
         const schedule = await createScheduleFromTool(scheduleContext, input as ScheduleToolInput);
 
         return {
