@@ -497,10 +497,10 @@ function formatCurrentTime(timeZone: string) {
 
 function selectSlackModel(messages: ModelMessage[]) {
   if (containsImageInput(messages)) {
-    return process.env.OPENCODE_GO_VISION_MODEL ?? "kimi-k2.6";
+    return process.env.OPENCODE_GO_VISION_MODEL ?? "kimi-k2.7-code";
   }
 
-  return process.env.OPENCODE_GO_MODEL ?? "kimi-k2.6";
+  return process.env.OPENCODE_GO_MODEL ?? "glm-5.2";
 }
 
 function containsImageInput(messages: ModelMessage[]) {
