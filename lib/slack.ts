@@ -42,6 +42,20 @@ type SlackReactionResponse =
   | SlackApiSuccess<Record<string, never>>
   | SlackApiFailure;
 
+type SlackConversation = {
+  id: string;
+  name?: string;
+};
+
+type SlackConversationsListResponse =
+  | SlackApiSuccess<{
+      channels: SlackConversation[];
+      response_metadata?: {
+        next_cursor?: string;
+      };
+    }>
+  | SlackApiFailure;
+
 type SlackReplyPost = {
   ts?: string;
 };
@@ -670,6 +684,42 @@ export async function postGeneratedSlackMessage({
     text: replyText,
     stream
   });
+}
+
+export async function resolveSlackChannelIdByName({
+  token,
+  name
+}: {
+  token: string;
+  name: string;
+}) {
+  const normalizedName = name.trim().replace(/^#/, "").toLowerCase();
+  let cursor: string | undefined;
+
+  do {
+    const params = new URLSearchParams({
+      exclude_archived: "true",
+      limit: "200",
+      types: "public_channel,private_channel",
+      ...(cursor ? { cursor } : {})
+    });
+    const response = await slackApi<SlackConversationsListResponse>({
+      token,
+      method: "GET",
+      path: `conversations.list?${params.toString()}`
+    });
+    const channel = response.channels.find(
+      (candidate) => candidate.name?.toLowerCase() === normalizedName
+    );
+
+    if (channel) {
+      return channel.id;
+    }
+
+    cursor = response.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+
+  return null;
 }
 
 async function finishSlackReply({

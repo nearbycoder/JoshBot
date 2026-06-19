@@ -7,6 +7,7 @@ import {
   createWeeklyNewsSlackDigest
 } from "../lib/ai.js";
 import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
+import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import {
   handleSlackSlashCommandPayload,
   parseSlackSlashCommandPayload,
@@ -95,6 +96,7 @@ startScheduleRunner({
   postSlackMessage,
   runScheduledTask: createScheduledSlackMessage
 });
+startHackerNewsSchedule();
 
 async function runSlackSlashCommandTask(task: SlackSlashCommandTask) {
   switch (task.type) {

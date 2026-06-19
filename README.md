@@ -53,6 +53,10 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
+   - `NOBO_HACKER_NEWS_CHANNEL_NAME`: defaults to `hacker-news`; channel name for the scheduled Hacker News digest
+   - `NOBO_HACKER_NEWS_CHANNEL_ID`: optional Slack channel ID override for scheduled Hacker News posts
+   - `NOBO_HACKER_NEWS_SCHEDULE_TIMES`: defaults to `09:00,14:00`; daily post times in America/Chicago
+   - `NOBO_HACKER_NEWS_FOCUS`: optional search focus for scheduled Hacker News posts
 
 4. Start the process:
 
@@ -83,6 +87,7 @@ Create a Slack app and configure:
   - `commands`
   - `app_mentions:read`
   - `chat:write`
+  - `channels:read` if scheduled Hacker News posts should resolve `#hacker-news` by name instead of `NOBO_HACKER_NEWS_CHANNEL_ID`
   - `reactions:write` so NoBo can react to messages it is handling
   - `im:history` for direct messages
   - `channels:history` for thread context in public channels
@@ -154,6 +159,12 @@ NoBo also uses Redis to lock each Slack message event before generating a reply.
 Schedule creation also uses a per-message idempotency key, so repeated `createSchedule` tool calls from one Slack ask return the already-created schedule instead of creating duplicate jobs.
 
 NoBo can also summarize recent channel history when asked with a channel mention, such as `@NoBo summarize #ai over the past week`. This uses Slack `conversations.history`, so the bot must be in the channel and have the matching Slack history scope.
+
+## Scheduled Hacker News
+
+NoBo posts the latest Hacker News stories to `#hacker-news` twice daily at 9:00 AM and 2:00 PM America/Chicago. This follows Flue's Node scheduling guidance by using Croner for the fixed app-owned schedule.
+
+Set `NOBO_HACKER_NEWS_CHANNEL_ID` to the Slack channel ID when possible. Otherwise NoBo resolves `NOBO_HACKER_NEWS_CHANNEL_NAME` by name, which requires the Slack app to have `channels:read`.
 
 ## Memory
 
