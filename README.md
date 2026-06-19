@@ -11,7 +11,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Exa Search API via `exa-js`
 - Redis thread-state cache
 - Slack Events API, with both the legacy `/api/slack/events` route and Flue's `/channels/slack/events` channel route
-- Slack response streaming via an immediate listening message and progressive same-message updates
+- Slack response streaming via an immediate listening message and progressive same-message block updates
 
 ## Local setup
 

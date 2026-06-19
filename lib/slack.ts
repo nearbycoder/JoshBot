@@ -49,6 +49,8 @@ type SlackReplyStreamer = {
   fail: (notice?: string) => Promise<void>;
 };
 
+type SlackBlock = Record<string, unknown>;
+
 type SlackMessageEvent = {
   channel: string;
   channel_type?: string;
@@ -104,6 +106,8 @@ const DEFAULT_SLACK_STREAM_UPDATE_INTERVAL_MS = 750;
 const DEFAULT_SLACK_LISTENING_ANIMATION_INTERVAL_MS = 1000;
 const DEFAULT_SLACK_LISTENING_MESSAGE = "Listening...";
 const SLACK_LISTENING_SPINNER_FRAMES = ["[|]", "[/]", "[-]", "[\\]"];
+const SLACK_SECTION_BLOCK_TEXT_LIMIT = 2900;
+const SLACK_MAX_BLOCKS = 50;
 const STREAM_FAILURE_NOTICE = "I hit an error before I could finish this reply.";
 const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
 const localEventLocks = new Map<string, number>();
@@ -597,12 +601,14 @@ export async function postSlackMessage({
   token,
   channel,
   threadTs,
-  text
+  text,
+  blocks
 }: {
   token: string;
   channel: string;
   threadTs?: string;
   text: string;
+  blocks?: SlackBlock[];
 }) {
   return slackApi<SlackPostMessageResponse>({
     token,
@@ -612,6 +618,7 @@ export async function postSlackMessage({
       channel,
       ...(threadTs ? { thread_ts: threadTs } : {}),
       text,
+      ...(blocks ? { blocks } : {}),
       mrkdwn: true
     }
   });
@@ -646,12 +653,14 @@ async function updateSlackMessage({
   token,
   channel,
   ts,
-  text
+  text,
+  blocks
 }: {
   token: string;
   channel: string;
   ts: string;
   text: string;
+  blocks?: SlackBlock[];
 }) {
   return slackApi<SlackUpdateMessageResponse>({
     token,
@@ -661,6 +670,7 @@ async function updateSlackMessage({
       channel,
       ts,
       text,
+      ...(blocks ? { blocks } : {}),
       mrkdwn: true
     }
   });
@@ -710,7 +720,8 @@ function createSlackReplyStreamer({
           token,
           channel,
           ts,
-          text
+          text,
+          blocks: createSlackTextBlocks(text)
         })
       )
       .then(() => undefined)
@@ -735,7 +746,8 @@ function createSlackReplyStreamer({
           token,
           channel,
           ts,
-          text
+          text,
+          blocks: createSlackTextBlocks(text)
         })
       )
       .then(() => undefined)
@@ -785,7 +797,8 @@ function createSlackReplyStreamer({
       token,
       channel,
       threadTs,
-      text: getSlackInitialListeningFrame()
+      text: getSlackInitialListeningFrame(),
+      blocks: createSlackTextBlocks(getSlackInitialListeningFrame())
     })
       .then((response) => {
         messageTs = response.ts;
@@ -809,7 +822,8 @@ function createSlackReplyStreamer({
         token,
         channel,
         ts,
-        text: finalText
+        text: finalText,
+        blocks: createSlackTextBlocks(finalText)
       });
       postedText = finalText;
     } catch (error) {
@@ -1130,6 +1144,74 @@ function decodeSlackEntities(input: string) {
 
 function collapseWhitespace(input: string) {
   return input.replace(/\s+/g, " ").trim();
+}
+
+function createSlackTextBlocks(text: string): SlackBlock[] {
+  return splitSlackSectionBlockText(text).map((chunk) => ({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: chunk
+    }
+  }));
+}
+
+function splitSlackSectionBlockText(input: string) {
+  const chunks: string[] = [];
+  let current = "";
+  const lines = (input || " ").split("\n");
+
+  const pushCurrent = () => {
+    if (!current) {
+      return;
+    }
+
+    chunks.push(current);
+    current = "";
+  };
+
+  for (const line of lines) {
+    let remaining = line;
+
+    while (remaining.length > SLACK_SECTION_BLOCK_TEXT_LIMIT) {
+      const slice = remaining.slice(0, SLACK_SECTION_BLOCK_TEXT_LIMIT);
+      const candidate = current ? `${current}\n${slice}` : slice;
+
+      if (candidate.length > SLACK_SECTION_BLOCK_TEXT_LIMIT) {
+        pushCurrent();
+        chunks.push(slice);
+      } else {
+        chunks.push(candidate);
+        current = "";
+      }
+
+      remaining = remaining.slice(SLACK_SECTION_BLOCK_TEXT_LIMIT);
+    }
+
+    const candidate = current ? `${current}\n${remaining}` : remaining;
+
+    if (candidate.length > SLACK_SECTION_BLOCK_TEXT_LIMIT) {
+      pushCurrent();
+      current = remaining;
+    } else {
+      current = candidate;
+    }
+  }
+
+  pushCurrent();
+
+  if (chunks.length === 0) {
+    chunks.push(" ");
+  }
+
+  if (chunks.length <= SLACK_MAX_BLOCKS) {
+    return chunks;
+  }
+
+  const visibleChunks = chunks.slice(0, SLACK_MAX_BLOCKS);
+  const lastChunk = visibleChunks[visibleChunks.length - 1] ?? "";
+  visibleChunks[visibleChunks.length - 1] = `${lastChunk.slice(0, SLACK_SECTION_BLOCK_TEXT_LIMIT - 20)}\n...`;
+  return visibleChunks;
 }
 
 function getHeader(headers: SlackHeaders, name: string) {
