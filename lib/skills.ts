@@ -1,11 +1,12 @@
-import { type ModelMessage } from "ai";
 import { createSlackSkillReply } from "./ai.js";
+import type { NoboModelMessage } from "./nobo-messages.js";
 
 type SlackSkillContext = {
   commandText: string;
-  modelMessages: ModelMessage[];
+  modelMessages: NoboModelMessage[];
   memories: string[];
   currentUserId: string | undefined;
+  onTextDelta?: (delta: string) => void | Promise<void>;
 };
 
 type ParsedSkillCommand = {
@@ -13,19 +14,24 @@ type ParsedSkillCommand = {
   args: string;
 };
 
-const SKILL_HELP = [
+const SKILL_HELP_LINES = [
   "`@NoBo skills` or `@NoBo help`: list available skills",
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
-].join("\n");
+];
+
+export function formatSlackSkillHelp() {
+  return `Available skills:\n${SKILL_HELP_LINES.join("\n")}`;
+}
 
 export async function maybeHandleSlackSkillCommand({
   commandText,
   modelMessages,
   memories,
-  currentUserId
+  currentUserId,
+  onTextDelta
 }: SlackSkillContext) {
   const command = parseSkillCommand(commandText);
 
@@ -36,7 +42,7 @@ export async function maybeHandleSlackSkillCommand({
   switch (command.name) {
     case "help":
     case "skills":
-      return `Available skills:\n${SKILL_HELP}`;
+      return formatSlackSkillHelp();
     case "summarize-thread":
       return createSlackSkillReply({
         messages: [
@@ -54,7 +60,8 @@ export async function maybeHandleSlackSkillCommand({
         instructions: `Your job is to summarize the current Slack thread.
 - Prefer a short overview, key decisions, open questions, and next steps.
 - If there are action items, include owners when they are clear.
-- If the thread is very short, say that briefly instead of overproducing.`
+- If the thread is very short, say that briefly instead of overproducing.`,
+        onTextDelta
       });
     case "thread-todos":
       return createSlackSkillReply({
@@ -72,7 +79,8 @@ export async function maybeHandleSlackSkillCommand({
         instructions: `Your job is to extract action items from the current Slack thread.
 - Return a short flat list.
 - Each item should include the task, likely owner if known, and status if implied.
-- If there are no clear action items, say that plainly.`
+- If there are no clear action items, say that plainly.`,
+        onTextDelta
       });
     case "web-search":
       if (!command.args) {
@@ -92,7 +100,8 @@ export async function maybeHandleSlackSkillCommand({
         instructions: `Your job is to answer the user's explicit web-search request.
 - Use the web search tool when it helps.
 - Keep the answer concise.
-- End with a short 'Sources:' section when you used web search.`
+- End with a short 'Sources:' section when you used web search.`,
+        onTextDelta
       });
     default:
       return null;

@@ -112,20 +112,56 @@ export async function handleArtifactRequest(
   return true;
 }
 
+export async function handleArtifactFetchRequest(request: Request) {
+  const url = new URL(request.url);
+
+  if (request.method !== "GET") {
+    return textResponse("Method not allowed", 405);
+  }
+
+  const match = url.pathname.match(/^\/artifacts\/([^/]+)(?:\/([^/]+))?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const id = decodeURIComponent(match[1] ?? "");
+  const requestedFile = match[2] ? decodeURIComponent(match[2]) : "";
+
+  if (!isSafeArtifactId(id)) {
+    return textResponse("Artifact not found", 404);
+  }
+
+  const artifactDir = path.join(getArtifactDirectory(), id);
+
+  if (requestedFile === "preview") {
+    return createMarkdownPreviewResponse(artifactDir);
+  }
+
+  if (!isSafeFilename(requestedFile)) {
+    return textResponse("Artifact not found", 404);
+  }
+
+  const filePath = path.join(artifactDir, requestedFile);
+
+  try {
+    const content = await readFile(filePath, "utf8");
+    return new Response(content, {
+      status: 200,
+      headers: {
+        "content-type": getContentType(requestedFile)
+      }
+    });
+  } catch {
+    return textResponse("Artifact not found", 404);
+  }
+}
+
 async function sendMarkdownPreview(
   response: ServerResponse<IncomingMessage>,
   artifactDir: string
 ) {
-  let markdownPath: string | null = null;
-
-  try {
-    const { readdir } = await import("node:fs/promises");
-    const files = await readdir(artifactDir);
-    const markdownFile = files.find((file) => file.endsWith(".md"));
-    markdownPath = markdownFile ? path.join(artifactDir, markdownFile) : null;
-  } catch {
-    markdownPath = null;
-  }
+  const markdownPath = await findMarkdownArtifactPath(artifactDir);
 
   if (!markdownPath) {
     sendText(response, 404, "Artifact not found");
@@ -136,6 +172,33 @@ async function sendMarkdownPreview(
   response.statusCode = 200;
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.end(renderMarkdownPreview(markdown));
+}
+
+async function createMarkdownPreviewResponse(artifactDir: string) {
+  const markdownPath = await findMarkdownArtifactPath(artifactDir);
+
+  if (!markdownPath) {
+    return textResponse("Artifact not found", 404);
+  }
+
+  const markdown = await readFile(markdownPath, "utf8");
+  return new Response(renderMarkdownPreview(markdown), {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8"
+    }
+  });
+}
+
+async function findMarkdownArtifactPath(artifactDir: string) {
+  try {
+    const { readdir } = await import("node:fs/promises");
+    const files = await readdir(artifactDir);
+    const markdownFile = files.find((file) => file.endsWith(".md"));
+    return markdownFile ? path.join(artifactDir, markdownFile) : null;
+  } catch {
+    return null;
+  }
 }
 
 function renderMarkdownPreview(markdown: string) {
@@ -283,6 +346,15 @@ function sendText(
   response.statusCode = statusCode;
   response.setHeader("content-type", "text/plain; charset=utf-8");
   response.end(body);
+}
+
+function textResponse(body: string, status: number) {
+  return new Response(body, {
+    status,
+    headers: {
+      "content-type": "text/plain; charset=utf-8"
+    }
+  });
 }
 
 function escapeHtml(input: string) {

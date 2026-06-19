@@ -1,0 +1,450 @@
+import { defineTool } from "@flue/runtime";
+import { Exa } from "exa-js";
+import { createArtifact } from "./artifacts.js";
+import { fetchSlackChannelHistory } from "./channel-history.js";
+import { formatCurrentTime } from "./nobo-time.js";
+import {
+  cancelScheduleFromTool,
+  createScheduleFromTool,
+  listSchedulesFromTool,
+  updateScheduleFromTool,
+  type ScheduleToolInput,
+  type SlackScheduleContext
+} from "./schedules.js";
+
+const jsonSchema = (schema: Record<string, unknown>) => schema as never;
+
+export function createNoboTools(scheduleContext?: SlackScheduleContext) {
+  return [
+    ...(process.env.EXA_API_KEY ? [createExaSearchTool()] : []),
+    createCurrentTimeTool(),
+    createArtifactTool(),
+    ...(scheduleContext ? createSlackContextTools(scheduleContext) : [])
+  ];
+}
+
+function createCurrentTimeTool() {
+  return defineTool({
+    name: "get_current_time",
+    description:
+      "Get the current date and time. Use for questions about the current time or for grounding relative dates and schedules.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        timeZone: {
+          type: "string",
+          description: "IANA timezone name. Defaults to America/Chicago."
+        }
+      },
+      additionalProperties: false
+    }),
+    execute: async (args: { timeZone?: string }) =>
+      JSON.stringify(formatCurrentTime(args.timeZone || "America/Chicago"))
+  });
+}
+
+function createArtifactTool() {
+  return defineTool({
+    name: "create_artifact",
+    description:
+      "Create a browser-previewable artifact file. Use for standalone HTML pages and Markdown documents that should be linked back to the user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        kind: {
+          enum: ["html", "markdown"],
+          description: "Use html for complete HTML documents. Use markdown for .md documents."
+        },
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          description: "Short human-readable title for the artifact."
+        },
+        filename: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          description: "Optional filename. The extension is normalized based on kind."
+        },
+        content: {
+          type: "string",
+          minLength: 1,
+          description: "The complete file content to write. HTML artifacts should be complete documents."
+        }
+      },
+      required: ["kind", "title", "content"],
+      additionalProperties: false
+    }),
+    execute: async (args: {
+      kind: "html" | "markdown";
+      title: string;
+      filename?: string;
+      content: string;
+    }) => {
+      const artifact = await createArtifact(args);
+
+      return JSON.stringify({
+        id: artifact.id,
+        title: artifact.title,
+        filename: artifact.filename,
+        previewUrl: artifact.previewUrl,
+        rawUrl: artifact.rawUrl
+      });
+    }
+  });
+}
+
+function createSlackContextTools(scheduleContext: SlackScheduleContext) {
+  return [
+    createScheduleTool(scheduleContext),
+    createListSchedulesTool(scheduleContext),
+    createCancelScheduleTool(scheduleContext),
+    createUpdateScheduleTool(scheduleContext),
+    createSlackChannelHistoryTool(scheduleContext)
+  ];
+}
+
+function createSlackChannelHistoryTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "read_slack_channel_history",
+    description:
+      `Read recent Slack channel messages for summarization or analysis. Use when the user asks about messages/history in a channel. Raw channel mentions available in this request: ${JSON.stringify(scheduleContext.mentionedChannels)}.`,
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        channelId: {
+          type: "string",
+          description:
+            "Slack channel ID, such as C123ABC. If omitted and exactly one channel was mentioned, that channel is used."
+        },
+        days: {
+          anyOf: [{ type: "integer", minimum: 1 }, { type: "string", pattern: "^\\d+$" }],
+          description: "How many days back to read. Defaults to 7."
+        },
+        limit: {
+          anyOf: [{ type: "integer", minimum: 1 }, { type: "string", pattern: "^\\d+$" }],
+          description: "Maximum number of messages to read. Defaults to 150, max 250."
+        }
+      },
+      additionalProperties: false
+    }),
+    execute: async (args: { channelId?: string; days?: number | string; limit?: number | string }) => {
+      const targetChannel = resolveMentionedChannel(scheduleContext, args.channelId);
+
+      if (!targetChannel) {
+        return JSON.stringify({
+          error:
+            "I couldn't determine which channel to read. Ask again with a channel mention, like #ai."
+        });
+      }
+
+      const parsedDays = parseOptionalPositiveInteger(args.days, 7);
+      const parsedLimit = parseOptionalPositiveInteger(args.limit, 150);
+      const messages = await fetchSlackChannelHistory({
+        channel: targetChannel.id,
+        days: Math.min(parsedDays, 30),
+        limit: Math.min(parsedLimit, 250)
+      });
+
+      return JSON.stringify({
+        channel: targetChannel,
+        days: parsedDays,
+        messageCount: messages.length,
+        messages
+      });
+    }
+  });
+}
+
+function createScheduleTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "create_schedule",
+    description:
+      `Create a proactive Slack reminder or recurring cron-style message for the current Slack user. Use this for natural-language scheduling requests. If the user mentions a channel, set targetChannelId and targetChannelName from these raw Slack channel mentions when available: ${JSON.stringify(scheduleContext.mentionedChannels)}.`,
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        schedule: scheduleInputSchema()
+      },
+      required: ["schedule"],
+      additionalProperties: false
+    }),
+    execute: async (args: { schedule: ScheduleToolInput }) => {
+      const schedule = await createScheduleFromTool(scheduleContext, args.schedule);
+
+      return JSON.stringify({
+        id: schedule.id.slice(0, 8),
+        fullId: schedule.id,
+        summary: schedule.summary,
+        nextRunAt: schedule.nextRunAt
+      });
+    }
+  });
+}
+
+function createListSchedulesTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "list_schedules",
+    description: "List active reminders and cron-style schedules owned by the current Slack user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {},
+      additionalProperties: false
+    }),
+    execute: async () =>
+      JSON.stringify({
+        result: await listSchedulesFromTool(scheduleContext)
+      })
+  });
+}
+
+function createCancelScheduleTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "cancel_schedule",
+    description: "Cancel or delete an active reminder or cron-style schedule owned by the current Slack user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 1,
+          description: "The schedule ID or visible prefix, e.g. abc12345."
+        }
+      },
+      required: ["idPrefix"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string }) =>
+      JSON.stringify({
+        result: await cancelScheduleFromTool(scheduleContext, args.idPrefix)
+      })
+  });
+}
+
+function createUpdateScheduleTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "update_schedule",
+    description:
+      "Update an existing reminder or cron-style schedule owned by the current Slack user. Provide the schedule ID prefix and the replacement schedule details.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 1,
+          description: "The existing schedule ID or visible prefix, e.g. abc12345."
+        },
+        schedule: scheduleInputSchema()
+      },
+      required: ["idPrefix", "schedule"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string; schedule: ScheduleToolInput }) =>
+      JSON.stringify({
+        result: await updateScheduleFromTool(scheduleContext, args.idPrefix, args.schedule)
+      })
+  });
+}
+
+function createExaSearchTool() {
+  const apiKey = process.env.EXA_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("Missing required environment variable: EXA_API_KEY");
+  }
+
+  const exa = new Exa(apiKey);
+
+  return defineTool({
+    name: "web_search",
+    description:
+      "Search the web with Exa for recent or hard-to-recall facts. Prefer type='auto'. Use livecrawl only when you need the freshest content.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          minLength: 1,
+          description: "The web search query."
+        },
+        type: {
+          enum: ["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"],
+          description: "Exa search type. Default to auto unless latency or depth is important."
+        },
+        includeDomains: {
+          type: "array",
+          maxItems: 10,
+          items: { type: "string" },
+          description: "Optional domains to include, e.g. ['arxiv.org', 'github.com']."
+        },
+        excludeDomains: {
+          type: "array",
+          maxItems: 10,
+          items: { type: "string" },
+          description: "Optional domains to exclude."
+        },
+        livecrawl: {
+          type: "boolean",
+          description: "Set true only when you need the freshest page content."
+        }
+      },
+      required: ["query"],
+      additionalProperties: false
+    }),
+    execute: async (args: {
+      query: string;
+      type?: "auto" | "fast" | "instant" | "deep-lite" | "deep" | "deep-reasoning";
+      includeDomains?: string[];
+      excludeDomains?: string[];
+      livecrawl?: boolean;
+    }) => {
+      const response = await exa.search(args.query, {
+        type: args.type ?? "auto",
+        numResults: 5,
+        includeDomains: args.includeDomains,
+        excludeDomains: args.excludeDomains,
+        contents: {
+          highlights: true,
+          ...(args.livecrawl ? { maxAgeHours: 0 } : {})
+        }
+      });
+
+      return JSON.stringify({
+        results: response.results.map((result) => ({
+          title: result.title,
+          url: result.url,
+          publishedDate: result.publishedDate ?? null,
+          author: result.author ?? null,
+          highlights: (result.highlights ?? []).slice(0, 3)
+        }))
+      });
+    }
+  });
+}
+
+function scheduleInputSchema() {
+  const responseMode = {
+    enum: ["reminder", "prompt"],
+    description:
+      "Use reminder to send the task text later. Use prompt when NoBo should answer/research/do the task at run time, e.g. 'post what is trending on Hacker News'."
+  };
+  const targetChannelId = {
+    type: "string",
+    description: "Optional Slack channel ID to post into, such as C123ABC. Use only when the user mentions a channel."
+  };
+  const targetChannelName = {
+    type: "string",
+    description: "Optional visible channel name, without #."
+  };
+  const wholeNumber = {
+    anyOf: [{ type: "integer" }, { type: "string", pattern: "^\\d+$" }],
+    description: "A whole number. Numeric strings are accepted."
+  };
+  const baseProperties = {
+    task: {
+      type: "string",
+      minLength: 1,
+      maxLength: 1000,
+      description: "The reminder or prompt text to send later."
+    },
+    responseMode,
+    targetChannelId,
+    targetChannelName
+  };
+
+  return {
+    oneOf: [
+      {
+        type: "object",
+        properties: {
+          kind: { const: "once", description: "A one-time reminder after a delay." },
+          ...baseProperties,
+          amount: wholeNumber,
+          unit: { enum: ["minutes", "hours", "days"], description: "Delay unit." }
+        },
+        required: ["kind", "task", "amount", "unit"],
+        additionalProperties: false
+      },
+      {
+        type: "object",
+        properties: {
+          kind: { const: "interval", description: "A recurring reminder every N minutes, hours, or days." },
+          ...baseProperties,
+          amount: wholeNumber,
+          unit: { enum: ["minutes", "hours", "days"], description: "Repeat interval unit." }
+        },
+        required: ["kind", "task", "amount", "unit"],
+        additionalProperties: false
+      },
+      {
+        type: "object",
+        properties: {
+          kind: { const: "daily", description: "A recurring daily reminder in America/Chicago time." },
+          ...baseProperties,
+          hour: { ...wholeNumber, description: "24-hour clock hour in America/Chicago time, 0-23." },
+          minute: { ...wholeNumber, description: "Minute in America/Chicago time, 0-59." }
+        },
+        required: ["kind", "task", "hour", "minute"],
+        additionalProperties: false
+      },
+      {
+        type: "object",
+        properties: {
+          kind: { const: "weekly", description: "A recurring weekly reminder in America/Chicago time." },
+          ...baseProperties,
+          weekday: {
+            enum: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+          },
+          hour: { ...wholeNumber, description: "24-hour clock hour in America/Chicago time, 0-23." },
+          minute: { ...wholeNumber, description: "Minute in America/Chicago time, 0-59." }
+        },
+        required: ["kind", "task", "weekday", "hour", "minute"],
+        additionalProperties: false
+      }
+    ]
+  };
+}
+
+function resolveMentionedChannel(scheduleContext: SlackScheduleContext, channelId: string | undefined) {
+  const normalizedChannelId = normalizeSlackChannelId(channelId);
+
+  if (normalizedChannelId) {
+    const mentionedChannel = scheduleContext.mentionedChannels.find(
+      (channel) => channel.id === normalizedChannelId
+    );
+    return {
+      id: normalizedChannelId,
+      name: mentionedChannel?.name
+    };
+  }
+
+  if (scheduleContext.mentionedChannels.length === 1) {
+    return scheduleContext.mentionedChannels[0] ?? null;
+  }
+
+  return null;
+}
+
+function normalizeSlackChannelId(input: string | undefined) {
+  if (!input) {
+    return null;
+  }
+
+  const match = input.trim().match(/#?([CGD][A-Z0-9]+)/i);
+  return match?.[1]?.toUpperCase() ?? null;
+}
+
+function parseOptionalPositiveInteger(input: number | string | undefined, fallback: number) {
+  if (input === undefined) {
+    return fallback;
+  }
+
+  const value = typeof input === "string" ? Number(input.trim()) : input;
+
+  if (!Number.isInteger(value) || value <= 0) {
+    return fallback;
+  }
+
+  return value;
+}

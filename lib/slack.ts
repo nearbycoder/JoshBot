@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { type ModelMessage } from "ai";
+import { WebClient } from "@slack/web-api";
 import { createSlackReplyWithMemory, shouldReplyToSlackThread } from "./ai.js";
 import { requireEnv } from "./env.js";
 import {
@@ -11,6 +11,7 @@ import {
 import { getRedisClient } from "./redis.js";
 import { maybeHandleScheduleCommand } from "./schedules.js";
 import { maybeHandleSlackSkillCommand } from "./skills.js";
+import type { NoboModelMessage } from "./nobo-messages.js";
 
 type SlackHeaders = Headers | Record<string, string | string[] | undefined>;
 
@@ -34,12 +35,27 @@ type SlackPostMessageResponse =
   | SlackApiSuccess<{ channel: string; ts: string }>
   | SlackApiFailure;
 
+type SlackUpdateMessageResponse =
+  | SlackApiSuccess<{ channel: string; ts: string }>
+  | SlackApiFailure;
+
+type SlackReplyPost = {
+  ts?: string;
+};
+
+type SlackReplyStreamer = {
+  append: (delta: string) => Promise<void>;
+  finish: (finalText: string) => Promise<SlackReplyPost>;
+  fail: (notice?: string) => Promise<void>;
+};
+
 type SlackMessageEvent = {
   channel: string;
   channel_type?: string;
   text: string;
   thread_ts?: string;
   ts: string;
+  team_id?: string;
   user?: string;
   bot_id?: string;
   subtype?: string;
@@ -83,6 +99,8 @@ type SlackFileInfoResponse =
 const DEFAULT_SLACK_CONTEXT_MESSAGES = 12;
 const DEFAULT_REDIS_THREAD_TTL_SECONDS = 60 * 60 * 24 * 7;
 const DEFAULT_SLACK_EVENT_LOCK_TTL_SECONDS = 60 * 10;
+const DEFAULT_SLACK_STREAM_BUFFER_SIZE = 128;
+const STREAM_FAILURE_NOTICE = "\n\nI hit an error before I could finish this reply.";
 const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
 const localEventLocks = new Map<string, number>();
 
@@ -185,19 +203,34 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
     token,
     liveEvent: event
   });
-  const skillReply = await maybeHandleSlackSkillCommand({
-    commandText: stripSlackFormatting(event.text),
-    modelMessages,
-    memories,
-    currentUserId: event.user
+  const skillStream = createSlackReplyStreamer({
+    token,
+    channel: event.channel,
+    threadTs,
+    event
   });
+  let skillReply: string | null;
+
+  try {
+    skillReply = await maybeHandleSlackSkillCommand({
+      commandText: stripSlackFormatting(event.text),
+      modelMessages,
+      memories,
+      currentUserId: event.user,
+      onTextDelta: skillStream?.append
+    });
+  } catch (error) {
+    await skillStream?.fail();
+    throw error;
+  }
 
   if (skillReply) {
-    const postedReply = await postSlackMessage({
+    const postedReply = await finishSlackReply({
       token,
       channel: event.channel,
       threadTs,
-      text: skillReply
+      text: skillReply,
+      stream: skillStream
     });
 
     await saveCachedThreadMessages(
@@ -212,23 +245,38 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
     return;
   }
 
-  const reply = await createReplyForSlackEvent({
+  const replyStream = createSlackReplyStreamer({
     token,
-    threadMessages,
-    event,
-    memories,
-    modelMessages
+    channel: event.channel,
+    threadTs,
+    event
   });
+  let reply: string | null;
+
+  try {
+    reply = await createReplyForSlackEvent({
+      token,
+      threadMessages,
+      event,
+      memories,
+      modelMessages,
+      onTextDelta: replyStream?.append
+    });
+  } catch (error) {
+    await replyStream?.fail();
+    throw error;
+  }
 
   if (!reply) {
     return;
   }
 
-  const postedReply = await postSlackMessage({
+  const postedReply = await finishSlackReply({
     token,
     channel: event.channel,
     threadTs,
-    text: reply
+    text: reply,
+    stream: replyStream
   });
 
   await saveCachedThreadMessages(
@@ -325,23 +373,38 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     return;
   }
 
-  const reply = await createReplyForSlackEvent({
+  const replyStream = createSlackReplyStreamer({
     token,
-    threadMessages,
-    event,
-    memories,
-    modelMessages
+    channel: event.channel,
+    threadTs: event.thread_ts,
+    event
   });
+  let reply: string | null;
+
+  try {
+    reply = await createReplyForSlackEvent({
+      token,
+      threadMessages,
+      event,
+      memories,
+      modelMessages,
+      onTextDelta: replyStream?.append
+    });
+  } catch (error) {
+    await replyStream?.fail();
+    throw error;
+  }
 
   if (!reply) {
     return;
   }
 
-  const postedReply = await postSlackMessage({
+  const postedReply = await finishSlackReply({
     token,
     channel: event.channel,
     threadTs: event.thread_ts,
-    text: reply
+    text: reply,
+    stream: replyStream
   });
 
   await saveCachedThreadMessages(
@@ -366,24 +429,56 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   const threadMessages: CachedThreadMessage[] = [incomingMessage];
   const commandReply = await maybeHandleMemoryCommand(event);
   const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
-  const replyText =
-    commandReply ??
-    scheduleReply ??
-    (await createReplyForSlackEvent({
+
+  if (commandReply || scheduleReply) {
+    const replyText = commandReply ?? scheduleReply ?? "";
+    const postedReply = await postSlackMessage({
+      token,
+      channel: event.channel,
+      text: replyText
+    });
+
+    await saveCachedThreadMessages(
+      event.channel,
+      event.ts,
+      appendCachedThreadMessage(threadMessages, {
+        role: "assistant",
+        content: replyText,
+        ts: postedReply.ts
+      })
+    );
+    return;
+  }
+
+  const replyStream = createSlackReplyStreamer({
+    token,
+    channel: event.channel,
+    event
+  });
+  let replyText: string | null;
+
+  try {
+    replyText = await createReplyForSlackEvent({
       token,
       threadMessages,
       event,
-      memories: event.user ? await getUserMemories(event.user) : []
-    }));
+      memories: event.user ? await getUserMemories(event.user) : [],
+      onTextDelta: replyStream?.append
+    });
+  } catch (error) {
+    await replyStream?.fail();
+    throw error;
+  }
 
   if (!replyText) {
     return;
   }
 
-  const postedReply = await postSlackMessage({
+  const postedReply = await finishSlackReply({
     token,
     channel: event.channel,
-    text: replyText
+    text: replyText,
+    stream: replyStream
   });
 
   await saveCachedThreadMessages(
@@ -516,6 +611,167 @@ export async function postSlackMessage({
       mrkdwn: true
     }
   });
+}
+
+async function finishSlackReply({
+  token,
+  channel,
+  threadTs,
+  text,
+  stream
+}: {
+  token: string;
+  channel: string;
+  threadTs?: string;
+  text: string;
+  stream?: SlackReplyStreamer | null;
+}) {
+  if (stream) {
+    return stream.finish(text);
+  }
+
+  return postSlackMessage({
+    token,
+    channel,
+    threadTs,
+    text
+  });
+}
+
+async function updateSlackMessage({
+  token,
+  channel,
+  ts,
+  text
+}: {
+  token: string;
+  channel: string;
+  ts: string;
+  text: string;
+}) {
+  return slackApi<SlackUpdateMessageResponse>({
+    token,
+    method: "POST",
+    path: "chat.update",
+    body: {
+      channel,
+      ts,
+      text,
+      mrkdwn: true
+    }
+  });
+}
+
+function createSlackReplyStreamer({
+  token,
+  channel,
+  threadTs,
+  event
+}: {
+  token: string;
+  channel: string;
+  threadTs?: string;
+  event: SlackMessageEvent;
+}): SlackReplyStreamer | null {
+  if (!isSlackDirectMessage(event) && (!event.team_id || !event.user)) {
+    console.warn("Skipping Slack response streaming because the event is missing team/user context.");
+    return null;
+  }
+
+  const client = new WebClient(token);
+  const stream = client.chatStream({
+    channel,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+    ...(event.team_id && event.user
+      ? { recipient_team_id: event.team_id, recipient_user_id: event.user }
+      : {}),
+    buffer_size: getSlackStreamBufferSize()
+  } as Parameters<WebClient["chatStream"]>[0]);
+  let streamedText = "";
+  let streamTs: string | undefined;
+  let failed = false;
+
+  const rememberStreamTs = (response: { ts?: string } | null | undefined) => {
+    if (response?.ts) {
+      streamTs = response.ts;
+    }
+  };
+
+  const postFinalMessage = (finalText: string) =>
+    postSlackMessage({
+      token,
+      channel,
+      threadTs,
+      text: finalText
+    });
+
+  const updateStartedStream = async (finalText: string, ts: string) => {
+    try {
+      await updateSlackMessage({
+        token,
+        channel,
+        ts,
+        text: finalText
+      });
+    } catch (error) {
+      console.warn(`Unable to update completed Slack stream: ${summarizeError(error)}`);
+    }
+
+    return { ts };
+  };
+
+  return {
+    async append(delta: string) {
+      if (!delta || failed) {
+        return;
+      }
+
+      try {
+        const response = await stream.append({ markdown_text: delta });
+        streamedText += delta;
+        rememberStreamTs(response);
+      } catch (error) {
+        failed = true;
+        console.warn(`Unable to append Slack response stream: ${summarizeError(error)}`);
+      }
+    },
+    async finish(finalText: string) {
+      if (!streamedText) {
+        return postFinalMessage(finalText);
+      }
+
+      try {
+        const response = await stream.stop();
+        const completedTs = response.ts ?? response.message?.ts ?? streamTs;
+
+        if (completedTs && streamedText.trim() !== finalText) {
+          return updateStartedStream(finalText, completedTs);
+        }
+
+        return { ts: completedTs };
+      } catch (error) {
+        console.warn(`Unable to stop Slack response stream: ${summarizeError(error)}`);
+
+        if (streamTs) {
+          return updateStartedStream(finalText, streamTs);
+        }
+
+        return postFinalMessage(finalText);
+      }
+    },
+    async fail(notice = STREAM_FAILURE_NOTICE) {
+      if (!streamedText) {
+        return;
+      }
+
+      try {
+        const response = await stream.stop({ markdown_text: notice });
+        rememberStreamTs(response);
+      } catch (error) {
+        console.warn(`Unable to stop failed Slack response stream: ${summarizeError(error)}`);
+      }
+    }
+  };
 }
 
 async function slackApi<T extends { ok: boolean }>({
@@ -655,13 +911,15 @@ async function createReplyForSlackEvent({
   threadMessages,
   event,
   memories,
-  modelMessages
+  modelMessages,
+  onTextDelta
 }: {
   token: string;
   threadMessages: CachedThreadMessage[];
   event: SlackMessageEvent;
   memories: string[];
-  modelMessages?: ModelMessage[];
+  modelMessages?: NoboModelMessage[];
+  onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
   try {
     const multimodalMessages =
@@ -675,7 +933,8 @@ async function createReplyForSlackEvent({
       multimodalMessages,
       memories,
       event.user,
-      getScheduleContext(event)
+      getScheduleContext(event),
+      { onTextDelta }
     );
   } catch (error) {
     if (!hasImageAttachments(event)) {
@@ -693,7 +952,8 @@ async function createReplyForSlackEvent({
       await toModelMessages(threadMessages, event.user),
       memories,
       event.user,
-      getScheduleContext(event)
+      getScheduleContext(event),
+      { onTextDelta }
     );
 
     if (!fallbackReply) {
@@ -811,7 +1071,7 @@ async function toModelMessages(
     token?: string;
     liveEvent?: SlackMessageEvent;
   }
-): Promise<ModelMessage[]> {
+): Promise<NoboModelMessage[]> {
   const liveEvent = options?.liveEvent;
   const liveEventTs = liveEvent?.ts;
   const liveUserContent =
@@ -1135,4 +1395,15 @@ function getSlackContextMessageLimit() {
   }
 
   return parsedValue;
+}
+
+function getSlackStreamBufferSize() {
+  const rawValue = process.env.SLACK_STREAM_BUFFER_SIZE;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 1) {
+    return DEFAULT_SLACK_STREAM_BUFFER_SIZE;
+  }
+
+  return Math.min(parsedValue, 2000);
 }

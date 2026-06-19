@@ -4,13 +4,14 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 ## Stack
 
-- Node.js HTTP server
+- Flue Node.js target and generated HTTP server
 - TypeScript
-- Vercel AI SDK 6
-- OpenCode Go via the AI SDK OpenAI-compatible provider
+- `@flue/runtime` agent harness
+- OpenCode Go registered as a Flue OpenAI-compatible provider
 - Exa Search API via `exa-js`
 - Redis thread-state cache
-- Slack Events API
+- Slack Events API, with both the legacy `/api/slack/events` route and Flue's `/channels/slack/events` channel route
+- Slack response streaming via `@slack/web-api` `chatStream`
 
 ## Local setup
 
@@ -44,6 +45,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
    - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
+   - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how much generated text is buffered before appending to a Slack stream
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
@@ -54,20 +56,27 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    npm run dev
    ```
 
+   Flue dev serves on `http://localhost:3583` by default. Set `PORT=3000` if you want the previous local port.
+
 5. Confirm the process is up:
 
-   - `GET http://localhost:3000/healthz`
-   - `POST http://localhost:3000/api/slack/events`
+   - `GET http://localhost:3583/healthz`
+   - `POST http://localhost:3583/api/slack/events`
+   - `POST http://localhost:3583/api/slack/commands`
+   - `POST http://localhost:3583/channels/slack/events`
 
 ## Slack app configuration
 
 Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
+  - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
+- Slash Commands: create `/nobo` and set the Request URL to `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
 - OAuth scopes:
+  - `commands`
   - `app_mentions:read`
   - `chat:write`
   - `im:history` for direct messages
@@ -82,7 +91,7 @@ To allow users to type directly in NoBo's App DM, enable the Messages tab in Sla
 For local development, expose the app with a tunnel:
 
 ```bash
-ngrok http 3000
+ngrok http 3583
 ```
 
 Then paste the public HTTPS URL into Slack Event Subscriptions.
@@ -104,18 +113,21 @@ For Railway GitHub autodeploys, enable `Wait for CI` on the NoBo service deploy 
 
 ## Files to edit first
 
-- `lib/ai.ts`: assistant prompt and OpenCode Go model selection
+- `src/app.ts`: Flue/Hono app entrypoint, health routes, legacy Slack route, and scheduler startup
+- `src/agents/nobo.ts`: Flue agent definition and internal route guard
+- `lib/nobo-prompt.ts`: assistant prompt
+- `lib/flue-tools.ts`: Flue tool definitions for web search, artifacts, schedules, time, and Slack history
+- `lib/ai.ts`: internal Flue agent prompt bridge and OpenCode Go model selection
 - `lib/skills.ts`: Slack skill registry and command handlers
 - `lib/slack.ts`: Slack history loading, text cleanup, and reply posting
-- `server.ts`: HTTP routing and Slack event handling
 
 ## Web search
 
-If `EXA_API_KEY` is set, NoBo can call Exa web search during response generation for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
+If `EXA_API_KEY` is set, NoBo can call Exa web search during Flue agent runs for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
 
 ## Time awareness
 
-NoBo injects the current UTC and America/Chicago time into every model call and exposes a `getCurrentTime` tool for exact time questions. Relative schedule phrases like "in 5 minutes" and "next Monday" should be interpreted from America/Chicago unless the user specifies another timezone.
+NoBo injects the current UTC and America/Chicago time into every model call and exposes a `get_current_time` Flue tool for exact time questions. Relative schedule phrases like "in 5 minutes" and "next Monday" should be interpreted from America/Chicago unless the user specifies another timezone.
 
 ## Artifacts
 
@@ -176,6 +188,7 @@ NoBo supports explicit Slack skills triggered with `@NoBo <skill> ...`.
 
 Current skills:
 
+- `/nobo help`
 - `@NoBo skills` or `@NoBo help`
 - `@NoBo summarize-thread [focus]`
 - `@NoBo thread-todos`
