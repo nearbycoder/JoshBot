@@ -104,8 +104,7 @@ const DEFAULT_SLACK_EVENT_LOCK_TTL_SECONDS = 60 * 10;
 const DEFAULT_SLACK_STREAM_BUFFER_SIZE = 128;
 const DEFAULT_SLACK_STREAM_UPDATE_INTERVAL_MS = 750;
 const DEFAULT_SLACK_LISTENING_ANIMATION_INTERVAL_MS = 1000;
-const DEFAULT_SLACK_LISTENING_MESSAGE = "Listening...";
-const SLACK_LISTENING_SPINNER_FRAMES = ["[|]", "[/]", "[-]", "[\\]"];
+const DEFAULT_SLACK_LISTENING_MESSAGE = "Thinking...";
 const SLACK_SECTION_BLOCK_TEXT_LIMIT = 2900;
 const SLACK_MAX_BLOCKS = 50;
 const STREAM_FAILURE_NOTICE = "I hit an error before I could finish this reply.";
@@ -1149,6 +1148,7 @@ function collapseWhitespace(input: string) {
 function createSlackTextBlocks(text: string): SlackBlock[] {
   return splitSlackSectionBlockText(text).map((chunk) => ({
     type: "section",
+    expand: true,
     text: {
       type: "mrkdwn",
       text: chunk
@@ -1615,10 +1615,7 @@ function getSlackInitialListeningFrame() {
 }
 
 function getSlackListeningAnimationFrames() {
-  const baseMessage = getSlackListeningMessage().replace(/\.+$/u, "").trim() || "Listening";
+  const baseMessage = getSlackListeningMessage().replace(/\.+$/u, "").trim() || "Thinking";
 
-  return SLACK_LISTENING_SPINNER_FRAMES.map((spinner, index) => {
-    const dots = ".".repeat((index % 3) + 1);
-    return `${spinner} ${baseMessage}${dots}`;
-  });
+  return [1, 2, 3].map((dotCount) => `${baseMessage}${".".repeat(dotCount)}`);
 }
