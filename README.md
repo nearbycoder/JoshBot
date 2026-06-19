@@ -44,6 +44,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_BOT_TOKEN`: Bot User OAuth Token from your Slack app
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
+   - `SLACK_ACK_REACTION`: defaults to `eyes`; emoji reaction NoBo adds to targeted messages, or `off` to disable
    - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
    - `SLACK_LISTENING_MESSAGE`: defaults to `Thinking...`; used as the base text for the animated placeholder before model text starts streaming back
    - `SLACK_LISTENING_ANIMATION_INTERVAL_MS`: defaults to `1000`; controls the placeholder dot animation cadence
@@ -82,6 +83,7 @@ Create a Slack app and configure:
   - `commands`
   - `app_mentions:read`
   - `chat:write`
+  - `reactions:write` so NoBo can react to messages it is handling
   - `im:history` for direct messages
   - `channels:history` for thread context in public channels
   - `groups:history` if NoBo should summarize private channels it has joined

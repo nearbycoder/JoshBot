@@ -38,6 +38,10 @@ type SlackUpdateMessageResponse =
   | SlackApiSuccess<{ channel: string; ts: string }>
   | SlackApiFailure;
 
+type SlackReactionResponse =
+  | SlackApiSuccess<Record<string, never>>
+  | SlackApiFailure;
+
 type SlackReplyPost = {
   ts?: string;
 };
@@ -105,6 +109,7 @@ const DEFAULT_SLACK_STREAM_BUFFER_SIZE = 128;
 const DEFAULT_SLACK_STREAM_UPDATE_INTERVAL_MS = 750;
 const DEFAULT_SLACK_LISTENING_ANIMATION_INTERVAL_MS = 1000;
 const DEFAULT_SLACK_LISTENING_MESSAGE = "Thinking...";
+const DEFAULT_SLACK_ACK_REACTION = "eyes";
 const SLACK_SECTION_BLOCK_TEXT_LIMIT = 2900;
 const SLACK_MAX_BLOCKS = 50;
 const STREAM_FAILURE_NOTICE = "I hit an error before I could finish this reply.";
@@ -165,6 +170,7 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   }
 
   const token = requireEnv("SLACK_BOT_TOKEN");
+  void acknowledgeTargetedSlackEvent(token, event);
   const threadTs = event.thread_ts ?? event.ts;
   const incomingMessage = await createCachedUserMessage(token, event);
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
@@ -313,6 +319,7 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   const minimalThreadMessages = [incomingMessage];
 
   if (commandReply) {
+    void acknowledgeTargetedSlackEvent(token, event);
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
@@ -346,6 +353,7 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   const scheduleReply = await maybeHandleScheduleCommand(event);
 
   if (scheduleReply) {
+    void acknowledgeTargetedSlackEvent(token, event);
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
@@ -380,6 +388,7 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     return;
   }
 
+  void acknowledgeTargetedSlackEvent(token, event);
   const replyStream = createSlackReplyStreamer({
     token,
     channel: event.channel,
@@ -432,6 +441,7 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   }
 
   const token = requireEnv("SLACK_BOT_TOKEN");
+  void acknowledgeTargetedSlackEvent(token, event);
   const incomingMessage = await createCachedUserMessage(token, event);
   const threadMessages: CachedThreadMessage[] = [incomingMessage];
   const commandReply = await maybeHandleMemoryCommand(event);
@@ -671,6 +681,54 @@ async function updateSlackMessage({
       text,
       ...(blocks ? { blocks } : {}),
       mrkdwn: true
+    }
+  });
+}
+
+async function acknowledgeTargetedSlackEvent(token: string, event: SlackMessageEvent) {
+  const reaction = getSlackAckReactionName();
+
+  if (!reaction) {
+    return;
+  }
+
+  try {
+    await addSlackReaction({
+      token,
+      channel: event.channel,
+      ts: event.ts,
+      name: reaction
+    });
+  } catch (error) {
+    const summary = summarizeError(error);
+
+    if (summary.includes("already_reacted")) {
+      return;
+    }
+
+    console.warn(`Unable to add Slack acknowledgement reaction: ${summary}`);
+  }
+}
+
+async function addSlackReaction({
+  token,
+  channel,
+  ts,
+  name
+}: {
+  token: string;
+  channel: string;
+  ts: string;
+  name: string;
+}) {
+  return slackApi<SlackReactionResponse>({
+    token,
+    method: "POST",
+    path: "reactions.add",
+    body: {
+      channel,
+      timestamp: ts,
+      name
     }
   });
 }
@@ -1608,6 +1666,17 @@ function getSlackListeningAnimationIntervalMs() {
 
 function getSlackListeningMessage() {
   return process.env.SLACK_LISTENING_MESSAGE?.trim() || DEFAULT_SLACK_LISTENING_MESSAGE;
+}
+
+function getSlackAckReactionName() {
+  const rawValue = process.env.SLACK_ACK_REACTION?.trim() || DEFAULT_SLACK_ACK_REACTION;
+  const normalized = rawValue.replace(/^:+|:+$/g, "").trim();
+
+  if (!normalized || normalized.toLowerCase() === "none" || normalized.toLowerCase() === "off") {
+    return null;
+  }
+
+  return normalized;
 }
 
 function getSlackInitialListeningFrame() {
