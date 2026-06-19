@@ -7,6 +7,7 @@ type SlackSkillContext = {
   memories: string[];
   currentUserId: string | undefined;
   onTextDelta?: (delta: string) => void | Promise<void>;
+  beforeModelReply?: () => void | Promise<void>;
 };
 
 type ParsedSkillCommand = {
@@ -31,7 +32,8 @@ export async function maybeHandleSlackSkillCommand({
   modelMessages,
   memories,
   currentUserId,
-  onTextDelta
+  onTextDelta,
+  beforeModelReply
 }: SlackSkillContext) {
   const command = parseSkillCommand(commandText);
 
@@ -44,6 +46,7 @@ export async function maybeHandleSlackSkillCommand({
     case "skills":
       return formatSlackSkillHelp();
     case "summarize-thread":
+      await beforeModelReply?.();
       return createSlackSkillReply({
         messages: [
           ...modelMessages,
@@ -64,6 +67,7 @@ export async function maybeHandleSlackSkillCommand({
         onTextDelta
       });
     case "thread-todos":
+      await beforeModelReply?.();
       return createSlackSkillReply({
         messages: [
           ...modelMessages,
@@ -87,6 +91,7 @@ export async function maybeHandleSlackSkillCommand({
         return "Usage: `@NoBo web-search <query>`";
       }
 
+      await beforeModelReply?.();
       return createSlackSkillReply({
         messages: [
           {

@@ -11,7 +11,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Exa Search API via `exa-js`
 - Redis thread-state cache
 - Slack Events API, with both the legacy `/api/slack/events` route and Flue's `/channels/slack/events` channel route
-- Slack response streaming via `@slack/web-api` `chatStream`
+- Slack response streaming via an immediate listening message and progressive same-message updates
 
 ## Local setup
 
@@ -45,7 +45,9 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
    - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
-   - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how much generated text is buffered before appending to a Slack stream
+   - `SLACK_LISTENING_MESSAGE`: defaults to `Listening...`; shown immediately before model text starts streaming back
+   - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how many new characters accumulate before updating a streamed Slack reply
+   - `SLACK_STREAM_UPDATE_INTERVAL_MS`: defaults to `750`; maximum update cadence for streamed Slack reply updates
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
