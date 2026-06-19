@@ -34,7 +34,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `PORT`: defaults to `3000`
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: defaults to `glm-5.2`
-   - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.7-code`
+   - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `REDIS_URL`: optional Redis connection string for caching Slack thread state
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
@@ -211,6 +211,6 @@ NoBo passes Slack attachment metadata into the model, and for image uploads it w
 
 This requires the Slack app to have `files:read`.
 
-NoBo uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k2.7-code`.
+NoBo uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k2.6`. If the configured vision model fails, NoBo retries the image request once with `kimi-k2.6` before falling back to text-only attachment context.
 
 In direct testing here on May 21, 2026, `minimax-m2.7` behaved as if no image was attached, while `kimi-k2.6` successfully described the same image. If your normal text model is not vision-capable, keep it in `OPENCODE_GO_MODEL` and set `OPENCODE_GO_VISION_MODEL` to a model that actually handles image input.

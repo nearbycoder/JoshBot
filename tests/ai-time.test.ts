@@ -33,3 +33,55 @@ test("Slack markdown normalization converts Markdown links and bold", () => {
 
   assert.equal(normalized, "See <https://openai.com|OpenAI> and *bold* text");
 });
+
+test("image-bearing Slack messages default to Kimi vision model", () => {
+  const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  delete process.env.OPENCODE_GO_VISION_MODEL;
+
+  try {
+    assert.equal(
+      __testing.selectSlackModel([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            { type: "image", image: Buffer.from("image"), mediaType: "image/jpeg" }
+          ]
+        }
+      ]),
+      "kimi-k2.6"
+    );
+  } finally {
+    if (originalVisionModel === undefined) {
+      delete process.env.OPENCODE_GO_VISION_MODEL;
+    } else {
+      process.env.OPENCODE_GO_VISION_MODEL = originalVisionModel;
+    }
+  }
+});
+
+test("image-bearing Slack messages respect configured vision model", () => {
+  const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  process.env.OPENCODE_GO_VISION_MODEL = "kimi-k2.7-code";
+
+  try {
+    assert.equal(
+      __testing.selectSlackModel([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            { type: "image", image: Buffer.from("image"), mediaType: "image/jpeg" }
+          ]
+        }
+      ]),
+      "kimi-k2.7-code"
+    );
+  } finally {
+    if (originalVisionModel === undefined) {
+      delete process.env.OPENCODE_GO_VISION_MODEL;
+    } else {
+      process.env.OPENCODE_GO_VISION_MODEL = originalVisionModel;
+    }
+  }
+});

@@ -5,6 +5,10 @@ import { SYSTEM_PROMPT } from "./nobo-prompt.js";
 import { formatCurrentTime, formatCurrentTimePrompt } from "./nobo-time.js";
 import type { SlackScheduleContext } from "./schedules.js";
 
+const DEFAULT_SLACK_TEXT_MODEL = "glm-5.2";
+const DEFAULT_SLACK_VISION_MODEL = "kimi-k2.6";
+const FALLBACK_SLACK_VISION_MODEL = "kimi-k2.6";
+
 export async function createSlackReply(messages: NoboModelMessage[]) {
   return createSlackReplyWithMemory(messages, [], undefined);
 }
@@ -134,14 +138,36 @@ async function generateSlackResponse({
     currentUserId,
     extraSystem
   });
-  const text = await runNoboAgentPrompt({
-    prompt,
-    images: modelMessagesToPrompt(messages).images,
-    modelId: selectSlackModel(messages),
-    toolMode: "slack",
-    scheduleContext,
-    onTextDelta
-  });
+  const images = modelMessagesToPrompt(messages).images;
+  const modelId = selectSlackModel(messages);
+  const toolMode: NoboAgentToolMode = images.length > 0 ? "none" : "slack";
+  let text: string;
+
+  try {
+    text = await runNoboAgentPrompt({
+      prompt,
+      images,
+      modelId,
+      toolMode,
+      scheduleContext: toolMode === "slack" ? scheduleContext : undefined,
+      onTextDelta
+    });
+  } catch (error) {
+    if (images.length === 0) {
+      throw error;
+    }
+
+    console.warn(
+      `Vision request with ${modelId} failed; retrying with ${FALLBACK_SLACK_VISION_MODEL}: ${summarizeDeltaError(error)}`
+    );
+    text = await runNoboAgentPrompt({
+      prompt,
+      images,
+      modelId: FALLBACK_SLACK_VISION_MODEL,
+      toolMode: "none",
+      onTextDelta
+    });
+  }
 
   return normalizeSlackMrkdwn(text.trim());
 }
@@ -221,7 +247,7 @@ async function runNoboAgentPrompt({
     });
 
     if (!response.ok) {
-      throw new Error(`Flue agent request failed with HTTP ${response.status}: ${await response.text()}`);
+      throw new Error(`Flue agent request to ${modelId} failed with HTTP ${response.status}: ${await response.text()}`);
     }
 
     const payload = (await response.json()) as {
@@ -281,10 +307,10 @@ function isPromptResult(input: unknown): input is { text: string } {
 
 function selectSlackModel(messages: NoboModelMessage[]) {
   if (containsImageInput(messages)) {
-    return process.env.OPENCODE_GO_VISION_MODEL ?? "kimi-k2.7-code";
+    return process.env.OPENCODE_GO_VISION_MODEL ?? DEFAULT_SLACK_VISION_MODEL;
   }
 
-  return process.env.OPENCODE_GO_MODEL ?? "glm-5.2";
+  return process.env.OPENCODE_GO_MODEL ?? DEFAULT_SLACK_TEXT_MODEL;
 }
 
 function containsImageInput(messages: NoboModelMessage[]) {
@@ -333,7 +359,8 @@ function normalizeSlackMrkdwn(input: string) {
 export const __testing = {
   formatCurrentTime,
   formatCurrentTimePrompt,
-  normalizeSlackMrkdwn
+  normalizeSlackMrkdwn,
+  selectSlackModel
 };
 
 export type NoboResponseOptions = {
