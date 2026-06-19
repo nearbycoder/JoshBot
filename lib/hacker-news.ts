@@ -7,26 +7,25 @@ export type HackerNewsStory = {
   createdAt?: string;
 };
 
-type HackerNewsSearchResponse = {
-  hits?: unknown[];
-};
-
-type HackerNewsSearchHit = {
-  objectID?: unknown;
+type HackerNewsItem = {
+  id?: unknown;
+  type?: unknown;
   title?: unknown;
-  story_title?: unknown;
   url?: unknown;
-  story_url?: unknown;
-  points?: unknown;
-  num_comments?: unknown;
-  created_at?: unknown;
+  score?: unknown;
+  descendants?: unknown;
+  time?: unknown;
+  deleted?: unknown;
+  dead?: unknown;
 };
 
-const HACKER_NEWS_SEARCH_URL = "https://hn.algolia.com/api/v1/search_by_date";
+const HACKER_NEWS_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json";
+const HACKER_NEWS_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item";
+const HACKER_NEWS_TOP_STORIES_SCAN_LIMIT = 100;
 const DEFAULT_HACKER_NEWS_LIMIT = 10;
 
 export async function createHackerNewsSlackDigest({ focus }: { focus: string }) {
-  const stories = await fetchLatestHackerNewsStories({
+  const stories = await fetchTrendingHackerNewsStories({
     query: focus,
     limit: DEFAULT_HACKER_NEWS_LIMIT
   });
@@ -34,85 +33,128 @@ export async function createHackerNewsSlackDigest({ focus }: { focus: string }) 
   return formatHackerNewsSlackDigest(stories, focus);
 }
 
-export async function fetchLatestHackerNewsStories({
+export async function fetchTrendingHackerNewsStories({
   query,
   limit
 }: {
   query: string;
   limit: number;
 }) {
-  const params = new URLSearchParams({
-    tags: "story",
-    hitsPerPage: String(Math.min(Math.max(limit * 2, limit), 50))
-  });
-  const trimmedQuery = query.trim();
+  const safeLimit = Math.max(0, Math.floor(limit));
 
-  if (trimmedQuery) {
-    params.set("query", trimmedQuery);
+  if (safeLimit === 0) {
+    return [];
   }
 
-  const response = await fetch(`${HACKER_NEWS_SEARCH_URL}?${params.toString()}`, {
-    headers: {
-      accept: "application/json"
-    }
-  });
+  const ids = await fetchHackerNewsTopStoryIds();
+  const scanLimit = Math.min(Math.max(safeLimit * 10, safeLimit), HACKER_NEWS_TOP_STORIES_SCAN_LIMIT);
+  const items = await Promise.all(ids.slice(0, scanLimit).map(fetchHackerNewsItem));
 
-  if (!response.ok) {
-    throw new Error(`Hacker News request failed with HTTP ${response.status}`);
-  }
-
-  const payload = (await response.json()) as HackerNewsSearchResponse;
-  const hits = Array.isArray(payload.hits) ? payload.hits : [];
-
-  return hits
-    .map(normalizeHackerNewsHit)
+  return items
+    .map(normalizeHackerNewsItem)
     .filter((story): story is HackerNewsStory => story !== null)
-    .slice(0, limit);
+    .filter((story) => storyMatchesFocus(story, query))
+    .slice(0, safeLimit);
 }
 
 export function formatHackerNewsSlackDigest(stories: HackerNewsStory[], focus: string) {
   const trimmedFocus = focus.trim();
   const heading = trimmedFocus
-    ? `*Latest Hacker News for "${escapeSlackText(trimmedFocus)}"*`
-    : "*Latest Hacker News*";
+    ? `*Top Trending Hacker News for "${escapeSlackText(trimmedFocus)}"*`
+    : "*Top Trending Hacker News*";
 
   if (stories.length === 0) {
     return trimmedFocus
-      ? `${heading}\nI couldn't find recent Hacker News stories matching that focus.`
-      : `${heading}\nI couldn't find recent Hacker News stories.`;
+      ? `${heading}\nI couldn't find top Hacker News stories matching that focus.`
+      : `${heading}\nI couldn't find top Hacker News stories.`;
   }
 
   return [
     heading,
     ...stories.map((story, index) => `${index + 1}. ${formatHackerNewsStory(story)}`),
     "",
-    "<https://news.ycombinator.com/newest|Hacker News newest>"
+    "<https://news.ycombinator.com/|Hacker News top>"
   ].join("\n");
 }
 
-function normalizeHackerNewsHit(input: unknown): HackerNewsStory | null {
+async function fetchHackerNewsTopStoryIds() {
+  const response = await fetch(HACKER_NEWS_TOP_STORIES_URL, {
+    headers: {
+      accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Hacker News top stories request failed with HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+
+  return payload.map(getNumber).filter((id): id is number => typeof id === "number");
+}
+
+async function fetchHackerNewsItem(id: number) {
+  const response = await fetch(`${HACKER_NEWS_ITEM_URL}/${id}.json`, {
+    headers: {
+      accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Hacker News item ${id} request failed with HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as unknown;
+}
+
+function normalizeHackerNewsItem(input: unknown): HackerNewsStory | null {
   if (!isRecord(input)) {
     return null;
   }
 
-  const hit = input as HackerNewsSearchHit;
-  const id = getString(hit.objectID);
-  const title = getString(hit.title) || getString(hit.story_title);
+  const item = input as HackerNewsItem;
+  const id = getNumber(item.id);
+  const type = getString(item.type);
+  const title = getString(item.title);
 
   if (!id || !title) {
     return null;
   }
 
-  const url = getString(hit.url) || getString(hit.story_url) || `https://news.ycombinator.com/item?id=${id}`;
+  if ((type && type !== "story") || item.deleted === true || item.dead === true) {
+    return null;
+  }
+
+  const time = getNumber(item.time);
+  const url = getString(item.url) || `https://news.ycombinator.com/item?id=${id}`;
 
   return {
-    id,
+    id: String(id),
     title,
     url,
-    points: getNumber(hit.points),
-    comments: getNumber(hit.num_comments),
-    createdAt: getString(hit.created_at)
+    points: getNumber(item.score),
+    comments: getNumber(item.descendants),
+    createdAt: typeof time === "number" ? new Date(time * 1000).toISOString() : undefined
   };
+}
+
+function storyMatchesFocus(story: HackerNewsStory, focus: string) {
+  const terms = focus
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (terms.length === 0) {
+    return true;
+  }
+
+  const haystack = `${story.title} ${story.url}`.toLowerCase();
+  return haystack.includes(terms.join(" ")) || terms.every((term) => haystack.includes(term));
 }
 
 function formatHackerNewsStory(story: HackerNewsStory) {

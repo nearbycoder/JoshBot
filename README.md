@@ -162,7 +162,7 @@ NoBo can also summarize recent channel history when asked with a channel mention
 
 ## Scheduled Hacker News
 
-NoBo posts the latest Hacker News stories to `#hacker-news` twice daily at 9:00 AM and 2:00 PM America/Chicago. This follows Flue's Node scheduling guidance by using Croner for the fixed app-owned schedule.
+NoBo posts top trending Hacker News stories to `#hacker-news` twice daily at 9:00 AM and 2:00 PM America/Chicago. This follows Flue's Node scheduling guidance by using Croner for the fixed app-owned schedule.
 
 Set `NOBO_HACKER_NEWS_CHANNEL_ID` to the Slack channel ID when possible. Otherwise NoBo resolves `NOBO_HACKER_NEWS_CHANNEL_NAME` by name, which requires the Slack app to have `channels:read`.
 

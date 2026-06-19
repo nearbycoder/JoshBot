@@ -115,7 +115,7 @@ test("starts an async Hacker News task for /nobo-hacker-news", () => {
   });
 
   assert.equal(result.response.response_type, "ephemeral");
-  assert.match(result.response.text, /Pulling the latest Hacker News stories matching "rust"/);
+  assert.match(result.response.text, /Pulling top trending Hacker News stories matching "rust"/);
   assert.deepEqual(result.task, {
     type: "hacker-news",
     channelId: "C123",

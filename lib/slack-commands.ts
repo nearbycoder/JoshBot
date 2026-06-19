@@ -99,7 +99,7 @@ export function formatNoboSlashCommandHelp() {
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
     "`/nobo-news [focus]`: post this week's news digest",
-    "`/nobo-hacker-news [focus]`: post the latest Hacker News stories",
+    "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
     "`/nobo-dad-joke`: post a dad joke",
     "",
@@ -153,8 +153,8 @@ function handleNoboHackerNewsSlashCommand(
       ephemeral(
         [
           "*NoBo Hacker News*",
-          "`/nobo-hacker-news`: post the latest Hacker News stories",
-          "`/nobo-hacker-news rust`: search latest Hacker News stories by focus"
+          "`/nobo-hacker-news`: post top trending Hacker News stories",
+          "`/nobo-hacker-news rust`: filter top trending Hacker News stories by focus"
         ].join("\n")
       )
     );
@@ -167,8 +167,8 @@ function handleNoboHackerNewsSlashCommand(
   return {
     response: ephemeral(
       text
-        ? `Pulling the latest Hacker News stories matching "${text}". I'll post them here shortly.`
-        : "Pulling the latest Hacker News stories. I'll post them here shortly."
+        ? `Pulling top trending Hacker News stories matching "${text}". I'll post them here shortly.`
+        : "Pulling top trending Hacker News stories. I'll post them here shortly."
     ),
     task: {
       type: "hacker-news",
