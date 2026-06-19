@@ -1,13 +1,14 @@
 import { config as loadEnv } from "dotenv";
 import { Hono } from "hono";
 import { handleArtifactFetchRequest } from "../lib/artifacts.js";
-import { createScheduledSlackMessage } from "../lib/ai.js";
+import { createScheduledSlackMessage, createWeeklyAiNewsSlackDigest } from "../lib/ai.js";
 import {
   handleSlackSlashCommandPayload,
-  parseSlackSlashCommandPayload
+  parseSlackSlashCommandPayload,
+  type SlackSlashCommandTask
 } from "../lib/slack-commands.js";
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "../lib/slack-events.js";
-import { postSlackMessage, verifySlackRequest } from "../lib/slack.js";
+import { postGeneratedSlackMessage, postSlackMessage, verifySlackRequest } from "../lib/slack.js";
 import { startScheduleRunner } from "../lib/schedules.js";
 import { flueApp } from "./internal-flue.js";
 import { registerNoboProvider } from "./nobo-provider.js";
@@ -69,7 +70,15 @@ app.post("/api/slack/commands", async (c) => {
   }
 
   try {
-    return c.json(handleSlackSlashCommandPayload(parseSlackSlashCommandPayload(rawBody)));
+    const result = handleSlackSlashCommandPayload(parseSlackSlashCommandPayload(rawBody));
+
+    if (result.task) {
+      void runSlackSlashCommandTask(result.task).catch((error) => {
+        console.error(`Slack slash command task failed: ${summarizeError(error)}`);
+      });
+    }
+
+    return c.json(result.response);
   } catch (error) {
     return c.text(summarizeError(error), 400);
   }
@@ -81,6 +90,22 @@ startScheduleRunner({
   postSlackMessage,
   runScheduledTask: createScheduledSlackMessage
 });
+
+async function runSlackSlashCommandTask(task: SlackSlashCommandTask) {
+  switch (task.type) {
+    case "ai-news":
+      await postGeneratedSlackMessage({
+        channel: task.channelId,
+        createReply: (onTextDelta) =>
+          createWeeklyAiNewsSlackDigest({
+            focus: task.focus,
+            currentUserId: task.userId,
+            onTextDelta
+          })
+      });
+      return;
+  }
+}
 
 function summarizeError(error: unknown) {
   if (error instanceof Error) {

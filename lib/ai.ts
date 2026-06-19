@@ -55,6 +55,39 @@ ${instructions}`,
   });
 }
 
+export async function createWeeklyAiNewsSlackDigest({
+  focus,
+  currentUserId,
+  onTextDelta
+}: {
+  focus: string;
+  currentUserId: string | undefined;
+  onTextDelta?: (delta: string) => void | Promise<void>;
+}) {
+  return createSlackSkillReply({
+    messages: [
+      {
+        role: "user",
+        content: focus
+          ? `Give me the latest AI news from the past week, focused on: ${focus}`
+          : "Give me the latest AI news from the past week."
+      }
+    ],
+    memories: [],
+    currentUserId,
+    skillName: "ai-news",
+    instructions: `Your job is to produce a fresh weekly AI news digest for Slack.
+- Use web search for current sources.
+- Focus on the last 7 days from the current date unless a source is important context.
+- Prioritize major model releases, product launches, research breakthroughs, AI infrastructure, developer tools, policy/regulation, and notable industry moves.
+- Prefer primary sources and reputable reporting.
+- Keep it concise: start with a one-sentence headline, then 5-8 bullets with why each item matters.
+- Include dates when known.
+- End with a short 'Sources:' section.`,
+    onTextDelta
+  });
+}
+
 export async function shouldReplyToSlackThread({
   messages,
   currentUserId

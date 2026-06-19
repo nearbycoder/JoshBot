@@ -633,6 +633,45 @@ export async function postSlackMessage({
   });
 }
 
+export async function postGeneratedSlackMessage({
+  channel,
+  threadTs,
+  createReply
+}: {
+  channel: string;
+  threadTs?: string;
+  createReply: (onTextDelta: (delta: string) => Promise<void>) => Promise<string | null>;
+}) {
+  const token = requireEnv("SLACK_BOT_TOKEN");
+  const stream = createSlackReplyStreamer({
+    token,
+    channel,
+    threadTs
+  });
+  let replyText: string | null;
+
+  try {
+    await stream.start();
+    replyText = await createReply(stream.append);
+  } catch (error) {
+    await stream.fail();
+    throw error;
+  }
+
+  if (!replyText) {
+    await stream.fail("I couldn't generate a reply for that command.");
+    return null;
+  }
+
+  return finishSlackReply({
+    token,
+    channel,
+    threadTs,
+    text: replyText,
+    stream
+  });
+}
+
 async function finishSlackReply({
   token,
   channel,
