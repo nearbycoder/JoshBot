@@ -69,7 +69,8 @@ function normalizeSlackMessageEvent(event: SlackEventCallbackPayload["event"], t
     user: getStringField(event, "user"),
     bot_id: getStringField(event, "bot_id"),
     subtype: getStringField(event, "subtype"),
-    channel_type: getStringField(event, "channel_type")
+    channel_type: getStringField(event, "channel_type"),
+    files: getSlackFilesField(event)
   };
 }
 
@@ -77,3 +78,68 @@ function getStringField(record: object, key: string) {
   const value = (record as Record<string, unknown>)[key];
   return typeof value === "string" ? value : undefined;
 }
+
+function getSlackFilesField(record: object) {
+  const value = (record as Record<string, unknown>).files;
+
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const files = value.map(normalizeSlackFile).filter((file) => file !== null);
+  return files.length > 0 ? files : undefined;
+}
+
+function normalizeSlackFile(input: unknown) {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const id = getStringField(record, "id");
+
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    mode: getStringField(record, "mode"),
+    file_access: getStringField(record, "file_access"),
+    title: getStringField(record, "title"),
+    name: getStringField(record, "name"),
+    mimetype: getStringField(record, "mimetype"),
+    filetype: getStringField(record, "filetype"),
+    pretty_type: getStringField(record, "pretty_type"),
+    preview: getStringField(record, "preview"),
+    preview_plain_text: getStringField(record, "preview_plain_text"),
+    plain_text: getStringField(record, "plain_text"),
+    contents: getStringField(record, "contents"),
+    alt_txt: getStringField(record, "alt_txt"),
+    permalink: getStringField(record, "permalink"),
+    external_url: getNullableStringField(record, "external_url"),
+    url_private: getStringField(record, "url_private"),
+    url_private_download: getStringField(record, "url_private_download"),
+    initial_comment: getInitialCommentField(record)
+  };
+}
+
+function getNullableStringField(record: object, key: string) {
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === "string" || value === null ? value : undefined;
+}
+
+function getInitialCommentField(record: object) {
+  const value = (record as Record<string, unknown>).initial_comment;
+
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const comment = getStringField(value, "comment");
+  return comment ? { comment } : undefined;
+}
+
+export const __testing = {
+  normalizeSlackMessageEvent
+};
