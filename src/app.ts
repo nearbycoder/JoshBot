@@ -1,7 +1,11 @@
 import { config as loadEnv } from "dotenv";
 import { Hono } from "hono";
 import { handleArtifactFetchRequest } from "../lib/artifacts.js";
-import { createScheduledSlackMessage, createWeeklyAiNewsSlackDigest } from "../lib/ai.js";
+import {
+  createScheduledSlackMessage,
+  createWeeklyAiNewsSlackDigest,
+  createWeeklyNewsSlackDigest
+} from "../lib/ai.js";
 import {
   handleSlackSlashCommandPayload,
   parseSlackSlashCommandPayload,
@@ -98,6 +102,17 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask) {
         channel: task.channelId,
         createReply: (onTextDelta) =>
           createWeeklyAiNewsSlackDigest({
+            focus: task.focus,
+            currentUserId: task.userId,
+            onTextDelta
+          })
+      });
+      return;
+    case "news":
+      await postGeneratedSlackMessage({
+        channel: task.channelId,
+        createReply: (onTextDelta) =>
+          createWeeklyNewsSlackDigest({
             focus: task.focus,
             currentUserId: task.userId,
             onTextDelta

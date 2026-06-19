@@ -27,6 +27,7 @@ test("returns ephemeral help for /nobo-help", () => {
   assert.equal(response.response_type, "ephemeral");
   assert.equal(response.mrkdwn, true);
   assert.match(response.text, /`\/nobo-help`/);
+  assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo web-search/);
@@ -71,6 +72,36 @@ test("returns usage help for /nobo-ai-news help", () => {
 
   assert.equal(result.response.response_type, "ephemeral");
   assert.match(result.response.text, /`\/nobo-ai-news`/);
+  assert.equal(result.task, undefined);
+});
+
+test("starts an async news task for /nobo-news", () => {
+  const result = handleSlackSlashCommandPayload({
+    command: "/nobo-news",
+    text: "markets",
+    channel_id: "C123",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /Pulling this week's news/);
+  assert.deepEqual(result.task, {
+    type: "news",
+    channelId: "C123",
+    userId: "U123",
+    focus: "markets"
+  });
+});
+
+test("returns usage help for /nobo-news help", () => {
+  const result = handleSlackSlashCommandPayload({
+    command: "/nobo-news",
+    text: "help",
+    channel_id: "C123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /`\/nobo-news`/);
   assert.equal(result.task, undefined);
 });
 

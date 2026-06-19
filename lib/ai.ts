@@ -88,6 +88,41 @@ export async function createWeeklyAiNewsSlackDigest({
   });
 }
 
+export async function createWeeklyNewsSlackDigest({
+  focus,
+  currentUserId,
+  onTextDelta
+}: {
+  focus: string;
+  currentUserId: string | undefined;
+  onTextDelta?: (delta: string) => void | Promise<void>;
+}) {
+  return createSlackSkillReply({
+    messages: [
+      {
+        role: "user",
+        content: focus
+          ? `Give me the latest major news from the past week, focused on: ${focus}`
+          : "Give me the latest major news from the past week."
+      }
+    ],
+    memories: [],
+    currentUserId,
+    skillName: "news",
+    instructions: `Your job is to produce a fresh weekly news digest for Slack.
+- Use web search for current sources.
+- Focus on the last 7 days from the current date unless a source is important context.
+- If the user supplied a focus, center the digest on that topic.
+- Prioritize major, widely relevant developments across world news, U.S. news, business, technology, science, policy, culture, and health.
+- Prefer primary sources and reputable reporting.
+- Avoid sensationalism; summarize what happened and why it matters.
+- Keep it concise: start with a one-sentence headline, then 5-8 bullets.
+- Include dates when known.
+- End with a short 'Sources:' section.`,
+    onTextDelta
+  });
+}
+
 export async function shouldReplyToSlackThread({
   messages,
   currentUserId
