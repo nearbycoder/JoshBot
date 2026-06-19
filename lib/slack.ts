@@ -101,7 +101,9 @@ const DEFAULT_REDIS_THREAD_TTL_SECONDS = 60 * 60 * 24 * 7;
 const DEFAULT_SLACK_EVENT_LOCK_TTL_SECONDS = 60 * 10;
 const DEFAULT_SLACK_STREAM_BUFFER_SIZE = 128;
 const DEFAULT_SLACK_STREAM_UPDATE_INTERVAL_MS = 750;
+const DEFAULT_SLACK_LISTENING_ANIMATION_INTERVAL_MS = 1000;
 const DEFAULT_SLACK_LISTENING_MESSAGE = "Listening...";
+const SLACK_LISTENING_SPINNER_FRAMES = ["[|]", "[/]", "[-]", "[\\]"];
 const STREAM_FAILURE_NOTICE = "I hit an error before I could finish this reply.";
 const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
 const localEventLocks = new Map<string, number>();
@@ -678,6 +680,8 @@ function createSlackReplyStreamer({
   let messageTs: string | undefined;
   let startPromise: Promise<void> | null = null;
   let updatePromise = Promise.resolve();
+  let listeningAnimationTimer: ReturnType<typeof setInterval> | null = null;
+  let listeningAnimationFrame = 0;
   let lastUpdateAt = 0;
   let hasPostedModelText = false;
   let failed = false;
@@ -717,6 +721,30 @@ function createSlackReplyStreamer({
     await updatePromise;
   };
 
+  const updateListeningMessage = (text: string) => {
+    if (!messageTs || failed || hasPostedModelText) {
+      return;
+    }
+
+    const ts = messageTs;
+    postedText = text;
+    lastUpdateAt = Date.now();
+    updatePromise = updatePromise
+      .then(() =>
+        updateSlackMessage({
+          token,
+          channel,
+          ts,
+          text
+        })
+      )
+      .then(() => undefined)
+      .catch((error) => {
+        stopListeningAnimation();
+        console.warn(`Unable to animate Slack listening message: ${summarizeError(error)}`);
+      });
+  };
+
   const shouldUpdatePostedText = (text: string) => {
     if (!postedText || postedText === getSlackListeningMessage()) {
       return true;
@@ -729,6 +757,25 @@ function createSlackReplyStreamer({
     return Date.now() - lastUpdateAt >= getSlackStreamUpdateIntervalMs();
   };
 
+  const startListeningAnimation = () => {
+    if (listeningAnimationTimer || failed) {
+      return;
+    }
+
+    const frames = getSlackListeningAnimationFrames();
+    listeningAnimationTimer = setInterval(() => {
+      listeningAnimationFrame = (listeningAnimationFrame + 1) % frames.length;
+      updateListeningMessage(frames[listeningAnimationFrame] ?? getSlackListeningMessage());
+    }, getSlackListeningAnimationIntervalMs());
+  };
+
+  const stopListeningAnimation = () => {
+    if (listeningAnimationTimer) {
+      clearInterval(listeningAnimationTimer);
+      listeningAnimationTimer = null;
+    }
+  };
+
   const startReply = async () => {
     if (startPromise) {
       return startPromise;
@@ -738,12 +785,13 @@ function createSlackReplyStreamer({
       token,
       channel,
       threadTs,
-      text: getSlackListeningMessage()
+      text: getSlackInitialListeningFrame()
     })
       .then((response) => {
         messageTs = response.ts;
-        postedText = getSlackListeningMessage();
+        postedText = getSlackInitialListeningFrame();
         lastUpdateAt = Date.now();
+        startListeningAnimation();
       })
       .catch((error) => {
         failed = true;
@@ -755,6 +803,7 @@ function createSlackReplyStreamer({
 
   const finalizeStartedReply = async (finalText: string, ts: string) => {
     try {
+      stopListeningAnimation();
       await updatePromise;
       await updateSlackMessage({
         token,
@@ -781,6 +830,7 @@ function createSlackReplyStreamer({
 
       if (!hasPostedModelText) {
         hasPostedModelText = true;
+        stopListeningAnimation();
         await updateStartedReply(streamedText, true);
         return;
       }
@@ -802,6 +852,8 @@ function createSlackReplyStreamer({
       return postFinalMessage(finalText);
     },
     async fail(notice = STREAM_FAILURE_NOTICE) {
+      stopListeningAnimation();
+
       if (!messageTs && !startPromise) {
         return;
       }
@@ -1461,6 +1513,30 @@ function getSlackStreamUpdateIntervalMs() {
   return Math.min(parsedValue, 5000);
 }
 
+function getSlackListeningAnimationIntervalMs() {
+  const rawValue = process.env.SLACK_LISTENING_ANIMATION_INTERVAL_MS;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 250) {
+    return DEFAULT_SLACK_LISTENING_ANIMATION_INTERVAL_MS;
+  }
+
+  return Math.min(parsedValue, 5000);
+}
+
 function getSlackListeningMessage() {
   return process.env.SLACK_LISTENING_MESSAGE?.trim() || DEFAULT_SLACK_LISTENING_MESSAGE;
+}
+
+function getSlackInitialListeningFrame() {
+  return getSlackListeningAnimationFrames()[0] ?? getSlackListeningMessage();
+}
+
+function getSlackListeningAnimationFrames() {
+  const baseMessage = getSlackListeningMessage().replace(/\.+$/u, "").trim() || "Listening";
+
+  return SLACK_LISTENING_SPINNER_FRAMES.map((spinner, index) => {
+    const dots = ".".repeat((index % 3) + 1);
+    return `${spinner} ${baseMessage}${dots}`;
+  });
 }
