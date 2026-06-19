@@ -28,7 +28,7 @@ export type SlackSlashCommandResponse = {
 };
 
 export type SlackSlashCommandTask = {
-  type: "ai-news" | "news";
+  type: "ai-news" | "hacker-news" | "news";
   channelId: string;
   userId?: string;
   focus: string;
@@ -67,6 +67,10 @@ export function handleSlackSlashCommandPayload(
     return handleNoboNewsSlashCommand(payload);
   }
 
+  if (command === "/nobo-hacker-news") {
+    return handleNoboHackerNewsSlashCommand(payload);
+  }
+
   if (command === "/nobo-ai-news") {
     return handleNoboAiNewsSlashCommand(payload);
   }
@@ -74,7 +78,7 @@ export function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -95,6 +99,7 @@ export function formatNoboSlashCommandHelp() {
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
     "`/nobo-news [focus]`: post this week's news digest",
+    "`/nobo-hacker-news [focus]`: post the latest Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
     "`/nobo-dad-joke`: post a dad joke",
     "",
@@ -131,6 +136,42 @@ function handleNoboAiNewsSlashCommand(
     ),
     task: {
       type: "ai-news",
+      channelId: payload.channel_id,
+      userId: payload.user_id,
+      focus: text
+    }
+  };
+}
+
+function handleNoboHackerNewsSlashCommand(
+  payload: SlackSlashCommandPayload
+): SlackSlashCommandResult {
+  const text = payload.text.trim();
+
+  if (text.toLowerCase() === "help") {
+    return immediate(
+      ephemeral(
+        [
+          "*NoBo Hacker News*",
+          "`/nobo-hacker-news`: post the latest Hacker News stories",
+          "`/nobo-hacker-news rust`: search latest Hacker News stories by focus"
+        ].join("\n")
+      )
+    );
+  }
+
+  if (!payload.channel_id) {
+    return immediate(ephemeral("Slack did not send a channel for this command. Try again in a channel."));
+  }
+
+  return {
+    response: ephemeral(
+      text
+        ? `Pulling the latest Hacker News stories matching "${text}". I'll post them here shortly.`
+        : "Pulling the latest Hacker News stories. I'll post them here shortly."
+    ),
+    task: {
+      type: "hacker-news",
       channelId: payload.channel_id,
       userId: payload.user_id,
       focus: text

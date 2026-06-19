@@ -28,6 +28,7 @@ test("returns ephemeral help for /nobo-help", () => {
   assert.equal(response.mrkdwn, true);
   assert.match(response.text, /`\/nobo-help`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
+  assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo web-search/);
@@ -102,6 +103,36 @@ test("returns usage help for /nobo-news help", () => {
 
   assert.equal(result.response.response_type, "ephemeral");
   assert.match(result.response.text, /`\/nobo-news`/);
+  assert.equal(result.task, undefined);
+});
+
+test("starts an async Hacker News task for /nobo-hacker-news", () => {
+  const result = handleSlackSlashCommandPayload({
+    command: "/nobo-hacker-news",
+    text: "rust",
+    channel_id: "C123",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /Pulling the latest Hacker News stories matching "rust"/);
+  assert.deepEqual(result.task, {
+    type: "hacker-news",
+    channelId: "C123",
+    userId: "U123",
+    focus: "rust"
+  });
+});
+
+test("returns usage help for /nobo-hacker-news help", () => {
+  const result = handleSlackSlashCommandPayload({
+    command: "/nobo-hacker-news",
+    text: "help",
+    channel_id: "C123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /`\/nobo-hacker-news`/);
   assert.equal(result.task, undefined);
 });
 

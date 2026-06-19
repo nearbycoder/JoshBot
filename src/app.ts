@@ -6,6 +6,7 @@ import {
   createWeeklyAiNewsSlackDigest,
   createWeeklyNewsSlackDigest
 } from "../lib/ai.js";
+import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
 import {
   handleSlackSlashCommandPayload,
   parseSlackSlashCommandPayload,
@@ -116,6 +117,15 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask) {
             focus: task.focus,
             currentUserId: task.userId,
             onTextDelta
+          })
+      });
+      return;
+    case "hacker-news":
+      await postGeneratedSlackMessage({
+        channel: task.channelId,
+        createReply: () =>
+          createHackerNewsSlackDigest({
+            focus: task.focus
           })
       });
       return;
