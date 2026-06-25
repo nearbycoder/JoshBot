@@ -30,6 +30,18 @@ import {
   listOpenCodeGoModels,
   normalizeOpenCodeGoOaCompatibleModelId
 } from "./nobo-models.js";
+import {
+  evaluateNoboAccess,
+  formatNoboAccessConfig,
+  formatNoboAccessDenied,
+  formatNoboAdminHelp,
+  formatNoboAuditLog,
+  isNoboAdmin,
+  listNoboAuditEvents,
+  recordNoboAuditEvent,
+  updateAccessControl,
+  type NoboAccessSubject
+} from "./access-controls.js";
 
 const DAD_JOKES = [
   "I only know 25 letters of the alphabet. I don't know y.",
@@ -97,10 +109,12 @@ export type SlackSlashCommandResult = {
 
 export type SlackSlashCommandOptions = {
   formatOpsStatus?: () => Promise<string>;
+  evaluateAccess?: (subject: NoboAccessSubject) => Promise<{ allowed: boolean; reason?: string }>;
 };
 
 export type SlackInteractionOptions = {
   setChannelModelPreference?: typeof setChannelModelPreference;
+  evaluateAccess?: (subject: NoboAccessSubject) => Promise<{ allowed: boolean; reason?: string }>;
 };
 
 export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashCommandPayload {
@@ -135,6 +149,26 @@ export async function handleSlackSlashCommandPayload(
   const command = payload.command.trim().toLowerCase();
   const text = payload.text.trim().toLowerCase();
 
+  if (command === "/nobo-status") {
+    return handleStatusSlashCommand(options);
+  }
+
+  if (command === "/nobo-admin") {
+    return handleAdminSlashCommand(payload);
+  }
+
+  const access = await (options.evaluateAccess ?? evaluateNoboAccess)({
+    userId: payload.user_id,
+    channelId: payload.channel_id,
+    teamId: payload.team_id,
+    action: command,
+    surface: "slash-command"
+  });
+
+  if (!access.allowed) {
+    return immediate(ephemeral(formatNoboAccessDenied(access)));
+  }
+
   if (command === "/nobo-dad-joke") {
     return handleNoboDadJokeSlashCommand();
   }
@@ -167,10 +201,6 @@ export async function handleSlackSlashCommandPayload(
     return handlePrefsSlashCommand(payload);
   }
 
-  if (command === "/nobo-status") {
-    return handleStatusSlashCommand(options);
-  }
-
   if (command === "/nobo-memory") {
     return immediate(ephemeral(await handleChannelMemorySlashCommandText({
       text: payload.text,
@@ -191,7 +221,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-admin`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -212,6 +242,7 @@ export function formatNoboSlashCommandHelp() {
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
     "`/nobo-status`: show ops health",
+    "`/nobo-admin`: manage NoBo access controls",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
@@ -226,6 +257,80 @@ export function formatNoboSlashCommandHelp() {
     "",
     formatSlackSkillHelp()
   ].join("\n");
+}
+
+async function handleAdminSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  if (!(await isNoboAdmin(payload.user_id))) {
+    await recordNoboAuditEvent({
+      actorUserId: payload.user_id,
+      action: "admin_denied",
+      surface: "slash-command",
+      ok: false
+    });
+    return immediate(ephemeral("NoBo admin access denied. Configure `NOBO_ADMIN_USER_IDS` first."));
+  }
+
+  const intent = parseAdminCommandText(payload.text);
+  if (!intent || intent.action === "help") {
+    return immediate(ephemeral(formatNoboAdminHelp()));
+  }
+
+  if (intent.action === "list") {
+    return immediate(ephemeral(await formatNoboAccessConfig()));
+  }
+
+  if (intent.action === "audit") {
+    return immediate(ephemeral(formatNoboAuditLog(await listNoboAuditEvents(intent.limit))));
+  }
+
+  const result = await updateAccessControl({
+    actorUserId: payload.user_id,
+    mode: intent.mode,
+    kind: intent.kind,
+    targetId: intent.targetId,
+    remove: intent.remove
+  });
+
+  if (!result.ok) {
+    return immediate(ephemeral(`Couldn't update NoBo access controls: ${result.reason}`));
+  }
+
+  const verb = intent.remove ? `Removed ${intent.mode}` : `Set ${intent.mode}`;
+  return immediate(ephemeral(`${verb} ${intent.kind.slice(0, -1)} rule for \`${result.targetId}\`.`));
+}
+
+function parseAdminCommandText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed || /^help$/i.test(trimmed)) {
+    return { action: "help" as const };
+  }
+
+  if (/^(?:list|status|show)$/i.test(trimmed)) {
+    return { action: "list" as const };
+  }
+
+  const auditMatch = trimmed.match(/^audit(?:\s+(\d+))?$/i);
+  if (auditMatch) {
+    return {
+      action: "audit" as const,
+      limit: auditMatch[1] ? Number(auditMatch[1]) : 10
+    };
+  }
+
+  const updateMatch = trimmed.match(/^(?:(remove)\s+)?(allow|deny)\s+(channel|user)\s+(\S+)$/i);
+  if (!updateMatch) {
+    return null;
+  }
+
+  return {
+    action: "update" as const,
+    remove: Boolean(updateMatch[1]),
+    mode: updateMatch[2].toLowerCase() as "allow" | "deny",
+    kind: `${updateMatch[3].toLowerCase()}s` as "channels" | "users",
+    targetId: updateMatch[4]
+  };
 }
 
 async function handlePrefsSlashCommand(
@@ -394,6 +499,16 @@ export async function handleSlackInteractionPayload(
   const channelId = payload.channel?.id;
   if (!channelId) {
     return ephemeral("Slack did not send a channel for this selection.");
+  }
+
+  const access = await (options.evaluateAccess ?? evaluateNoboAccess)({
+    userId: payload.user?.id,
+    channelId,
+    action: "slack-interaction",
+    surface: "slack-interaction"
+  });
+  if (!access.allowed) {
+    return ephemeral(formatNoboAccessDenied(access));
   }
 
   const modelId = normalizeOpenCodeGoOaCompatibleModelId(action.selected_option?.value);

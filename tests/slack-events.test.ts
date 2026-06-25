@@ -144,6 +144,39 @@ test("handles Slack App Home opened by publishing a Home view", async () => {
   }
 });
 
+test("skips Slack events denied by access controls", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+
+  globalThis.fetch = (async () => {
+    fetchCalled = true;
+    return new Response(JSON.stringify({ ok: true }));
+  }) as typeof fetch;
+
+  try {
+    await handleSlackEventCallbackPayload(
+      {
+        type: "event_callback",
+        event: {
+          type: "app_home_opened",
+          user: "U123",
+          tab: "home"
+        }
+      },
+      {
+        evaluateAccess: async () => ({
+          allowed: false,
+          reason: "User `U123` is denied."
+        })
+      }
+    );
+
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function restoreEnv(key: string, value: string | undefined) {
   if (value === undefined) {
     delete process.env[key];

@@ -13,6 +13,10 @@ import {
   handleSlackReactionShortcut,
   type SlackReactionAddedEvent
 } from "./slack-reactions.js";
+import {
+  evaluateNoboAccess,
+  type NoboAccessSubject
+} from "./access-controls.js";
 
 export type SlackUrlVerificationPayload = {
   type: "url_verification";
@@ -29,14 +33,31 @@ export type SlackEventCallbackPayload = {
 
 export type SlackPayload = SlackUrlVerificationPayload | SlackEventCallbackPayload;
 
+export type SlackEventCallbackOptions = {
+  evaluateAccess?: (subject: NoboAccessSubject) => Promise<{ allowed: boolean; reason?: string }>;
+};
+
 export function parseSlackPayload(rawBody: string) {
   return JSON.parse(rawBody) as SlackPayload;
 }
 
-export async function handleSlackEventCallbackPayload(payload: SlackEventCallbackPayload) {
+export async function handleSlackEventCallbackPayload(
+  payload: SlackEventCallbackPayload,
+  options: SlackEventCallbackOptions = {}
+) {
+  const evaluateAccess = options.evaluateAccess ?? evaluateNoboAccess;
   const appHomeEvent = normalizeSlackAppHomeOpenedEvent(payload.event);
 
   if (appHomeEvent) {
+    if (!(await evaluateAccess({
+      userId: appHomeEvent.user,
+      teamId: payload.team_id,
+      action: "app_home_opened",
+      surface: "slack-event"
+    })).allowed) {
+      return;
+    }
+
     await publishSlackAppHome(appHomeEvent.user);
     return;
   }
@@ -44,6 +65,16 @@ export async function handleSlackEventCallbackPayload(payload: SlackEventCallbac
   const reactionEvent = normalizeSlackReactionAddedEvent(payload.event, payload.team_id);
 
   if (reactionEvent) {
+    if (!(await evaluateAccess({
+      userId: reactionEvent.user,
+      channelId: reactionEvent.item.channel,
+      teamId: reactionEvent.team_id,
+      action: "reaction_added",
+      surface: "slack-event"
+    })).allowed) {
+      return;
+    }
+
     await handleSlackReactionShortcut(reactionEvent);
     return;
   }
@@ -51,6 +82,16 @@ export async function handleSlackEventCallbackPayload(payload: SlackEventCallbac
   const event = normalizeSlackMessageEvent(payload.event, payload.team_id);
 
   if (!event || isIgnorableSlackEvent(event)) {
+    return;
+  }
+
+  if (!(await evaluateAccess({
+    userId: event.user,
+    channelId: event.channel,
+    teamId: event.team_id,
+    action: event.type,
+    surface: "slack-event"
+  })).allowed) {
     return;
   }
 

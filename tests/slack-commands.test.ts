@@ -35,6 +35,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.equal(response.mrkdwn, true);
   assert.match(response.text, /`\/nobo-help`/);
   assert.match(response.text, /`\/nobo-status`/);
+  assert.match(response.text, /`\/nobo-admin`/);
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
   assert.match(response.text, /`\/nobo-prefs \[setting\]`/);
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
@@ -48,6 +49,27 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo follow-ups/);
   assert.match(response.text, /@NoBo web-search/);
+});
+
+test("blocks slash commands when access controls deny them", async () => {
+  const result = await handleSlackSlashCommandPayload(
+    {
+      command: "/nobo-dad-joke",
+      text: "",
+      user_id: "U123",
+      channel_id: "C123"
+    },
+    {
+      evaluateAccess: async () => ({
+        allowed: false,
+        reason: "Channel `C123` is denied."
+      })
+    }
+  );
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /access denied/i);
+  assert.match(result.response.text, /C123/);
 });
 
 test("returns ephemeral ops status for /nobo-status", async () => {
@@ -66,6 +88,57 @@ test("returns ephemeral ops status for /nobo-status", async () => {
   assert.match(result.response.text, /NoBo status/);
   assert.match(result.response.text, /Redis: ok/);
   assert.equal(result.task, undefined);
+});
+
+test("does not gate /nobo-status behind access controls", async () => {
+  const result = await handleSlackSlashCommandPayload(
+    {
+      command: "/nobo-status",
+      text: "",
+      user_id: "U123",
+      channel_id: "C123"
+    },
+    {
+      formatOpsStatus: async () => "*NoBo status*\nRedis: ok",
+      evaluateAccess: async () => {
+        throw new Error("status should not check access controls");
+      }
+    }
+  );
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /Redis: ok/);
+});
+
+test("lets bootstrap admins list controls even when channel would be denied", async () => {
+  const originalAdminUsers = process.env.NOBO_ADMIN_USER_IDS;
+  const originalRedisUrl = process.env.REDIS_URL;
+  process.env.NOBO_ADMIN_USER_IDS = "UADMIN";
+  delete process.env.REDIS_URL;
+
+  try {
+    const result = await handleSlackSlashCommandPayload(
+      {
+        command: "/nobo-admin",
+        text: "list",
+        user_id: "UADMIN",
+        channel_id: "C123"
+      },
+      {
+        evaluateAccess: async () => ({
+          allowed: false,
+          reason: "Channel `C123` is denied."
+        })
+      }
+    );
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /NoBo admin controls/);
+    assert.match(result.response.text, /UADMIN/);
+  } finally {
+    restoreEnv("NOBO_ADMIN_USER_IDS", originalAdminUsers);
+    restoreEnv("REDIS_URL", originalRedisUrl);
+  }
 });
 
 test("returns personal preferences for /nobo-prefs", async () => {

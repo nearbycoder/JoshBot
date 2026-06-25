@@ -19,7 +19,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Attachments: Slack file metadata, image bytes for vision models, small text/code/CSV contents, and preview text for larger docs/spreadsheets.
 - App Home dashboard: reminders/crons, memories, active-listening channels, model status, artifacts, preferences, and shortcuts.
 - Utility commands: `/nobo-help`, `/nobo-status`, and `/nobo-dad-joke`.
-- Ops and safety: Slack signature verification, retry suppression, duplicate event locks, Redis status, async error recording, `/healthz`, and CI checks.
+- Ops and safety: Slack signature verification, retry suppression, duplicate event locks, admin allow/deny controls, audit log, Redis status, async error recording, `/healthz`, and CI checks.
 
 ## Stack
 
@@ -55,7 +55,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `OPENCODE_GO_MODEL`: default text model, defaults to `glm-5.2`
    - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
-   - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, and channel decision logs
+   - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, channel decision logs, admin access updates, and audit entries
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
    - `SLACK_EVENT_LOCK_TTL_SECONDS`: defaults to `600`; prevents duplicate Slack event processing across retries or concurrent instances
    - `SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS`: defaults to `600`; prevents duplicate schedule creation from one Slack ask
@@ -70,6 +70,9 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how many new characters accumulate before updating a streamed Slack reply
    - `SLACK_STREAM_UPDATE_INTERVAL_MS`: defaults to `750`; maximum update cadence for streamed Slack reply updates
    - `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`: defaults to `3`; caps simultaneous active-listening replies per channel in this process
+   - `NOBO_ADMIN_USER_IDS`: comma-separated Slack user IDs allowed to run `/nobo-admin`
+   - `NOBO_ALLOWED_CHANNEL_IDS` / `NOBO_DENIED_CHANNEL_IDS`: comma-separated bootstrap Slack channel allow/deny IDs
+   - `NOBO_ALLOWED_USER_IDS` / `NOBO_DENIED_USER_IDS`: comma-separated bootstrap Slack user allow/deny IDs
    - `SLACK_TEXT_ATTACHMENT_MAX_BYTES`: defaults to `262144`; max private Slack file download size for text/CSV-like extraction, capped at 2 MB
    - `SLACK_ATTACHMENT_TEXT_MAX_CHARS`: defaults to `6000`; max extracted attachment text sent into model context, capped at 20000
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
@@ -103,7 +106,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-help`, `/nobo-status`, `/nobo-admin`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
@@ -160,6 +163,22 @@ npm start
 ## Ops status
 
 Use `/nobo-status` in Slack for a private health snapshot covering Redis, the reminder scheduler, scheduled Hacker News, Slack config presence, model/search config, and recent recorded async errors. It reports only presence and non-secret config such as model names; tokens, signing secrets, API keys, and Redis URLs are never printed.
+
+## Admin controls
+
+Set `NOBO_ADMIN_USER_IDS` with one or more Slack user IDs before using `/nobo-admin`. Bootstrap env allow/deny lists apply at startup, and Redis-backed `/nobo-admin` changes layer on top when `REDIS_URL` is configured.
+
+Commands:
+
+- `/nobo-admin list`
+- `/nobo-admin allow channel C123`
+- `/nobo-admin deny channel C123`
+- `/nobo-admin allow user U123`
+- `/nobo-admin deny user U123`
+- `/nobo-admin remove allow channel C123`
+- `/nobo-admin audit 20`
+
+Deny rules win over allow rules. If a user or channel allowlist is non-empty, matching Slack events, interactions, and slash commands must be on that allowlist. `/nobo-status`, `/nobo-admin`, `/healthz`, and Slack URL verification remain available so operators can inspect and repair access. Audit entries store sanitized actor/action/target metadata only; secrets and raw command text are not logged.
 
 ## CI and deployments
 
