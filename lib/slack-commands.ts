@@ -1,3 +1,8 @@
+import {
+  getChannelMemorySettings,
+  setChannelActiveListening,
+  toggleChannelActiveListening
+} from "./memory.js";
 import { formatSlackSkillHelp } from "./skills.js";
 
 const DAD_JOKES = [
@@ -53,9 +58,9 @@ export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashComman
   };
 }
 
-export function handleSlackSlashCommandPayload(
+export async function handleSlackSlashCommandPayload(
   payload: SlackSlashCommandPayload
-): SlackSlashCommandResult {
+): Promise<SlackSlashCommandResult> {
   const command = payload.command.trim().toLowerCase();
   const text = payload.text.trim().toLowerCase();
 
@@ -75,10 +80,14 @@ export function handleSlackSlashCommandPayload(
     return handleNoboAiNewsSlashCommand(payload);
   }
 
+  if (command === "/nobo-listen") {
+    return handleListenSlashCommand(payload);
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-listen`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -98,6 +107,7 @@ export function formatNoboSlashCommandHelp() {
   return [
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
+    "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
@@ -105,6 +115,60 @@ export function formatNoboSlashCommandHelp() {
     "",
     formatSlackSkillHelp()
   ].join("\n");
+}
+
+async function handleListenSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  const text = payload.text.trim().toLowerCase();
+
+  if (text === "help") {
+    return immediate(
+      ephemeral(
+        [
+          "*NoBo active listening*",
+          "`/nobo-listen`: toggle active listening in this channel",
+          "`/nobo-listen on`: turn it on",
+          "`/nobo-listen off`: turn it off",
+          "`/nobo-listen status`: show current state"
+        ].join("\n")
+      )
+    );
+  }
+
+  if (!payload.channel_id) {
+    return immediate(ephemeral("Slack did not send a channel for this command. Try again in a channel."));
+  }
+
+  if (text === "status") {
+    const settings = await getChannelMemorySettings(payload.channel_id);
+    return immediate(ephemeral(formatListenStatus(settings.activeListening)));
+  }
+
+  const result =
+    text === "on" || text === "enable"
+      ? await setChannelActiveListening(payload.channel_id, true)
+      : text === "off" || text === "disable"
+        ? await setChannelActiveListening(payload.channel_id, false)
+        : text
+          ? null
+          : await toggleChannelActiveListening(payload.channel_id);
+
+  if (!result) {
+    return immediate(ephemeral("Usage: `/nobo-listen [on|off|status]`"));
+  }
+
+  if (!result.ok) {
+    return immediate(ephemeral(`Couldn't update active listening: ${result.reason}`));
+  }
+
+  return immediate(ephemeral(formatListenStatus(result.settings.activeListening)));
+}
+
+function formatListenStatus(activeListening: boolean) {
+  return activeListening
+    ? "Active listening is on for this channel. NoBo may reply without an @mention when it thinks it should."
+    : "Active listening is off for this channel. Use `@NoBo` or `/nobo-listen` to wake it up.";
 }
 
 function handleNoboAiNewsSlashCommand(

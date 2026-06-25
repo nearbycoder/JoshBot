@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { requireEnv } from "./env.js";
+import { appendChannelMemory, type ChannelMemoryEntry } from "./memory.js";
 import { getRedisClient } from "./redis.js";
 
 type SlackMessageEvent = {
@@ -15,7 +16,7 @@ type SlackPostMessage = (options: {
   channel: string;
   threadTs?: string;
   text: string;
-}) => Promise<unknown>;
+}) => Promise<{ ts?: string }>;
 
 type ScheduledTaskRunner = (options: {
   task: string;
@@ -575,11 +576,18 @@ async function runDueSchedules({
               })
             : schedule.task;
 
-        await postSlackMessage({
+        const messageText = `<@${schedule.ownerUserId}> ${dueText}`;
+        const postedMessage = await postSlackMessage({
           token: requireEnv("SLACK_BOT_TOKEN"),
           channel: schedule.channel,
           threadTs: schedule.threadTs,
-          text: `<@${schedule.ownerUserId}> ${dueText}`
+          text: messageText
+        });
+        await recordScheduleChannelMemory(schedule.channel, {
+          role: "assistant",
+          content: messageText,
+          ts: postedMessage.ts,
+          threadTs: schedule.threadTs ?? postedMessage.ts
         });
 
         const nextRunAt = getNextRunAt(schedule);
@@ -731,6 +739,14 @@ function formatScheduleDestination(schedule: ScheduleRecord) {
   }
 
   return ` in <#${schedule.channel}>`;
+}
+
+async function recordScheduleChannelMemory(channel: string, entry: ChannelMemoryEntry) {
+  try {
+    await appendChannelMemory(channel, entry);
+  } catch (error) {
+    console.warn(`Unable to append scheduled Slack channel memory: ${summarizeError(error)}`);
+  }
 }
 
 function formatDuration(intervalMs: number) {

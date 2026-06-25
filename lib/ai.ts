@@ -3,6 +3,7 @@ import { encodeNoboAgentContext, type NoboAgentToolMode } from "./nobo-agent-con
 import { type NoboModelMessage, modelMessagesToPrompt } from "./nobo-messages.js";
 import { SYSTEM_PROMPT } from "./nobo-prompt.js";
 import { formatCurrentTime, formatCurrentTimePrompt } from "./nobo-time.js";
+import type { ChannelMemoryEntry } from "./memory.js";
 import type { SlackScheduleContext } from "./schedules.js";
 
 const DEFAULT_SLACK_TEXT_MODEL = "glm-5.2";
@@ -24,6 +25,8 @@ export async function createSlackReplyWithMemory(
     messages,
     memories,
     currentUserId,
+    channelMemories: options?.channelMemories ?? [],
+    channelId: options?.channelId,
     scheduleContext,
     onTextDelta: options?.onTextDelta
   });
@@ -35,6 +38,8 @@ export async function createSlackSkillReply({
   currentUserId,
   skillName,
   instructions,
+  channelMemories = [],
+  channelId,
   onTextDelta
 }: {
   messages: NoboModelMessage[];
@@ -42,12 +47,16 @@ export async function createSlackSkillReply({
   currentUserId: string | undefined;
   skillName: string;
   instructions: string;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
   return generateSlackResponse({
     messages,
     memories,
     currentUserId,
+    channelMemories,
+    channelId,
     extraSystem: `You are executing the Slack skill '${skillName}'.
 
 ${instructions}`,
@@ -125,10 +134,14 @@ export async function createWeeklyNewsSlackDigest({
 
 export async function shouldReplyToSlackThread({
   messages,
-  currentUserId
+  currentUserId,
+  channelMemories = [],
+  channelId
 }: {
   messages: NoboModelMessage[];
   currentUserId: string | undefined;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
 }) {
   const prompt = buildPrompt({
     messages: [
@@ -141,6 +154,8 @@ export async function shouldReplyToSlackThread({
     ],
     memories: [],
     currentUserId,
+    channelMemories,
+    channelId,
     extraSystem: `You decide whether NoBo should reply to the latest Slack thread message.
 
 NoBo is an assistant inside Slack. It should reply only when the latest user message is directed at NoBo, asks NoBo for follow-up help, clearly continues an active assistant task, or depends on NoBo's previous answer.
@@ -159,6 +174,63 @@ Do not use tools for this classification.`
   });
 
   return /\bRESPOND\b/i.test(text) && !/\bSILENT\b/i.test(text);
+}
+
+export async function chooseSlackActiveListeningResponse({
+  messages,
+  currentUserId,
+  channelMemories = [],
+  channelId,
+  allowInline = false
+}: {
+  messages: NoboModelMessage[];
+  currentUserId: string | undefined;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
+  allowInline?: boolean;
+}): Promise<SlackActiveListeningResponseMode> {
+  const modes = allowInline ? "INLINE, THREAD, or SILENT" : "THREAD or SILENT";
+  const prompt = buildPrompt({
+    messages: [
+      ...messages,
+      {
+        role: "user",
+        content: `Active listening is enabled in this Slack channel. Should NoBo reply to the latest user message? Return exactly one of: ${modes}.`
+      }
+    ],
+    memories: [],
+    currentUserId,
+    channelMemories,
+    channelId,
+    extraSystem: `You decide whether NoBo should proactively reply in a Slack channel where active listening is enabled.
+
+Reply only when NoBo can be genuinely useful, timely, or socially appropriate. Favor SILENT for ordinary human-to-human conversation, status chatter, acknowledgements, jokes that need no answer, or messages intended for someone else.
+
+Use THREAD when the reply is tied to the latest message, might be more than a brief nudge, or could add noise inline.
+${allowInline ? "Use INLINE only when a short channel-visible response is clearly useful to everyone in the channel." : "INLINE is not allowed for this message."}
+
+Return exactly one word: ${modes}.
+Do not use tools for this classification.`
+  });
+  const text = await runNoboAgentPrompt({
+    prompt,
+    modelId: selectSlackModel(messages),
+    toolMode: "none"
+  });
+
+  if (/\bSILENT\b/i.test(text)) {
+    return "silent";
+  }
+
+  if (allowInline && /\bINLINE\b/i.test(text)) {
+    return "inline";
+  }
+
+  if (/\bTHREAD\b|\bRESPOND\b/i.test(text)) {
+    return "thread";
+  }
+
+  return "silent";
 }
 
 export async function createScheduledSlackMessage({
@@ -189,6 +261,8 @@ async function generateSlackResponse({
   messages,
   memories,
   currentUserId,
+  channelMemories = [],
+  channelId,
   extraSystem,
   scheduleContext,
   onTextDelta
@@ -196,6 +270,8 @@ async function generateSlackResponse({
   messages: NoboModelMessage[];
   memories: string[];
   currentUserId: string | undefined;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
   extraSystem?: string;
   scheduleContext?: SlackScheduleContext;
   onTextDelta?: (delta: string) => void | Promise<void>;
@@ -204,6 +280,8 @@ async function generateSlackResponse({
     messages,
     memories,
     currentUserId,
+    channelMemories,
+    channelId,
     extraSystem
   });
   const images = modelMessagesToPrompt(messages).images;
@@ -244,16 +322,21 @@ function buildPrompt({
   messages,
   memories,
   currentUserId,
+  channelMemories = [],
+  channelId,
   extraSystem
 }: {
   messages: NoboModelMessage[];
   memories: string[];
   currentUserId: string | undefined;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
   extraSystem?: string;
 }) {
   const promptMessages = modelMessagesToPrompt(messages);
 
   return `${formatMemoryPrompt(memories, currentUserId)}
+${formatChannelMemoryPrompt(channelMemories, channelId)}
 
 ${formatCurrentTimePrompt()}
 
@@ -412,6 +495,44 @@ Do not invent new memories.
 Do not mention this memory list unless it helps answer the user.`;
 }
 
+function formatChannelMemoryPrompt(
+  channelMemories: ChannelMemoryEntry[],
+  channelId: string | undefined
+) {
+  if (channelMemories.length === 0) {
+    return "";
+  }
+
+  const channelLabel = channelId ? `Slack channel ${channelId}` : "this Slack channel";
+
+  return `
+Shared channel memory for ${channelLabel}:
+${channelMemories.map(formatChannelMemoryEntry).join("\n")}
+
+Use this shared channel memory to learn this channel's context, norms, decisions, recurring topics, and how NoBo should react here.
+This memory belongs to the channel, not a single user.
+Do not quote or mention the memory list unless it directly helps the answer.`;
+}
+
+function formatChannelMemoryEntry(entry: ChannelMemoryEntry) {
+  const speaker =
+    entry.role === "assistant"
+      ? "NoBo"
+      : entry.userId
+        ? `Slack user ${entry.userId}`
+        : "Unknown user";
+  const meta = [entry.threadTs ? `thread ${entry.threadTs}` : null, entry.ts ? `ts ${entry.ts}` : null]
+    .filter(Boolean)
+    .join(", ");
+  const prefix = meta ? `[${meta}] ` : "";
+
+  return `- ${prefix}${speaker}: ${indentChannelMemoryContent(entry.content)}`;
+}
+
+function indentChannelMemoryContent(content: string) {
+  return content.replace(/\n/g, "\n  ");
+}
+
 function normalizeSlackMrkdwn(input: string) {
   return input
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "<$2|$1>")
@@ -427,13 +548,18 @@ function normalizeSlackMrkdwn(input: string) {
 export const __testing = {
   formatCurrentTime,
   formatCurrentTimePrompt,
+  formatChannelMemoryPrompt,
   normalizeSlackMrkdwn,
   selectSlackModel
 };
 
 export type NoboResponseOptions = {
   onTextDelta?: (delta: string) => void | Promise<void>;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
 };
+
+export type SlackActiveListeningResponseMode = "inline" | "thread" | "silent";
 
 export type { NoboModelMessage };
 export { SYSTEM_PROMPT };

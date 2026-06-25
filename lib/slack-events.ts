@@ -2,10 +2,12 @@ import {
   isDirectMentionToBot,
   isIgnorableSlackEvent,
   isSlackDirectMessage,
+  respondToSlackActiveListeningMessage,
   respondToSlackDirectMessage,
   respondToSlackMention,
   respondToSlackThreadReply
 } from "./slack.js";
+import { getChannelMemorySettings } from "./memory.js";
 
 export type SlackUrlVerificationPayload = {
   type: "url_verification";
@@ -40,9 +42,20 @@ export async function handleSlackEventCallbackPayload(payload: SlackEventCallbac
   if (event.type === "message" && !isDirectMentionToBot(event.text)) {
     if (isSlackDirectMessage(event)) {
       await respondToSlackDirectMessage(event);
+    } else if (await isChannelActiveListeningEnabled(event.channel)) {
+      await respondToSlackActiveListeningMessage(event);
     } else {
       await respondToSlackThreadReply(event);
     }
+  }
+}
+
+async function isChannelActiveListeningEnabled(channel: string) {
+  try {
+    return (await getChannelMemorySettings(channel)).activeListening;
+  } catch (error) {
+    console.warn(`Unable to load Slack channel settings: ${summarizeError(error)}`);
+    return false;
   }
 }
 
@@ -138,6 +151,14 @@ function getInitialCommentField(record: object) {
 
   const comment = getStringField(value, "comment");
   return comment ? { comment } : undefined;
+}
+
+function summarizeError(error: unknown) {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  return String(error);
 }
 
 export const __testing = {

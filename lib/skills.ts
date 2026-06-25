@@ -1,4 +1,5 @@
 import { createSlackSkillReply } from "./ai.js";
+import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 
 type SlackSkillContext = {
@@ -6,6 +7,8 @@ type SlackSkillContext = {
   modelMessages: NoboModelMessage[];
   memories: string[];
   currentUserId: string | undefined;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
   beforeModelReply?: () => void | Promise<void>;
 };
@@ -32,6 +35,8 @@ export async function maybeHandleSlackSkillCommand({
   modelMessages,
   memories,
   currentUserId,
+  channelMemories,
+  channelId,
   onTextDelta,
   beforeModelReply
 }: SlackSkillContext) {
@@ -59,6 +64,8 @@ export async function maybeHandleSlackSkillCommand({
         ],
         memories,
         currentUserId,
+        channelMemories,
+        channelId,
         skillName: "summarize-thread",
         instructions: `Your job is to summarize the current Slack thread.
 - Prefer a short overview, key decisions, open questions, and next steps.
@@ -79,6 +86,8 @@ export async function maybeHandleSlackSkillCommand({
         ],
         memories,
         currentUserId,
+        channelMemories,
+        channelId,
         skillName: "thread-todos",
         instructions: `Your job is to extract action items from the current Slack thread.
 - Return a short flat list.
@@ -101,6 +110,8 @@ export async function maybeHandleSlackSkillCommand({
         ],
         memories,
         currentUserId,
+        channelMemories,
+        channelId,
         skillName: "web-search",
         instructions: `Your job is to answer the user's explicit web-search request.
 - Use the web search tool when it helps.
