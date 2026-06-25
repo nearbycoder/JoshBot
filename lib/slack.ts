@@ -1,11 +1,18 @@
 import crypto from "node:crypto";
-import { createSlackReplyWithMemory, shouldReplyToSlackThread } from "./ai.js";
+import {
+  chooseSlackActiveListeningResponse,
+  createSlackReplyWithMemory,
+  shouldReplyToSlackThread
+} from "./ai.js";
 import { requireEnv } from "./env.js";
 import {
   addUserMemory,
+  appendChannelMemory,
   clearUserMemories,
+  getChannelMemories,
   getUserMemories,
-  removeUserMemory
+  removeUserMemory,
+  type ChannelMemoryEntry
 } from "./memory.js";
 import { getRedisClient } from "./redis.js";
 import { maybeHandleScheduleCommand } from "./schedules.js";
@@ -188,6 +195,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   const threadTs = event.thread_ts ?? event.ts;
   const incomingMessage = await createCachedUserMessage(token, event);
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
+  const channelMemories = await loadChannelMemories(event.channel);
+  await recordUserChannelMemory(event, incomingMessage, threadTs);
   const commandReply = await maybeHandleMemoryCommand(event);
   const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
 
@@ -198,6 +207,12 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       channel: event.channel,
       threadTs,
       text: replyText
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs,
+      text: replyText,
+      ts: postedReply.ts
     });
 
     await saveCachedThreadMessages(
@@ -243,6 +258,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       modelMessages,
       memories,
       currentUserId: event.user,
+      channelMemories,
+      channelId: event.channel,
       onTextDelta: skillStream?.append,
       beforeModelReply: skillStream.start
     });
@@ -258,6 +275,12 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       threadTs,
       text: skillReply,
       stream: skillStream
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs,
+      text: skillReply,
+      ts: postedReply.ts
     });
 
     await saveCachedThreadMessages(
@@ -287,6 +310,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       event,
       memories,
       modelMessages,
+      channelMemories,
+      channelId: event.channel,
       onTextDelta: replyStream?.append
     });
   } catch (error) {
@@ -304,6 +329,12 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
     threadTs,
     text: reply,
     stream: replyStream
+  });
+  await recordAssistantChannelMemory({
+    channel: event.channel,
+    threadTs,
+    text: reply,
+    ts: postedReply.ts
   });
 
   await saveCachedThreadMessages(
@@ -334,11 +365,18 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
 
   if (commandReply) {
     void acknowledgeTargetedSlackEvent(token, event);
+    await recordUserChannelMemory(event, incomingMessage, event.thread_ts);
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
       threadTs: event.thread_ts,
       text: commandReply
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      text: commandReply,
+      ts: postedReply.ts
     });
 
     await saveCachedThreadMessages(
@@ -364,6 +402,8 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     return;
   }
 
+  const channelMemories = await loadChannelMemories(event.channel);
+  await recordUserChannelMemory(event, incomingMessage, event.thread_ts);
   const scheduleReply = await maybeHandleScheduleCommand(event);
 
   if (scheduleReply) {
@@ -373,6 +413,12 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
       channel: event.channel,
       threadTs: event.thread_ts,
       text: scheduleReply
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      text: scheduleReply,
+      ts: postedReply.ts
     });
 
     await saveCachedThreadMessages(
@@ -394,7 +440,9 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   });
   const shouldReply = await shouldReplyToSlackThread({
     messages: modelMessages,
-    currentUserId: event.user
+    currentUserId: event.user,
+    channelMemories,
+    channelId: event.channel
   });
 
   if (!shouldReply) {
@@ -418,6 +466,8 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
       event,
       memories,
       modelMessages,
+      channelMemories,
+      channelId: event.channel,
       onTextDelta: replyStream?.append
     });
   } catch (error) {
@@ -436,6 +486,12 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     text: reply,
     stream: replyStream
   });
+  await recordAssistantChannelMemory({
+    channel: event.channel,
+    threadTs: event.thread_ts,
+    text: reply,
+    ts: postedReply.ts
+  });
 
   await saveCachedThreadMessages(
     event.channel,
@@ -448,6 +504,110 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   );
 }
 
+export async function respondToSlackActiveListeningMessage(event: SlackMessageEvent) {
+  const lock = await acquireSlackEventLock(event, "active-listening");
+  if (!lock.acquired) {
+    return;
+  }
+
+  const token = requireEnv("SLACK_BOT_TOKEN");
+  const threadTs = event.thread_ts ?? event.ts;
+  const allowInline = !event.thread_ts || event.thread_ts === event.ts;
+  const incomingMessage = await createCachedUserMessage(token, event);
+  let threadMessages: CachedThreadMessage[] = [incomingMessage];
+  const channelMemories = await loadChannelMemories(event.channel);
+  await recordUserChannelMemory(event, incomingMessage, threadTs);
+
+  try {
+    if (event.thread_ts && event.thread_ts !== event.ts) {
+      threadMessages = await loadThreadMessagesForIncomingEvent({
+        token,
+        channel: event.channel,
+        threadTs,
+        incomingMessage
+      });
+    }
+  } catch (error) {
+    console.warn(`Falling back to current Slack event text: ${summarizeError(error)}`);
+  }
+
+  const memories = event.user ? await getUserMemories(event.user) : [];
+  const modelMessages = await toModelMessages(threadMessages, event.user, {
+    token,
+    liveEvent: event
+  });
+  const responseMode = await chooseSlackActiveListeningResponse({
+    messages: modelMessages,
+    currentUserId: event.user,
+    channelMemories,
+    channelId: event.channel,
+    allowInline
+  });
+
+  if (responseMode === "silent") {
+    if (event.thread_ts) {
+      await saveCachedThreadMessages(event.channel, event.thread_ts, threadMessages);
+    }
+    return;
+  }
+
+  void acknowledgeTargetedSlackEvent(token, event);
+  const replyThreadTs = responseMode === "thread" ? threadTs : undefined;
+  const replyStream = createSlackReplyStreamer({
+    token,
+    channel: event.channel,
+    threadTs: replyThreadTs
+  });
+  let reply: string | null;
+
+  try {
+    await replyStream.start();
+    reply = await createReplyForSlackEvent({
+      token,
+      threadMessages,
+      event,
+      memories,
+      modelMessages,
+      channelMemories,
+      channelId: event.channel,
+      onTextDelta: replyStream?.append
+    });
+  } catch (error) {
+    await replyStream?.fail();
+    throw error;
+  }
+
+  if (!reply) {
+    return;
+  }
+
+  const postedReply = await finishSlackReply({
+    token,
+    channel: event.channel,
+    threadTs: replyThreadTs,
+    text: reply,
+    stream: replyStream
+  });
+  await recordAssistantChannelMemory({
+    channel: event.channel,
+    threadTs: replyThreadTs ?? postedReply.ts,
+    text: reply,
+    ts: postedReply.ts
+  });
+
+  if (replyThreadTs) {
+    await saveCachedThreadMessages(
+      event.channel,
+      replyThreadTs,
+      appendCachedThreadMessage(threadMessages, {
+        role: "assistant",
+        content: reply,
+        ts: postedReply.ts
+      })
+    );
+  }
+}
+
 export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   const lock = await acquireSlackEventLock(event, "direct-message");
   if (!lock.acquired) {
@@ -458,6 +618,8 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   void acknowledgeTargetedSlackEvent(token, event);
   const incomingMessage = await createCachedUserMessage(token, event);
   const threadMessages: CachedThreadMessage[] = [incomingMessage];
+  const channelMemories = await loadChannelMemories(event.channel);
+  await recordUserChannelMemory(event, incomingMessage, event.ts);
   const commandReply = await maybeHandleMemoryCommand(event);
   const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
 
@@ -467,6 +629,12 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
       token,
       channel: event.channel,
       text: replyText
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs: event.ts,
+      text: replyText,
+      ts: postedReply.ts
     });
 
     await saveCachedThreadMessages(
@@ -494,6 +662,8 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
       threadMessages,
       event,
       memories: event.user ? await getUserMemories(event.user) : [],
+      channelMemories,
+      channelId: event.channel,
       onTextDelta: replyStream?.append
     });
   } catch (error) {
@@ -510,6 +680,12 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
     channel: event.channel,
     text: replyText,
     stream: replyStream
+  });
+  await recordAssistantChannelMemory({
+    channel: event.channel,
+    threadTs: event.ts,
+    text: replyText,
+    ts: postedReply.ts
   });
 
   await saveCachedThreadMessages(
@@ -677,13 +853,24 @@ export async function postGeneratedSlackMessage({
     return null;
   }
 
-  return finishSlackReply({
+  const postedReply = await finishSlackReply({
     token,
     channel,
     threadTs,
     text: replyText,
     stream
   });
+  await recordAssistantChannelMemory({
+    channel,
+    threadTs,
+    text: replyText,
+    ts: postedReply.ts
+  });
+
+  return {
+    ...postedReply,
+    text: replyText
+  };
 }
 
 export async function resolveSlackChannelIdByName({
@@ -1135,6 +1322,56 @@ async function createCachedUserMessage(token: string, event: SlackMessageEvent):
   };
 }
 
+async function loadChannelMemories(channel: string) {
+  try {
+    return await getChannelMemories(channel);
+  } catch (error) {
+    console.warn(`Unable to load Slack channel memory: ${summarizeError(error)}`);
+    return [];
+  }
+}
+
+async function recordUserChannelMemory(
+  event: SlackMessageEvent,
+  message: CachedThreadMessage,
+  threadTs: string
+) {
+  await safeAppendChannelMemory(event.channel, {
+    role: "user",
+    content: message.content,
+    ts: message.ts,
+    threadTs,
+    userId: message.userId
+  });
+}
+
+async function recordAssistantChannelMemory({
+  channel,
+  threadTs,
+  text,
+  ts
+}: {
+  channel: string;
+  threadTs?: string;
+  text: string;
+  ts?: string;
+}) {
+  await safeAppendChannelMemory(channel, {
+    role: "assistant",
+    content: text,
+    ts,
+    threadTs
+  });
+}
+
+async function safeAppendChannelMemory(channel: string, entry: ChannelMemoryEntry) {
+  try {
+    await appendChannelMemory(channel, entry);
+  } catch (error) {
+    console.warn(`Unable to append Slack channel memory: ${summarizeError(error)}`);
+  }
+}
+
 function appendCachedThreadMessage(
   messages: CachedThreadMessage[],
   message: CachedThreadMessage
@@ -1166,6 +1403,8 @@ async function createReplyForSlackEvent({
   event,
   memories,
   modelMessages,
+  channelMemories,
+  channelId,
   onTextDelta
 }: {
   token: string;
@@ -1173,6 +1412,8 @@ async function createReplyForSlackEvent({
   event: SlackMessageEvent;
   memories: string[];
   modelMessages?: NoboModelMessage[];
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
   try {
@@ -1188,7 +1429,7 @@ async function createReplyForSlackEvent({
       memories,
       event.user,
       getScheduleContext(event),
-      { onTextDelta }
+      { onTextDelta, channelMemories, channelId }
     );
   } catch (error) {
     if (!hasImageAttachments(event)) {
@@ -1207,7 +1448,7 @@ async function createReplyForSlackEvent({
       memories,
       event.user,
       getScheduleContext(event),
-      { onTextDelta }
+      { onTextDelta, channelMemories, channelId }
     );
 
     if (!fallbackReply) {

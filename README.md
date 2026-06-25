@@ -9,7 +9,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - `@flue/runtime` agent harness
 - OpenCode Go registered as a Flue OpenAI-compatible provider
 - Exa Search API via `exa-js`
-- Redis thread-state cache
+- Redis thread-state cache and shared channel memory
 - Slack Events API, with both the legacy `/api/slack/events` route and Flue's `/channels/slack/events` channel route
 - Slack response streaming via an immediate listening message and progressive same-message block updates
 
@@ -36,7 +36,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `OPENCODE_GO_MODEL`: defaults to `glm-5.2`
    - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
-   - `REDIS_URL`: optional Redis connection string for caching Slack thread state
+   - `REDIS_URL`: optional Redis connection string for caching Slack thread state and shared channel memory
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
    - `SLACK_EVENT_LOCK_TTL_SECONDS`: defaults to `600`; prevents duplicate Slack event processing across retries or concurrent instances
    - `SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS`: defaults to `600`; prevents duplicate schedule creation from one Slack ask
@@ -79,7 +79,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-help`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-help`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -154,6 +154,8 @@ NoBo does not send the entire Slack thread back to the model on every reply. It 
 
 If `REDIS_URL` is set, NoBo also caches trimmed thread state in Redis, so normal follow-up replies can avoid fetching the full Slack thread again. On a cold cache or restart, it falls back to Slack and repopulates Redis.
 
+If `REDIS_URL` is set, NoBo also appends every handled user turn and NoBo reply to one shared Redis key per Slack channel: `slack-channel-memory:<channelId>`. This shared channel memory also stores channel settings, and is injected into future replies and reply decisions so NoBo can adapt to that channel's context, norms, and recurring topics.
+
 NoBo also uses Redis to lock each Slack message event before generating a reply. This prevents duplicate Slack deliveries or multiple running instances from replying to the same message more than once. Without Redis, a local in-memory lock still protects a single process.
 
 Schedule creation also uses a per-message idempotency key, so repeated `createSchedule` tool calls from one Slack ask return the already-created schedule instead of creating duplicate jobs.
@@ -178,6 +180,10 @@ NoBo can persist simple per-user memory in Redis across threads. Supported comma
 `show my memory` returns a numbered list, and `forget ...` can remove by exact text, unique partial match, or number.
 
 Saved memories are injected into future replies for that Slack user when relevant.
+
+NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
+
+Channel settings live in that same value. `/nobo-listen` toggles active listening for the current channel; `/nobo-listen on`, `/nobo-listen off`, and `/nobo-listen status` are also supported. When active listening is on, NoBo sees normal channel messages, records them into shared channel memory, and can choose to stay silent, reply in-thread, or reply inline.
 
 ## Reminders and crons
 
@@ -205,6 +211,7 @@ NoBo supports explicit Slack skills triggered with `@NoBo <skill> ...`.
 Current skills:
 
 - `/nobo-help`
+- `/nobo-listen [on|off|status]`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`

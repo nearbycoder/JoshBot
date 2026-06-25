@@ -34,6 +34,31 @@ test("Slack markdown normalization converts Markdown links and bold", () => {
   assert.equal(normalized, "See <https://openai.com|OpenAI> and *bold* text");
 });
 
+test("channel memory prompt is shared channel context", () => {
+  const prompt = __testing.formatChannelMemoryPrompt(
+    [
+      {
+        role: "user",
+        userId: "U123",
+        content: "Prefers short release updates",
+        ts: "1000.000",
+        threadTs: "999.000"
+      },
+      {
+        role: "assistant",
+        content: "Use concise checklists in this channel"
+      }
+    ],
+    "C123"
+  );
+
+  assert.match(prompt, /Shared channel memory for Slack channel C123/);
+  assert.match(prompt, /Slack user U123: Prefers short release updates/);
+  assert.match(prompt, /NoBo: Use concise checklists in this channel/);
+  assert.match(prompt, /belongs to the channel, not a single user/);
+  assert.match(prompt, /how NoBo should react here/);
+});
+
 test("image-bearing Slack messages default to Kimi vision model", () => {
   const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
   delete process.env.OPENCODE_GO_VISION_MODEL;

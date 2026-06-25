@@ -7,11 +7,13 @@ import {
   isSlackDirectMessage,
   isIgnorableSlackEvent,
   postSlackMessage,
+  respondToSlackActiveListeningMessage,
   respondToSlackDirectMessage,
   respondToSlackMention,
   respondToSlackThreadReply,
   verifySlackRequest
 } from "./lib/slack.js";
+import { getChannelMemorySettings } from "./lib/memory.js";
 import { startScheduleRunner } from "./lib/schedules.js";
 
 loadEnv({ path: ".env.local" });
@@ -98,6 +100,10 @@ const server = createServer(async (request, response) => {
           void respondToSlackDirectMessage(payload.event).catch((error) => {
             console.error(`Slack direct message handling failed: ${summarizeError(error)}`);
           });
+        } else if (await isChannelActiveListeningEnabled(payload.event.channel)) {
+          void respondToSlackActiveListeningMessage(payload.event).catch((error) => {
+            console.error(`Slack active listening handling failed: ${summarizeError(error)}`);
+          });
         } else {
           void respondToSlackThreadReply(payload.event).catch((error) => {
             console.error(`Slack thread reply handling failed: ${summarizeError(error)}`);
@@ -133,6 +139,15 @@ function readBody(request: NodeJS.ReadableStream) {
     });
     request.on("error", reject);
   });
+}
+
+async function isChannelActiveListeningEnabled(channel: string) {
+  try {
+    return (await getChannelMemorySettings(channel)).activeListening;
+  } catch (error) {
+    console.warn(`Unable to load Slack channel settings: ${summarizeError(error)}`);
+    return false;
+  }
 }
 
 function sendJson(
