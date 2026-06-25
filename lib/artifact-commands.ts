@@ -1,9 +1,13 @@
 import {
   deleteArtifact,
   deleteExpiredArtifacts,
+  diffArtifactVersion,
+  listArtifactVersions,
+  rollbackArtifact,
   listArtifacts,
   updateArtifact,
-  type ListedArtifact
+  type ListedArtifact,
+  type ListedArtifactVersion
 } from "./artifacts.js";
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = 10;
@@ -58,6 +62,45 @@ export async function handleArtifactCommandText(
           .join(", ")}`;
   }
 
+  const versionsMatch = trimmed.match(/^(?:versions|history)\s+([0-9a-f-]{4,36})$/i);
+  if (versionsMatch) {
+    const result = await listArtifactVersions(versionsMatch[1] ?? "", {
+      ownerUserId: options.ownerUserId
+    });
+
+    if (result.ok) {
+      return formatArtifactVersions(result.artifact, result.versions);
+    }
+
+    return formatArtifactFailure(result);
+  }
+
+  const diffMatch = trimmed.match(/^diff\s+([0-9a-f-]{4,36})(?:\s+(v?\d+))?$/i);
+  if (diffMatch) {
+    const result = await diffArtifactVersion(diffMatch[1] ?? "", diffMatch[2], {
+      ownerUserId: options.ownerUserId
+    });
+
+    if (result.ok) {
+      return formatArtifactDiff(result.artifact, result.version, result.diff);
+    }
+
+    return formatArtifactFailure(result);
+  }
+
+  const rollbackMatch = trimmed.match(/^(?:rollback|restore)\s+([0-9a-f-]{4,36})(?:\s+(v?\d+))?$/i);
+  if (rollbackMatch) {
+    const result = await rollbackArtifact(rollbackMatch[1] ?? "", rollbackMatch[2], {
+      ownerUserId: options.ownerUserId
+    });
+
+    if (result.ok) {
+      return `Rolled back artifact \`${result.artifact.shortId}\` to \`${result.rolledBackTo.versionId}\`: ${escapeSlackText(result.artifact.title)}`;
+    }
+
+    return formatArtifactFailure(result);
+  }
+
   const deleteMatch = trimmed.match(/^(?:delete|remove|rm)\s+([0-9a-f-]{4,36})$/i);
   if (deleteMatch) {
     const result = await deleteArtifact(deleteMatch[1] ?? "", {
@@ -68,19 +111,7 @@ export async function handleArtifactCommandText(
       return `Deleted artifact \`${result.artifact.shortId}\`: ${escapeSlackText(result.artifact.title)}`;
     }
 
-    if (result.reason === "ambiguous" && result.matches?.length) {
-      return `That artifact ID matched more than one artifact:\n${formatArtifactLines(result.matches)}`;
-    }
-
-    if (result.reason === "invalid") {
-      return "Artifact IDs are UUIDs or visible prefixes like `abc12345`.";
-    }
-
-    if (result.reason === "forbidden") {
-      return "Artifact changes need a Slack user context.";
-    }
-
-    return "I couldn't find one of your artifacts with that ID.";
+    return formatArtifactFailure(result);
   }
 
   const updateMatch = trimmed.match(/^(?:update|edit|modify)\s+([0-9a-f-]{4,36})\s+([\s\S]+)$/i);
@@ -95,19 +126,7 @@ export async function handleArtifactCommandText(
       return `Updated artifact \`${result.artifact.shortId}\`: ${escapeSlackText(result.artifact.title)}`;
     }
 
-    if (result.reason === "ambiguous" && result.matches?.length) {
-      return `That artifact ID matched more than one artifact:\n${formatArtifactLines(result.matches)}`;
-    }
-
-    if (result.reason === "invalid") {
-      return "Artifact IDs are UUIDs or visible prefixes like `abc12345`.";
-    }
-
-    if (result.reason === "forbidden") {
-      return "Artifact changes need a Slack user context.";
-    }
-
-    return "I couldn't find one of your artifacts with that ID.";
+    return formatArtifactFailure(result);
   }
 
   return `Usage: ${formatArtifactCommandUsage()}`;
@@ -120,12 +139,15 @@ export function formatArtifactCommandHelp() {
     "`list all`: include expired artifacts",
     "`expired`: list only expired artifacts",
     "`update <id> <content>`: replace one of your artifacts",
+    "`versions <id>`: list retained prior versions",
+    "`diff <id> [version]`: compare a version with current content",
+    "`rollback <id> [version]`: restore a retained version",
     "`cleanup`: delete expired artifacts"
   ].join("\n");
 }
 
 function formatArtifactCommandUsage() {
-  return "`list`, `update <id> <content>`, `delete <id>`, or `cleanup`";
+  return "`list`, `update <id> <content>`, `versions <id>`, `diff <id> [version]`, `rollback <id> [version]`, `delete <id>`, or `cleanup`";
 }
 
 function formatArtifactList(artifacts: ListedArtifact[], title: string) {
@@ -153,6 +175,50 @@ function formatArtifactLine(artifact: ListedArtifact) {
     `<${artifact.previewUrl}|preview>`,
     `<${artifact.rawUrl}|raw>`
   ].join(" ");
+}
+
+function formatArtifactVersions(artifact: ListedArtifact, versions: ListedArtifactVersion[]) {
+  if (versions.length === 0) {
+    return `No retained versions for \`${artifact.shortId}\`.`;
+  }
+
+  return [
+    `*Versions for \`${artifact.shortId}\` ${escapeSlackText(artifact.title)}*`,
+    ...versions.map((version) =>
+      `- \`${version.versionId}\` saved ${formatDate(version.savedAt)} (${version.kind}, ${formatBytes(version.bytes)}, ${escapeSlackText(version.filename)})`
+    )
+  ].join("\n");
+}
+
+function formatArtifactDiff(artifact: ListedArtifact, version: ListedArtifactVersion, diff: string) {
+  if (diff.split("\n").every((line) => !line.startsWith("-") && !line.startsWith("+"))) {
+    return `No content changes between \`${version.versionId}\` and current \`${artifact.shortId}\`.`;
+  }
+
+  return `*Diff for \`${artifact.shortId}\` ${escapeSlackText(version.versionId)} -> current*\n\`\`\`diff\n${escapeSlackText(diff)}\n\`\`\``;
+}
+
+function formatArtifactFailure(result: {
+  reason: "invalid" | "missing" | "ambiguous" | "forbidden" | "version_missing";
+  matches?: ListedArtifact[];
+}) {
+  if (result.reason === "ambiguous" && result.matches?.length) {
+    return `That artifact ID matched more than one artifact:\n${formatArtifactLines(result.matches)}`;
+  }
+
+  if (result.reason === "invalid") {
+    return "Artifact IDs are UUIDs or visible prefixes like `abc12345`.";
+  }
+
+  if (result.reason === "forbidden") {
+    return "Artifact changes need a Slack user context.";
+  }
+
+  if (result.reason === "version_missing") {
+    return "I couldn't find that retained artifact version.";
+  }
+
+  return "I couldn't find one of your artifacts with that ID.";
 }
 
 function formatDate(input: string | undefined) {

@@ -4,7 +4,10 @@ import {
   createArtifact,
   deleteArtifact,
   deleteExpiredArtifacts,
+  diffArtifactVersion,
+  listArtifactVersions,
   listArtifacts,
+  rollbackArtifact,
   updateArtifact
 } from "./artifacts.js";
 import { fetchSlackChannelHistory } from "./channel-history.js";
@@ -29,6 +32,9 @@ export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUse
     createArtifactTool(artifactOwnerUserId),
     createListArtifactsTool(artifactOwnerUserId),
     createUpdateArtifactTool(artifactOwnerUserId),
+    createListArtifactVersionsTool(artifactOwnerUserId),
+    createDiffArtifactVersionTool(artifactOwnerUserId),
+    createRollbackArtifactTool(artifactOwnerUserId),
     createDeleteArtifactTool(artifactOwnerUserId),
     createCleanupExpiredArtifactsTool(artifactOwnerUserId),
     ...(scheduleContext ? createSlackContextTools(scheduleContext) : [])
@@ -235,6 +241,80 @@ function createUpdateArtifactTool(ownerUserId: string | undefined) {
 
       return JSON.stringify(result);
     }
+  });
+}
+
+function createListArtifactVersionsTool(ownerUserId: string | undefined) {
+  return defineTool({
+    name: "list_artifact_versions",
+    description: "List retained prior versions for an artifact owned by the current Slack user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 4,
+          description: "Artifact UUID or visible prefix, e.g. abc12345."
+        }
+      },
+      required: ["idPrefix"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string }) => JSON.stringify(
+      await listArtifactVersions(args.idPrefix, { ownerUserId })
+    )
+  });
+}
+
+function createDiffArtifactVersionTool(ownerUserId: string | undefined) {
+  return defineTool({
+    name: "diff_artifact_version",
+    description: "Compare a retained artifact version with the current artifact content.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 4,
+          description: "Artifact UUID or visible prefix, e.g. abc12345."
+        },
+        versionId: {
+          type: "string",
+          description: "Optional retained version ID, e.g. v1. Defaults to the latest retained version."
+        }
+      },
+      required: ["idPrefix"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string; versionId?: string }) => JSON.stringify(
+      await diffArtifactVersion(args.idPrefix, args.versionId, { ownerUserId })
+    )
+  });
+}
+
+function createRollbackArtifactTool(ownerUserId: string | undefined) {
+  return defineTool({
+    name: "rollback_artifact",
+    description: "Restore an artifact to a retained prior version.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 4,
+          description: "Artifact UUID or visible prefix, e.g. abc12345."
+        },
+        versionId: {
+          type: "string",
+          description: "Optional retained version ID, e.g. v1. Defaults to the latest retained version."
+        }
+      },
+      required: ["idPrefix"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string; versionId?: string }) => JSON.stringify(
+      await rollbackArtifact(args.idPrefix, args.versionId, { ownerUserId })
+    )
   });
 }
 

@@ -38,7 +38,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
   assert.match(response.text, /`\/nobo-prefs \[setting\]`/);
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
-  assert.match(response.text, /`\/nobo-artifacts \[list\|update <id> <content>\|delete <id>\|cleanup\]`/);
+  assert.match(response.text, /`\/nobo-artifacts \[list\|update <id> <content>\|versions <id>\|diff <id>\|rollback <id>\|delete <id>\|cleanup\]`/);
   assert.match(response.text, /`\/nobo-decisions \[add <decision>\|list\]`/);
   assert.match(response.text, /`\/nobo-issues \[github\|linear\|both\] \[create\] <follow-up bullets>`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);

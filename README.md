@@ -16,7 +16,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Issue drafts: converts thread follow-ups into GitHub/Linear issue payloads, with optional create mode when API config is present.
 - Smart notification triage: `@NoBo what needs my attention?` ranks recent mentions, questions, follow-ups, decisions, and schedules.
 - Decisions: channel decision log via slash commands, mentions, and natural `we decided ...` / `we agreed ...` messages.
-- Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, list/update/delete/cleanup.
+- Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, version history, diffs, rollback, list/update/delete/cleanup.
 - Digests and news: weekly general news, weekly AI news, on-demand Hacker News, scheduled Hacker News, and recurring channel digests.
 - Attachments: Slack file metadata, image bytes for vision models, small text/code/CSV contents, and bounded text extraction for PDF, DOCX, and XLSX uploads with Slack preview fallback.
 - App Home dashboard: reminders/crons, memories, active-listening channels, model status, artifacts, preferences, and shortcuts.
@@ -77,6 +77,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `ARTIFACT_TTL_DAYS`: optional default artifact expiration window; blank or `0` means no default expiration
+   - `ARTIFACT_MAX_VERSIONS`: retained prior artifact versions per artifact; defaults to `10`, `0` disables history
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
    - `CHANNEL_DIGEST_SCHEDULER_INTERVAL_MS`: optional override for channel digest subscription checks; falls back to `SCHEDULER_INTERVAL_MS`
    - `NOBO_HACKER_NEWS_CHANNEL_NAME`: defaults to `hacker-news`; channel name for the scheduled Hacker News digest
@@ -214,15 +215,20 @@ Set `ARTIFACT_BASE_URL` to the same public HTTPS origin you use for Slack events
 
 Each new artifact also writes `.artifact.json` metadata with title, kind, size, creation time, and optional expiration. Expired artifacts are still served by URL until deleted; cleanup removes them.
 
+Updating an artifact snapshots the prior live file under `.versions` before writing the replacement. Rollback restores a retained version in place, so preview/raw URL behavior stays the same as normal artifact updates. History is owner-scoped and capped by `ARTIFACT_MAX_VERSIONS`.
+
 Artifact management:
 
 - `/nobo-artifacts list`
 - `/nobo-artifacts list all`
 - `/nobo-artifacts expired`
 - `/nobo-artifacts update abc12345 <content>`
+- `/nobo-artifacts versions abc12345`
+- `/nobo-artifacts diff abc12345 [v1]`
+- `/nobo-artifacts rollback abc12345 [v1]`
 - `/nobo-artifacts delete abc12345`
 - `/nobo-artifacts cleanup`
-- `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
+- `@NoBo artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`
 
 ## Issue Drafts
 
@@ -405,7 +411,7 @@ Current skills:
 - `/nobo-listen [on|off|status]`
 - `/nobo-prefs [setting]`
 - `/nobo-memory [show|forget <number|text>|clear confirm]`
-- `/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`
+- `/nobo-artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`
 - `/nobo-decisions [add <decision>|list]` or `/nobo-decision ...`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
@@ -424,7 +430,7 @@ Current skills:
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`
 - `@NoBo clear channel memory confirm`
-- `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
+- `@NoBo artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`
 - `@NoBo list-artifacts`, `delete-artifact`, `update-artifact`, `edit-artifact`, `cleanup-artifacts`, or `prune-artifacts`
 - `@NoBo prefs ...`, `preferences ...`, or `settings ...`
 

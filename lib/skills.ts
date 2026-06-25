@@ -53,7 +53,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo issues [github|linear|both] [create]`: draft or create issues from thread follow-ups",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
-  "`@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your artifacts",
+  "`@NoBo artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`: manage your artifacts",
   "`@NoBo prefs ...`: show or update personal preferences",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
 ];
@@ -264,6 +264,18 @@ export async function maybeHandleSlackSkillCommand({
       return command.args
         ? handleArtifactCommandText(`update ${command.args}`, { ownerUserId: currentUserId })
         : "Usage: `@NoBo update-artifact <id> <content>`";
+    case "artifact-versions":
+      return command.args
+        ? handleArtifactCommandText(`versions ${command.args}`, { ownerUserId: currentUserId })
+        : "Usage: `@NoBo artifact-versions <id>`";
+    case "diff-artifact":
+      return command.args
+        ? handleArtifactCommandText(`diff ${command.args}`, { ownerUserId: currentUserId })
+        : "Usage: `@NoBo diff-artifact <id> [version]`";
+    case "rollback-artifact":
+      return command.args
+        ? handleArtifactCommandText(`rollback ${command.args}`, { ownerUserId: currentUserId })
+        : "Usage: `@NoBo rollback-artifact <id> [version]`";
     case "cleanup-artifacts":
       return handleArtifactCommandText(command.args || "cleanup", { ownerUserId: currentUserId });
     default:
@@ -355,6 +367,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "delete-artifact" ||
     name === "update-artifact" ||
     name === "edit-artifact" ||
+    name === "artifact-versions" ||
+    name === "diff-artifact" ||
+    name === "rollback-artifact" ||
+    name === "restore-artifact" ||
     name === "cleanup-artifacts" ||
     name === "prune-artifacts"
   ) {
@@ -364,6 +380,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
 
     if (name === "edit-artifact") {
       return { name: "update-artifact", args };
+    }
+
+    if (name === "restore-artifact") {
+      return { name: "rollback-artifact", args };
     }
 
     return { name, args };

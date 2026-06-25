@@ -225,7 +225,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
-    "`/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your generated artifacts",
+    "`/nobo-artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`: manage your generated artifacts",
     "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
     "`/nobo-issues [github|linear|both] [create] <follow-up bullets>`: draft or create issues",
     "`/nobo-news [focus]`: post this week's news digest",
