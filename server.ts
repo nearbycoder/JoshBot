@@ -3,43 +3,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { handleArtifactRequest } from "./lib/artifacts.js";
 import { createScheduledSlackMessage } from "./lib/ai.js";
 import {
-  isDirectMentionToBot,
-  isSlackDirectMessage,
-  isIgnorableSlackEvent,
   postSlackMessage,
-  respondToSlackActiveListeningMessage,
-  respondToSlackDirectMessage,
-  respondToSlackMention,
-  respondToSlackThreadReply,
   verifySlackRequest
 } from "./lib/slack.js";
-import { getChannelMemorySettings } from "./lib/memory.js";
+import { handleSlackEventCallbackPayload, parseSlackPayload } from "./lib/slack-events.js";
 import { startScheduleRunner } from "./lib/schedules.js";
 
 loadEnv({ path: ".env.local" });
 loadEnv();
-
-type SlackUrlVerificationPayload = {
-  type: "url_verification";
-  challenge: string;
-};
-
-type SlackEventCallbackPayload = {
-  type: "event_callback";
-  event: {
-    type: string;
-    channel: string;
-    text: string;
-    thread_ts?: string;
-    ts: string;
-    user?: string;
-    bot_id?: string;
-    subtype?: string;
-    channel_type?: string;
-  };
-};
-
-type SlackPayload = SlackUrlVerificationPayload | SlackEventCallbackPayload;
 
 const port = Number(process.env.PORT ?? "3000");
 
@@ -75,7 +46,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    const payload = JSON.parse(rawBody) as SlackPayload;
+    const payload = parseSlackPayload(rawBody);
 
     if (payload.type === "url_verification") {
       sendText(response, 200, payload.challenge);
@@ -88,28 +59,10 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (payload.type === "event_callback" && !isIgnorableSlackEvent(payload.event)) {
-      if (payload.event.type === "app_mention") {
-        void respondToSlackMention(payload.event).catch((error) => {
-          console.error(`Slack mention handling failed: ${summarizeError(error)}`);
-        });
-      }
-
-      if (payload.event.type === "message" && !isDirectMentionToBot(payload.event.text)) {
-        if (isSlackDirectMessage(payload.event)) {
-          void respondToSlackDirectMessage(payload.event).catch((error) => {
-            console.error(`Slack direct message handling failed: ${summarizeError(error)}`);
-          });
-        } else if (await isChannelActiveListeningEnabled(payload.event.channel)) {
-          void respondToSlackActiveListeningMessage(payload.event).catch((error) => {
-            console.error(`Slack active listening handling failed: ${summarizeError(error)}`);
-          });
-        } else {
-          void respondToSlackThreadReply(payload.event).catch((error) => {
-            console.error(`Slack thread reply handling failed: ${summarizeError(error)}`);
-          });
-        }
-      }
+    if (payload.type === "event_callback") {
+      void handleSlackEventCallbackPayload(payload).catch((error) => {
+        console.error(`Slack event handling failed: ${summarizeError(error)}`);
+      });
     }
 
     return;
@@ -139,15 +92,6 @@ function readBody(request: NodeJS.ReadableStream) {
     });
     request.on("error", reject);
   });
-}
-
-async function isChannelActiveListeningEnabled(channel: string) {
-  try {
-    return (await getChannelMemorySettings(channel)).activeListening;
-  } catch (error) {
-    console.warn(`Unable to load Slack channel settings: ${summarizeError(error)}`);
-    return false;
-  }
 }
 
 function sendJson(

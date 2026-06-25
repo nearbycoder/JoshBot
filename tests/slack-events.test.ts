@@ -33,3 +33,41 @@ test("normalizes Slack app mention file attachments", () => {
     "https://files.slack.com/files-pri/T123-F123/download/image.jpg"
   );
 });
+
+test("normalizes Slack reaction_added message events", () => {
+  const rawEvent = {
+    type: "reaction_added",
+    user: "U123",
+    reaction: "summary",
+    item_user: "U456",
+    item: {
+      type: "message",
+      channel: "C123",
+      ts: "1000.000",
+      channel_type: "channel"
+    },
+    event_ts: "1001.000"
+  } as SlackEventCallbackPayload["event"];
+  const event = __testing.normalizeSlackReactionAddedEvent(rawEvent, "T123");
+
+  assert.equal(event?.team_id, "T123");
+  assert.equal(event?.reaction, "summary");
+  assert.equal(event?.item.channel, "C123");
+  assert.equal(event?.item.ts, "1000.000");
+  assert.equal(event?.event_ts, "1001.000");
+});
+
+test("ignores Slack reactions on non-message items", () => {
+  const rawEvent = {
+    type: "reaction_added",
+    user: "U123",
+    reaction: "summary",
+    item: {
+      type: "file",
+      file: "F123"
+    },
+    event_ts: "1001.000"
+  } as SlackEventCallbackPayload["event"];
+
+  assert.equal(__testing.normalizeSlackReactionAddedEvent(rawEvent, "T123"), null);
+});

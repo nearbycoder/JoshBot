@@ -8,6 +8,10 @@ import {
   respondToSlackThreadReply
 } from "./slack.js";
 import { getChannelMemorySettings } from "./memory.js";
+import {
+  handleSlackReactionShortcut,
+  type SlackReactionAddedEvent
+} from "./slack-reactions.js";
 
 export type SlackUrlVerificationPayload = {
   type: "url_verification";
@@ -29,6 +33,13 @@ export function parseSlackPayload(rawBody: string) {
 }
 
 export async function handleSlackEventCallbackPayload(payload: SlackEventCallbackPayload) {
+  const reactionEvent = normalizeSlackReactionAddedEvent(payload.event, payload.team_id);
+
+  if (reactionEvent) {
+    await handleSlackReactionShortcut(reactionEvent);
+    return;
+  }
+
   const event = normalizeSlackMessageEvent(payload.event, payload.team_id);
 
   if (!event || isIgnorableSlackEvent(event)) {
@@ -57,6 +68,44 @@ async function isChannelActiveListeningEnabled(channel: string) {
     console.warn(`Unable to load Slack channel settings: ${summarizeError(error)}`);
     return false;
   }
+}
+
+function normalizeSlackReactionAddedEvent(
+  event: SlackEventCallbackPayload["event"],
+  teamId?: string
+): SlackReactionAddedEvent | null {
+  const type = typeof event.type === "string" ? event.type : "";
+  const user = getStringField(event, "user");
+  const reaction = getStringField(event, "reaction");
+  const item = getObjectField(event, "item");
+  const eventTs = getStringField(event, "event_ts");
+
+  if (type !== "reaction_added" || !user || !reaction || !item || !eventTs) {
+    return null;
+  }
+
+  const itemType = getStringField(item, "type");
+  const channel = getStringField(item, "channel");
+  const ts = getStringField(item, "ts");
+
+  if (itemType !== "message" || !channel || !ts) {
+    return null;
+  }
+
+  return {
+    type: "reaction_added",
+    user,
+    reaction,
+    item_user: getStringField(event, "item_user"),
+    item: {
+      type: "message",
+      channel,
+      ts,
+      channel_type: getStringField(item, "channel_type")
+    },
+    event_ts: eventTs,
+    team_id: teamId ?? getStringField(event, "team_id") ?? getStringField(event, "team")
+  };
 }
 
 function normalizeSlackMessageEvent(event: SlackEventCallbackPayload["event"], teamId?: string) {
@@ -90,6 +139,11 @@ function normalizeSlackMessageEvent(event: SlackEventCallbackPayload["event"], t
 function getStringField(record: object, key: string) {
   const value = (record as Record<string, unknown>)[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function getObjectField(record: object, key: string) {
+  const value = (record as Record<string, unknown>)[key];
+  return value && typeof value === "object" ? value : undefined;
 }
 
 function getSlackFilesField(record: object) {
@@ -162,5 +216,6 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
-  normalizeSlackMessageEvent
+  normalizeSlackMessageEvent,
+  normalizeSlackReactionAddedEvent
 };

@@ -84,11 +84,13 @@ Create a Slack app and configure:
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
+- Subscribe to bot events: `reaction_added` so reaction shortcuts can run
 - OAuth scopes:
   - `commands`
   - `app_mentions:read`
   - `chat:write`
   - `channels:read` if scheduled Hacker News posts should resolve `#hacker-news` by name instead of `NOBO_HACKER_NEWS_CHANNEL_ID`
+  - `reactions:read` so Slack sends `reaction_added` shortcut events
   - `reactions:write` so NoBo can react to messages it is handling
   - `im:history` for direct messages
   - `channels:history` for thread context in public channels
@@ -204,6 +206,16 @@ Supported examples:
 - `@NoBo update schedule abc12345 to every weekday at 9am remind me to triage alerts`
 
 Recurring daily and weekly schedules are interpreted in America/Chicago time. Reminder-style schedules post the saved reminder text. Prompt-style schedules, such as "post what is trending", run NoBo at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal NoBo replies.
+
+## Reaction shortcuts
+
+NoBo handles a small allowlist of `reaction_added` shortcuts on Slack messages. Add the reaction to the root message of a thread for best results.
+
+- `:summary:`, `:summarize:`, `:thread_summary:`, `:nobo_summary:`: summarize the thread
+- `:memo:`, `:note:`, `:artifact:`, `:nobo_note:`, `:nobo_artifact:`: create a Markdown note artifact from the thread
+- `:alarm_clock:`, `:reminder:`, `:remind:`, `:nobo_remind:`: create a next-day 9 AM America/Chicago reminder for the reacting user
+
+Unknown reactions, non-message reactions, and bot reactions are ignored.
 
 ## Skills
 
