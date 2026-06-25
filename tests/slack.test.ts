@@ -223,6 +223,54 @@ test("uses Slack previews and reports current binary document limits", async () 
   assert.match(xlsxContent, /binary spreadsheet extraction is limited/);
 });
 
+test("includes Slack huddle transcript metadata and extracts caption text", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const downloadUrl = "https://files.slack.com/files-pri/T123-FHUDDLE/download/transcript.vtt";
+
+  globalThis.fetch = (async (input) => {
+    assert.equal(String(input), downloadUrl);
+
+    return new Response("WEBVTT\n\n00:00.000 --> 00:02.000\nU123: Ship beta today.\n", {
+      headers: {
+        "content-length": "60",
+        "content-type": "text/vtt"
+      }
+    });
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const content = await __testing.buildSlackMessageContent("xoxb-test", {
+    text: "<@U999> meeting-notes artifact",
+    files: [
+      {
+        id: "FHUDDLE",
+        name: "transcript.vtt",
+        title: "Launch huddle transcript",
+        mimetype: "text/vtt",
+        filetype: "vtt",
+        pretty_type: "Huddle Transcript",
+        size: 60,
+        url_private_download: downloadUrl,
+        duration_ms: 1800000,
+        huddle_room: {
+          name: "Launch sync",
+          participants: ["U123", "U234"]
+        }
+      }
+    ]
+  });
+
+  assert.match(content, /Attached Huddle Transcript: Launch huddle transcript/);
+  assert.match(content, /Huddle\/transcript metadata: duration_ms 1800000/);
+  assert.match(content, /huddle_room/);
+  assert.match(content, /Launch sync/);
+  assert.match(content, /Attachment extracted text:\nWEBVTT/);
+  assert.match(content, /U123: Ship beta today/);
+});
+
 test("keeps image parts while adding text attachment context", async (t) => {
   const originalFetch = globalThis.fetch;
   const imageUrl = "https://files.slack.com/files-pri/T123-FIMG/download/photo.png";

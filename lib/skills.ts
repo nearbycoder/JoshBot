@@ -45,6 +45,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo skills` or `@NoBo help`: list available skills",
   "`@NoBo decision add <decision>` or `@NoBo decisions`: capture or list channel decisions",
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
+  "`@NoBo meeting-notes [artifact]`: turn a Slack huddle transcript, transcript upload, or thread text into meeting notes",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo what needs my attention?`: prioritize mentions, follow-ups, decisions, and schedules",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
@@ -139,6 +140,27 @@ export async function maybeHandleSlackSkillCommand({
           scheduleContext
         })
       );
+    case "meeting-notes": {
+      const artifactRequested = isMeetingNotesArtifactRequested(command.args);
+
+      await beforeModelReply?.();
+      return createSlackSkillReply({
+        messages: [
+          ...modelMessages,
+          {
+            role: "user",
+            content: buildMeetingNotesUserPrompt(command.args, artifactRequested)
+          }
+        ],
+        memories,
+        currentUserId,
+        channelMemories,
+        channelId,
+        skillName: "meeting-notes",
+        instructions: buildMeetingNotesInstructions(artifactRequested),
+        onTextDelta
+      });
+    }
     case "channel-digest":
       return handleChannelDigestCommand({
         text: command.args,
@@ -289,6 +311,13 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "attention", args };
   }
 
+  if (name === "meeting" || name === "meeting-notes" || name === "meetingnotes" || name === "notes") {
+    return {
+      name: "meeting-notes",
+      args: name === "meeting" ? args.replace(/^notes?\b/i, "").trim() : args
+    };
+  }
+
   if (name === "digest") {
     return { name: "channel-digest", args };
   }
@@ -314,6 +343,7 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
   if (
     name === "prefs" ||
     name === "summarize-thread" ||
+    name === "meeting-notes" ||
     name === "thread-todos" ||
     name === "attention" ||
     name === "channel-digest" ||
@@ -356,3 +386,44 @@ function isAttentionTriageCommand(input: string) {
   return /^(?:what\s+)?(?:needs?|requires?)\s+(?:my\s+|our\s+)?attention$/.test(normalized) ||
     /^what\s+should\s+i\s+(?:look\s+at|reply\s+to|handle)$/.test(normalized);
 }
+
+function buildMeetingNotesUserPrompt(args: string, artifactRequested: boolean) {
+  const focus = removeMeetingNotesArtifactWords(args);
+  const base =
+    "Use the meeting-notes skill. Turn the available Slack thread text, transcript-like upload, or huddle transcript into meeting notes.";
+  const artifact = artifactRequested
+    ? " Create a Markdown artifact for the final notes with the create_artifact tool, then reply with a short link to it."
+    : "";
+  const focusText = focus ? ` Extra user guidance: ${focus}` : "";
+
+  return `${base}${artifact}${focusText}`;
+}
+
+function buildMeetingNotesInstructions(artifactRequested: boolean) {
+  return `Your job is to convert Slack huddle transcripts, transcript uploads, or Slack thread text into meeting notes.
+- Use any Slack huddle/transcript metadata in the attachment context for title, date, duration, participants, or source details when present.
+- If no huddle metadata is present, rely on text/Markdown transcript uploads and the surrounding thread.
+- Include these sections in order: Summary, Decisions, Action items, Blockers.
+- For action items, include owner and due date when clear; otherwise write "Unassigned" or "No date".
+- Keep decisions and blockers evidence-based. If none are clear, say "None captured."
+- Preserve important product/project names and Slack user IDs.
+${artifactRequested ? "- Use create_artifact to create a Markdown artifact containing the notes before replying, and include its preview link." : "- Reply directly in Slack with the notes."}`;
+}
+
+function isMeetingNotesArtifactRequested(args: string) {
+  return /\b(artifact|doc|document|markdown|md|file|save|export)\b/i.test(args);
+}
+
+function removeMeetingNotesArtifactWords(args: string) {
+  return args
+    .replace(/\b(as|to|in|into|create|make|save|export|artifact|doc|document|markdown|md|file)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export const __testing = {
+  buildMeetingNotesInstructions,
+  buildMeetingNotesUserPrompt,
+  isMeetingNotesArtifactRequested,
+  parseSkillCommand
+};

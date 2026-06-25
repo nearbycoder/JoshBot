@@ -223,12 +223,15 @@ const TEXT_ATTACHMENT_FILETYPES = new Set([
   "plain_text",
   "post",
   "rtf",
+  "srt",
   "sql",
   "tab",
+  "transcript",
   "tsv",
   "text",
   "ts",
   "typescript",
+  "vtt",
   "xml",
   "yaml",
   "yml"
@@ -263,12 +266,14 @@ const TEXT_ATTACHMENT_EXTENSIONS = [
   ".rtf",
   ".sh",
   ".sql",
+  ".srt",
   ".tab",
   ".toml",
   ".ts",
   ".tsx",
   ".tsv",
   ".txt",
+  ".vtt",
   ".xml",
   ".yaml",
   ".yml",
@@ -2128,9 +2133,14 @@ async function formatSlackFileForModel(token: string, file: SlackFile) {
   const typeLabel = file.pretty_type || file.filetype || file.mimetype || "file";
   const parts = [`Attached ${typeLabel}: ${title}`];
   const metadata = formatSlackFileMetadata(file);
+  const huddleMetadata = formatSlackHuddleTranscriptMetadata(file);
 
   if (metadata) {
     parts.push(`Attachment metadata: ${metadata}`);
+  }
+
+  if (huddleMetadata) {
+    parts.push(`Huddle/transcript metadata: ${huddleMetadata}`);
   }
 
   const extractedText = await extractSlackFileText(token, file);
@@ -2188,6 +2198,79 @@ function getSlackFileProvidedText(file: SlackFile) {
     file.initial_comment?.comment ||
     ""
   );
+}
+
+function formatSlackHuddleTranscriptMetadata(file: SlackFile) {
+  if (!isSlackHuddleOrTranscriptFile(file)) {
+    return "";
+  }
+
+  const record = file as Record<string, unknown>;
+  const parts: string[] = [];
+
+  for (const key of ["subtype", "mode", "media_display_type", "duration", "duration_ms", "start_time", "end_time"]) {
+    const value = record[key];
+
+    if (typeof value === "string" && value.trim()) {
+      parts.push(`${key} ${value.trim()}`);
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      parts.push(`${key} ${value}`);
+    }
+  }
+
+  for (const key of ["participants", "huddle_thread", "huddle_room", "room", "transcript"]) {
+    const value = record[key];
+    const formatted = formatCompactSlackMetadataValue(value);
+
+    if (formatted) {
+      parts.push(`${key} ${formatted}`);
+    }
+  }
+
+  return parts.join("; ");
+}
+
+function isSlackHuddleOrTranscriptFile(file: SlackFile) {
+  const haystack = [
+    file.title,
+    file.name,
+    file.pretty_type,
+    file.filetype,
+    file.mimetype,
+    (file as Record<string, unknown>).subtype
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+
+  if (/\b(huddle|transcript|transcription|caption|captions|subtitle|subtitles|vtt|srt)\b/.test(haystack)) {
+    return true;
+  }
+
+  return ["participants", "huddle_thread", "huddle_room", "room", "transcript"].some((key) =>
+    Object.hasOwn(file as Record<string, unknown>, key)
+  );
+}
+
+function formatCompactSlackMetadataValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  try {
+    const json = JSON.stringify(value);
+    return json.length > 500 ? `${json.slice(0, 497)}...` : json;
+  } catch {
+    return "";
+  }
 }
 
 async function extractSlackFileText(token: string, file: SlackFile) {
