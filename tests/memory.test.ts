@@ -48,3 +48,19 @@ test("channel memory settings default off", () => {
 
   assert.deepEqual(state.settings, { activeListening: false });
 });
+
+test("channel memory matcher supports numbered removal", () => {
+  const match = __testing.findChannelMemoryMatch(
+    [
+      { role: "user", content: "first item" },
+      { role: "assistant", content: "second item" }
+    ],
+    "2"
+  );
+
+  assert.deepEqual(match, {
+    status: "removed",
+    index: 1,
+    memory: { role: "assistant", content: "second item" }
+  });
+});

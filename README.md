@@ -80,7 +80,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-memory`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -192,6 +192,17 @@ NoBo also keeps shared per-channel memory in Redis. This is channel-owned contex
 
 Channel settings live in that same value. `/nobo-listen` toggles active listening for the current channel; `/nobo-listen on`, `/nobo-listen off`, and `/nobo-listen status` are also supported. When active listening is on, NoBo sees normal channel messages, records them into shared channel memory, and can choose to stay silent, reply in-thread, or reply inline. Shared channel memory appends and settings updates are atomic in Redis, and active-listening replies are capped by `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`.
 
+Shared channel memory controls:
+
+- `/nobo-memory`
+- `/nobo-memory forget <number|text>`
+- `/nobo-memory clear confirm`
+- `@NoBo show channel memory`
+- `@NoBo forget channel memory <number|text>`
+- `@NoBo clear channel memory confirm`
+
+`/nobo-memory` shows saved channel entries and active-listening status. Clearing channel memory preserves channel settings; use `/nobo-listen off` to disable active listening.
+
 ## Reminders and crons
 
 NoBo can persist user-owned reminders and recurring jobs in Redis. Each schedule is owned by the Slack user who created it and posts back into the channel/thread where it was created.
@@ -230,6 +241,7 @@ Current skills:
 - `/nobo-help`
 - `/nobo-status`
 - `/nobo-listen [on|off|status]`
+- `/nobo-memory [show|forget <number|text>|clear confirm]`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`
@@ -238,6 +250,9 @@ Current skills:
 - `@NoBo summarize-thread [focus]`
 - `@NoBo thread-todos`
 - `@NoBo web-search <query>`
+- `@NoBo show channel memory`
+- `@NoBo forget channel memory <number|text>`
+- `@NoBo clear channel memory confirm`
 
 Memory commands also remain available:
 

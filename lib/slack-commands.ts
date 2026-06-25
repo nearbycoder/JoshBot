@@ -3,6 +3,7 @@ import {
   setChannelActiveListening,
   toggleChannelActiveListening
 } from "./memory.js";
+import { handleChannelMemorySlashCommandText } from "./channel-memory-controls.js";
 import { formatNoboOpsStatus } from "./ops-status.js";
 import { summarizeOpsError } from "./ops-errors.js";
 import { formatSlackSkillHelp } from "./skills.js";
@@ -95,10 +96,17 @@ export async function handleSlackSlashCommandPayload(
     return handleStatusSlashCommand(options);
   }
 
+  if (command === "/nobo-memory") {
+    return immediate(ephemeral(await handleChannelMemorySlashCommandText({
+      text: payload.text,
+      channelId: payload.channel_id
+    })));
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -120,6 +128,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-help`: show this help",
     "`/nobo-status`: show ops health",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
+    "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",

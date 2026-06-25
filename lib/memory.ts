@@ -14,7 +14,7 @@ export type ChannelMemoryEntry = {
   userId?: string;
 };
 
-type ChannelMemoryState = {
+export type ChannelMemoryState = {
   memories: ChannelMemoryEntry[];
   settings: ChannelMemorySettings;
 };
@@ -215,6 +215,10 @@ export async function getChannelMemorySettings(channelId: string) {
   return state.settings;
 }
 
+export async function getChannelMemorySnapshot(channelId: string) {
+  return getChannelMemoryState(channelId);
+}
+
 export async function toggleChannelActiveListening(channelId: string) {
   const redis = await getRedisClient();
 
@@ -248,6 +252,74 @@ export async function setChannelActiveListening(channelId: string, activeListeni
   return {
     ok: true as const,
     settings: nextState.settings
+  };
+}
+
+export async function removeChannelMemory(channelId: string, memory: string) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return {
+      ok: false as const,
+      reason: "Redis is not configured."
+    };
+  }
+
+  const state = await getChannelMemoryState(channelId);
+  const match = findChannelMemoryMatch(state.memories, memory);
+
+  if (match.status === "ambiguous") {
+    return {
+      ok: true as const,
+      status: "ambiguous" as const,
+      memories: state.memories,
+      matches: match.matches
+    };
+  }
+
+  if (match.status === "missing") {
+    return {
+      ok: true as const,
+      status: "missing" as const,
+      memories: state.memories
+    };
+  }
+
+  const memories = state.memories.filter((_entry, index) => index !== match.index);
+  await saveChannelMemoryState(channelId, {
+    ...state,
+    memories
+  });
+
+  return {
+    ok: true as const,
+    status: "removed" as const,
+    memories,
+    removed: match.memory,
+    removedIndex: match.index
+  };
+}
+
+export async function clearChannelMemories(channelId: string) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return {
+      ok: false as const,
+      reason: "Redis is not configured."
+    };
+  }
+
+  const state = await getChannelMemoryState(channelId);
+  await saveChannelMemoryState(channelId, {
+    ...state,
+    memories: []
+  });
+
+  return {
+    ok: true as const,
+    cleared: state.memories.length,
+    settings: state.settings
   };
 }
 
@@ -361,6 +433,16 @@ async function updateChannelMemorySettings(
   return parseChannelMemoryState(commandReplyToString(payload));
 }
 
+async function saveChannelMemoryState(channelId: string, state: ChannelMemoryState) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return;
+  }
+
+  await redis.set(getChannelMemoryKey(channelId), JSON.stringify(state));
+}
+
 function commandReplyToString(input: unknown) {
   if (typeof input === "string") {
     return input;
@@ -460,6 +542,33 @@ function findMemoryMatch(memories: string[], query: string) {
   };
 }
 
+function findChannelMemoryMatch(memories: ChannelMemoryEntry[], query: string) {
+  const match = findMemoryMatch(
+    memories.map((memory) => memory.content),
+    query
+  );
+
+  if (match.status === "ambiguous") {
+    return {
+      status: "ambiguous" as const,
+      matches: match.matches.map(({ index }) => ({
+        index,
+        memory: memories[index] as ChannelMemoryEntry
+      }))
+    };
+  }
+
+  if (match.status === "missing") {
+    return match;
+  }
+
+  return {
+    status: "removed" as const,
+    index: match.index,
+    memory: memories[match.index] as ChannelMemoryEntry
+  };
+}
+
 function parseChannelMemoryPayload(payload: string) {
   return parseChannelMemoryState(payload).memories;
 }
@@ -521,6 +630,7 @@ function normalizeChannelMemoryEntry(input: unknown): ChannelMemoryEntry | null 
 }
 
 export const __testing = {
+  findChannelMemoryMatch,
   getChannelMemoryKey,
   parseChannelMemoryPayload,
   parseChannelMemoryState

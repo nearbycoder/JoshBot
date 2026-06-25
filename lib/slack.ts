@@ -4,6 +4,7 @@ import {
   createSlackReplyWithMemory,
   shouldReplyToSlackThread
 } from "./ai.js";
+import { maybeHandleChannelMemoryMentionCommand } from "./channel-memory-controls.js";
 import { requireEnv } from "./env.js";
 import {
   addUserMemory,
@@ -1264,12 +1265,20 @@ async function slackApi<T extends { ok: boolean }>({
 }
 
 async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
+  const text = stripSlackFormatting(event.text);
+  const trimmed = text.trim();
+  const channelMemoryReply = await maybeHandleChannelMemoryMentionCommand({
+    text: trimmed,
+    channelId: event.channel
+  });
+
+  if (channelMemoryReply) {
+    return channelMemoryReply;
+  }
+
   if (!event.user) {
     return null;
   }
-
-  const text = stripSlackFormatting(event.text);
-  const trimmed = text.trim();
 
   const rememberMatch = trimmed.match(/^remember(?:\s+that)?\s+(.+)$/i);
   if (rememberMatch) {

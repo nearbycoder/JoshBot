@@ -23,6 +23,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo web-search <query>`: run an explicit web search",
+  "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
 ];
 

@@ -29,6 +29,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-help`/);
   assert.match(response.text, /`\/nobo-status`/);
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
+  assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
@@ -64,6 +65,30 @@ test("points unknown /nobo-help slash command text at help", async () => {
   assert.equal(response.response_type, "ephemeral");
   assert.match(response.text, /don't recognize/);
   assert.match(response.text, /`\/nobo-help`/);
+});
+
+test("returns channel memory status for /nobo-memory", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-memory",
+    text: "",
+    channel_id: "C123",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.equal(result.response.text, "Shared channel memory is empty. Active listening: off.");
+});
+
+test("requires confirmation for /nobo-memory clear", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-memory",
+    text: "clear",
+    channel_id: "C123",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /clear confirm/);
 });
 
 test("returns active listening status for /nobo-listen status", async () => {
