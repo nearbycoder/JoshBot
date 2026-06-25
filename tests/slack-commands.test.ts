@@ -35,6 +35,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.equal(response.mrkdwn, true);
   assert.match(response.text, /`\/nobo-help`/);
   assert.match(response.text, /`\/nobo-status`/);
+  assert.match(response.text, /`\/nobo-search <query>`/);
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
   assert.match(response.text, /`\/nobo-prefs \[setting\]`/);
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);

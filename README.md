@@ -17,6 +17,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Smart notification triage: `@NoBo what needs my attention?` ranks recent mentions, questions, follow-ups, decisions, and schedules.
 - Decisions: channel decision log via slash commands, mentions, and natural `we decided ...` / `we agreed ...` messages.
 - Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, version history, diffs, rollback, list/update/delete/cleanup.
+- Semantic search: user-facing search over recent Slack channel history and owned artifacts, currently using a lexical scorer behind the semantic search interface.
 - Digests and news: weekly general news, weekly AI news, on-demand Hacker News, scheduled Hacker News, and recurring channel digests.
 - Attachments: Slack file metadata, image bytes for vision models, small text/code/CSV contents, and bounded text extraction for PDF, DOCX, and XLSX uploads with Slack preview fallback.
 - App Home dashboard: reminders/crons, memories, active-listening channels, model status, artifacts, preferences, and shortcuts.
@@ -78,6 +79,11 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `ARTIFACT_TTL_DAYS`: optional default artifact expiration window; blank or `0` means no default expiration
    - `ARTIFACT_MAX_VERSIONS`: retained prior artifact versions per artifact; defaults to `10`, `0` disables history
+   - `NOBO_SEMANTIC_SEARCH_PROVIDER`: semantic search backend, currently `lexical`; future embedding/vector DB swaps should implement `SemanticSearchProvider`
+   - `NOBO_SEMANTIC_SEARCH_HISTORY_DAYS`: defaults to `14`; recent Slack history window searched by `/nobo-search`
+   - `NOBO_SEMANTIC_SEARCH_HISTORY_LIMIT`: defaults to `200`; max channel messages fetched per search
+   - `NOBO_SEMANTIC_SEARCH_ARTIFACT_LIMIT`: defaults to `200`; max owned artifacts loaded per search
+   - `NOBO_SEMANTIC_SEARCH_RESULTS`: defaults to `5`; max formatted search results
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
    - `CHANNEL_DIGEST_SCHEDULER_INTERVAL_MS`: optional override for channel digest subscription checks; falls back to `SCHEDULER_INTERVAL_MS`
    - `NOBO_HACKER_NEWS_CHANNEL_NAME`: defaults to `hacker-news`; channel name for the scheduled Hacker News digest
@@ -112,7 +118,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
@@ -130,6 +136,8 @@ Create a Slack app and configure:
   - `channels:history` for thread context in public channels
   - `groups:history` if NoBo should summarize private channels it has joined
   - `files:read` so uploaded attachment metadata, PDF/DOCX/XLSX/text contents, previews, and image bytes can be passed into the model
+
+Semantic search over channel history uses `conversations.history`, so public channels need `channels:history`; private channels need `groups:history`. Artifact results are scoped to the Slack user who ran the command.
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
 
@@ -241,6 +249,15 @@ NoBo can turn Slack thread follow-ups into GitHub or Linear issue payloads:
 - `/nobo-issues both create - Ship launch checklist; Update rollout docs`: create when provider config exists, otherwise return actionable drafts and missing env vars
 
 The default is draft-only. Create mode validates provider config first and returns Slack-readable payloads instead of failing when tokens, repository, or team IDs are absent.
+
+## Semantic search
+
+NoBo can search recent Slack channel history plus artifacts owned by the requesting Slack user:
+
+- `/nobo-search database migration`
+- `@NoBo semantic-search database migration`
+
+The current backend is `LexicalSemanticSearchProvider`, exposed through the `SemanticSearchProvider` interface. It uses BM25-style lexical ranking so the feature works without embeddings or a vector DB. To swap in embeddings later, add a provider that implements that interface and route `NOBO_SEMANTIC_SEARCH_PROVIDER` to it.
 
 ## Thread context
 
@@ -408,6 +425,7 @@ Current skills:
 
 - `/nobo-help`
 - `/nobo-status`
+- `/nobo-search <query>`
 - `/nobo-listen [on|off|status]`
 - `/nobo-prefs [setting]`
 - `/nobo-memory [show|forget <number|text>|clear confirm]`
@@ -426,6 +444,7 @@ Current skills:
 - `@NoBo follow-ups`, `@NoBo follow-ups list`, `@NoBo follow-ups mine`, `@NoBo follow-ups done <id>`
 - `@NoBo thread-todos`, `@NoBo todos`, or `@NoBo action-items`
 - `@NoBo channel-digest daily 09:00 [focus]` or `@NoBo digest daily 09:00 [focus]`
+- `@NoBo semantic-search <query>`, `history-search <query>`, or `search-history <query>`
 - `@NoBo web-search <query>` or `@NoBo search <query>`
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`

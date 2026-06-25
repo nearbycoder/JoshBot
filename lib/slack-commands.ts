@@ -36,6 +36,10 @@ import {
   listOpenCodeGoModels,
   normalizeOpenCodeGoOaCompatibleModelId
 } from "./nobo-models.js";
+import {
+  handleSemanticSearchCommandText,
+  type SemanticSearchCommandDependencies
+} from "./semantic-search.js";
 
 const DAD_JOKES = [
   "I only know 25 letters of the alphabet. I don't know y.",
@@ -103,6 +107,7 @@ export type SlackSlashCommandResult = {
 
 export type SlackSlashCommandOptions = {
   formatOpsStatus?: () => Promise<string>;
+  semanticSearchDependencies?: SemanticSearchCommandDependencies;
 };
 
 export type SlackInteractionOptions = {
@@ -177,6 +182,21 @@ export async function handleSlackSlashCommandPayload(
     return handleStatusSlashCommand(options);
   }
 
+  if (command === "/nobo-search") {
+    return immediate(
+      ephemeral(
+        await handleSemanticSearchCommandText(
+          payload.text,
+          {
+            channelId: payload.channel_id,
+            ownerUserId: payload.user_id
+          },
+          options.semanticSearchDependencies
+        )
+      )
+    );
+  }
+
   if (command === "/nobo-memory") {
     return immediate(ephemeral(await handleChannelMemorySlashCommandText({
       text: payload.text,
@@ -201,7 +221,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-search`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -222,6 +242,7 @@ export function formatNoboSlashCommandHelp() {
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
     "`/nobo-status`: show ops health",
+    "`/nobo-search <query>`: search recent channel history and your artifacts",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
