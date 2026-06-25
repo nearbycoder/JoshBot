@@ -13,6 +13,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Active listening: records channel messages and can stay silent, reply in-thread, or reply inline, with concurrency limits.
 - Scheduling: one-time reminders, interval crons, daily/weekly jobs, prompt-style scheduled tasks, cross-channel posting, idempotency, listing, cancellation, and updates.
 - Follow-ups: extracts thread action items, tracks open items, lists thread or user follow-ups, marks items done, and schedules due reminders.
+- Issue drafts: converts thread follow-ups into GitHub/Linear issue payloads, with optional create mode when API config is present.
 - Decisions: channel decision log via slash commands, mentions, and natural `we decided ...` / `we agreed ...` messages.
 - Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, list/update/delete/cleanup.
 - Digests and news: weekly general news, weekly AI news, on-demand Hacker News, scheduled Hacker News, and recurring channel digests.
@@ -81,6 +82,12 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `NOBO_HACKER_NEWS_CHANNEL_ID`: optional Slack channel ID override for scheduled Hacker News posts
    - `NOBO_HACKER_NEWS_SCHEDULE_TIMES`: defaults to `09:00,14:00`; daily post times in America/Chicago
    - `NOBO_HACKER_NEWS_FOCUS`: optional search focus for scheduled Hacker News posts
+   - `NOBO_GITHUB_TOKEN` or `GITHUB_TOKEN`: optional token for issue creation
+   - `NOBO_GITHUB_REPOSITORY` or `GITHUB_REPOSITORY`: optional `owner/repo` target for GitHub issues
+   - `NOBO_GITHUB_LABELS` or `NOBO_ISSUE_LABELS`: optional comma-separated GitHub labels
+   - `NOBO_LINEAR_API_KEY` or `LINEAR_API_KEY`: optional Linear API key for issue creation
+   - `NOBO_LINEAR_TEAM_ID` or `LINEAR_TEAM_ID`: optional Linear team ID for issue creation
+   - `NOBO_LINEAR_LABEL_IDS` or `LINEAR_LABEL_IDS`: optional comma-separated Linear label IDs
 
 4. Start the process:
 
@@ -103,7 +110,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
@@ -215,6 +222,18 @@ Artifact management:
 - `/nobo-artifacts delete abc12345`
 - `/nobo-artifacts cleanup`
 - `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
+
+## Issue Drafts
+
+NoBo can turn Slack thread follow-ups into GitHub or Linear issue payloads:
+
+- `@NoBo issues`: draft GitHub and Linear issues from current thread follow-ups
+- `@NoBo issues github`: draft only GitHub issue payloads
+- `@NoBo issues linear create`: create Linear issues when `NOBO_LINEAR_API_KEY` and `NOBO_LINEAR_TEAM_ID` are set
+- `/nobo-issues github - Fix onboarding bug`: draft from pasted text
+- `/nobo-issues both create - Ship launch checklist; Update rollout docs`: create when provider config exists, otherwise return actionable drafts and missing env vars
+
+The default is draft-only. Create mode validates provider config first and returns Slack-readable payloads instead of failing when tokens, repository, or team IDs are absent.
 
 ## Thread context
 

@@ -26,6 +26,18 @@ test("lists artifacts through Slack skill command", async () => {
   });
 });
 
+test("shows issue skill help without model calls", async () => {
+  const reply = await maybeHandleSlackSkillCommand({
+    commandText: "issues help",
+    modelMessages: [],
+    memories: [],
+    currentUserId: "U123"
+  });
+
+  assert.match(reply ?? "", /NoBo issues/);
+  assert.match(reply ?? "", /current thread follow-ups/);
+});
+
 async function withTempArtifactDir(run: () => Promise<void>) {
   const previousDir = process.env.ARTIFACT_DIR;
   const previousBaseUrl = process.env.ARTIFACT_BASE_URL;

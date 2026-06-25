@@ -10,6 +10,11 @@ import {
   parseFollowUpSkillCommand,
   trackThreadFollowUps
 } from "./follow-ups.js";
+import {
+  formatIssueHelp,
+  handleIssueDrafts,
+  parseIssueCommandIntent
+} from "./issue-drafts.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 import { handleUserPreferencesCommand } from "./preferences.js";
@@ -39,6 +44,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
   "`@NoBo follow-ups`: track thread action items and schedule due reminders",
+  "`@NoBo issues [github|linear|both] [create]`: draft or create issues from thread follow-ups",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your artifacts",
@@ -161,6 +167,28 @@ export async function maybeHandleSlackSkillCommand({
 
       return formatTrackThreadFollowUpsResult(await trackThreadFollowUps(scheduleContext, drafts));
     }
+    case "issues": {
+      const intent = parseIssueCommandIntent(command.args);
+
+      if (intent.action === "help") {
+        return formatIssueHelp();
+      }
+
+      await beforeModelReply?.();
+      const drafts = await extractSlackThreadFollowUps({
+        messages: modelMessages,
+        memories,
+        currentUserId,
+        channelMemories,
+        channelId
+      });
+
+      return handleIssueDrafts(drafts, {
+        targets: intent.targets,
+        create: intent.create,
+        context: scheduleContext
+      });
+    }
     case "web-search":
       if (!command.args) {
         return "Usage: `@NoBo web-search <query>`";
@@ -250,6 +278,12 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "follow-ups", args };
   }
 
+  if (name === "issue" || name === "issues" || name === "github-issues" || name === "linear-issues") {
+    const prefix =
+      name === "github-issues" ? "github " : name === "linear-issues" ? "linear " : "";
+    return { name: "issues", args: `${prefix}${args}`.trim() };
+  }
+
   if (name === "preferences" || name === "settings") {
     return { name: "prefs", args };
   }
@@ -260,6 +294,7 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "thread-todos" ||
     name === "channel-digest" ||
     name === "follow-ups" ||
+    name === "issues" ||
     name === "web-search" ||
     name === "artifacts" ||
     name === "list-artifacts" ||
