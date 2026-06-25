@@ -88,6 +88,10 @@ type SlackViewsPublishResponse =
   | SlackApiSuccess<{ view?: unknown }>
   | SlackApiFailure;
 
+type SlackViewsOpenResponse =
+  | SlackApiSuccess<{ view?: unknown }>
+  | SlackApiFailure;
+
 type SlackConversation = {
   id: string;
   name?: string;
@@ -1113,6 +1117,26 @@ export async function publishSlackAppHome(userId: string) {
   });
 }
 
+export async function openSlackModal({
+  token,
+  triggerId,
+  view
+}: {
+  token: string;
+  triggerId: string;
+  view: SlackBlock;
+}) {
+  return slackApi<SlackViewsOpenResponse>({
+    token,
+    method: "POST",
+    path: "views.open",
+    body: {
+      trigger_id: triggerId,
+      view
+    }
+  });
+}
+
 async function createSlackAppHomeView(userId: string) {
   const data = await loadSlackHomeDashboardData(userId);
   return buildSlackAppHomeView(data);
@@ -1194,7 +1218,8 @@ function buildSlackAppHomeView(data: SlackHomeDashboardData) {
       createSlackHomeSection("Recent Artifacts", formatHomeArtifacts(data.artifacts)),
       { type: "divider" },
       createSlackHomePreferencesBlock(data.preferences),
-      createSlackHomeShortcutsBlock()
+      createSlackHomeShortcutsBlock(),
+      createSlackHomeModalActionsBlock()
     ]
   };
 }
@@ -1309,6 +1334,30 @@ function createSlackHomeShortcutsBlock(): SlackBlock {
       createSlackHomeField("Digests", "`/nobo-channel-digest daily 09:00`\n`@NoBo web-search ...`"),
       createSlackHomeField("Settings", "`/nobo-prefs`\n`/nobo-channel-model`")
     ]
+  };
+}
+
+function createSlackHomeModalActionsBlock(): SlackBlock {
+  return {
+    type: "actions",
+    elements: [
+      createHomeButton("Reminder", "nobo_open_modal:reminder"),
+      createHomeButton("Prefs", "nobo_open_modal:prefs"),
+      createHomeButton("Digest", "nobo_open_modal:digest"),
+      createHomeButton("Artifacts", "nobo_open_modal:artifacts")
+    ]
+  };
+}
+
+function createHomeButton(text: string, actionId: string) {
+  return {
+    type: "button",
+    text: {
+      type: "plain_text",
+      text,
+      emoji: true
+    },
+    action_id: actionId
   };
 }
 
