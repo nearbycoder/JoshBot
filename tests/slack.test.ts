@@ -9,6 +9,38 @@ test("detects Slack retry request headers", () => {
   assert.equal(isSlackRetryRequest(new Headers()), false);
 });
 
+test("removes Slack acknowledgement reaction after completion", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (input, init) => {
+    calls.push({
+      path: String(input).replace("https://slack.com/api/", ""),
+      body: JSON.parse(String(init?.body)) as Record<string, unknown>
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const acknowledgement = __testing.acknowledgeTargetedSlackEvent("xoxb-test", {
+    channel: "C123",
+    text: "<@UBOT> hi",
+    ts: "1000.000",
+    user: "U123"
+  });
+  await __testing.removeSlackAcknowledgement(acknowledgement);
+
+  assert.deepEqual(calls.map((call) => call.path), ["reactions.add", "reactions.remove"]);
+  assert.equal(calls[0]?.body.name, "eyes");
+  assert.equal(calls[1]?.body.name, "eyes");
+  assert.equal(calls[1]?.body.timestamp, "1000.000");
+});
+
 test("detects Slack IM events by channel_type", () => {
   assert.equal(
     isSlackDirectMessage({
