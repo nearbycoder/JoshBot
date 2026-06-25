@@ -13,6 +13,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Active listening: records channel messages and can stay silent, reply in-thread, or reply inline, with concurrency limits.
 - Scheduling: one-time reminders, interval crons, daily/weekly jobs, prompt-style scheduled tasks, cross-channel posting, idempotency, listing, cancellation, and updates.
 - Follow-ups: extracts thread action items, tracks open items, lists thread or user follow-ups, marks items done, and schedules due reminders.
+- Smart notification triage: `@NoBo what needs my attention?` ranks recent mentions, questions, follow-ups, decisions, and schedules.
 - Decisions: channel decision log via slash commands, mentions, and natural `we decided ...` / `we agreed ...` messages.
 - Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, list/update/delete/cleanup.
 - Digests and news: weekly general news, weekly AI news, on-demand Hacker News, scheduled Hacker News, and recurring channel digests.
@@ -229,6 +230,8 @@ NoBo also uses Redis to lock each Slack message event before generating a reply.
 Schedule creation also uses a per-message idempotency key, so repeated `createSchedule` tool calls from one Slack ask return the already-created schedule instead of creating duplicate jobs.
 
 NoBo can also summarize recent channel history when asked with a channel mention, such as `@NoBo summarize #ai over the past week`. This uses Slack `conversations.history`, so the bot must be in the channel and have the matching Slack history scope.
+
+Use `@NoBo what needs my attention?` for deterministic triage of recent thread/channel context. NoBo scans local thread context, channel memory, Slack history when available, open follow-ups, channel decisions, and upcoming schedules, then returns a short prioritized list.
 
 ## Scheduled Hacker News
 
