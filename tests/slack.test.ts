@@ -54,3 +54,37 @@ test("uses one idempotency lock key for the same Slack message across handlers",
     "slack-event-lock:C123:1000.000:1001.000"
   );
 });
+
+test("active listening reply slots cap concurrent channel replies", () => {
+  const originalLimit = process.env.NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES;
+  process.env.NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES = "2";
+
+  const first = __testing.acquireActiveListeningReplySlot("C-SLOTS");
+  const second = __testing.acquireActiveListeningReplySlot("C-SLOTS");
+  const third = __testing.acquireActiveListeningReplySlot("C-SLOTS");
+
+  try {
+    assert.equal(__testing.getActiveListeningMaxConcurrentReplies(), 2);
+    assert.equal(first.acquired, true);
+    assert.equal(second.acquired, true);
+    assert.equal(third.acquired, false);
+
+    first.release();
+    const afterRelease = __testing.acquireActiveListeningReplySlot("C-SLOTS");
+
+    try {
+      assert.equal(afterRelease.acquired, true);
+    } finally {
+      afterRelease.release();
+    }
+  } finally {
+    first.release();
+    second.release();
+
+    if (originalLimit === undefined) {
+      delete process.env.NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES;
+    } else {
+      process.env.NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES = originalLimit;
+    }
+  }
+});

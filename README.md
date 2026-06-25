@@ -50,6 +50,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_LISTENING_ANIMATION_INTERVAL_MS`: defaults to `1000`; controls the placeholder dot animation cadence
    - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how many new characters accumulate before updating a streamed Slack reply
    - `SLACK_STREAM_UPDATE_INTERVAL_MS`: defaults to `750`; maximum update cadence for streamed Slack reply updates
+   - `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`: defaults to `3`; caps simultaneous active-listening replies per channel in this process
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
@@ -183,7 +184,7 @@ Saved memories are injected into future replies for that Slack user when relevan
 
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
-Channel settings live in that same value. `/nobo-listen` toggles active listening for the current channel; `/nobo-listen on`, `/nobo-listen off`, and `/nobo-listen status` are also supported. When active listening is on, NoBo sees normal channel messages, records them into shared channel memory, and can choose to stay silent, reply in-thread, or reply inline.
+Channel settings live in that same value. `/nobo-listen` toggles active listening for the current channel; `/nobo-listen on`, `/nobo-listen off`, and `/nobo-listen status` are also supported. When active listening is on, NoBo sees normal channel messages, records them into shared channel memory, and can choose to stay silent, reply in-thread, or reply inline. Shared channel memory appends and settings updates are atomic in Redis, and active-listening replies are capped by `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`.
 
 ## Reminders and crons
 

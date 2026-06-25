@@ -22,6 +22,67 @@ type ChannelMemoryState = {
 const DEFAULT_CHANNEL_MEMORY_SETTINGS: ChannelMemorySettings = {
   activeListening: false
 };
+const CHANNEL_MEMORY_APPEND_SCRIPT = `
+local payload = redis.call("GET", KEYS[1])
+local state = {}
+
+if payload then
+  local ok, parsed = pcall(cjson.decode, payload)
+  if ok and type(parsed) == "table" then
+    state = parsed
+  end
+end
+
+if type(state.memories) ~= "table" then
+  state.memories = {}
+end
+
+if type(state.settings) ~= "table" then
+  state.settings = {}
+end
+
+if type(state.settings.activeListening) ~= "boolean" then
+  state.settings.activeListening = false
+end
+
+local entries = cjson.decode(ARGV[1])
+for _, entry in ipairs(entries) do
+  table.insert(state.memories, entry)
+end
+
+local next_payload = cjson.encode(state)
+redis.call("SET", KEYS[1], next_payload)
+return next_payload
+`;
+const CHANNEL_MEMORY_SET_ACTIVE_LISTENING_SCRIPT = `
+local payload = redis.call("GET", KEYS[1])
+local state = {}
+
+if payload then
+  local ok, parsed = pcall(cjson.decode, payload)
+  if ok and type(parsed) == "table" then
+    state = parsed
+  end
+end
+
+if type(state.memories) ~= "table" then
+  state.memories = {}
+end
+
+if type(state.settings) ~= "table" then
+  state.settings = {}
+end
+
+if ARGV[1] == "toggle" then
+  state.settings.activeListening = not (state.settings.activeListening == true)
+else
+  state.settings.activeListening = ARGV[1] == "true"
+end
+
+local next_payload = cjson.encode(state)
+redis.call("SET", KEYS[1], next_payload)
+return next_payload
+`;
 
 export async function getUserMemories(userId: string) {
   const redis = await getRedisClient();
@@ -164,19 +225,11 @@ export async function toggleChannelActiveListening(channelId: string) {
     };
   }
 
-  const state = await getChannelMemoryState(channelId);
-  const settings = {
-    ...state.settings,
-    activeListening: !state.settings.activeListening
-  };
-  await saveChannelMemoryState(channelId, {
-    ...state,
-    settings
-  });
+  const nextState = await updateChannelMemorySettings(channelId, "toggle");
 
   return {
     ok: true as const,
-    settings
+    settings: nextState.settings
   };
 }
 
@@ -190,19 +243,11 @@ export async function setChannelActiveListening(channelId: string, activeListeni
     };
   }
 
-  const state = await getChannelMemoryState(channelId);
-  const settings = {
-    ...state.settings,
-    activeListening
-  };
-  await saveChannelMemoryState(channelId, {
-    ...state,
-    settings
-  });
+  const nextState = await updateChannelMemorySettings(channelId, activeListening);
 
   return {
     ok: true as const,
-    settings
+    settings: nextState.settings
   };
 }
 
@@ -231,17 +276,12 @@ export async function appendChannelMemory(
     };
   }
 
-  const state = await getChannelMemoryState(channelId);
-  const nextMemories = [...state.memories, ...nextEntries];
-  await saveChannelMemoryState(channelId, {
-    ...state,
-    memories: nextMemories
-  });
+  const nextState = await appendChannelMemoryEntries(channelId, nextEntries);
 
   return {
     ok: true as const,
     status: "added" as const,
-    memories: nextMemories
+    memories: nextState.memories
   };
 }
 
@@ -279,14 +319,58 @@ async function getChannelMemoryState(channelId: string): Promise<ChannelMemorySt
   return parseChannelMemoryState(payload);
 }
 
-async function saveChannelMemoryState(channelId: string, state: ChannelMemoryState) {
+async function appendChannelMemoryEntries(
+  channelId: string,
+  entries: ChannelMemoryEntry[]
+): Promise<ChannelMemoryState> {
   const redis = await getRedisClient();
 
   if (!redis) {
-    return;
+    return createEmptyChannelMemoryState();
   }
 
-  await redis.set(getChannelMemoryKey(channelId), JSON.stringify(state));
+  const payload = await redis.sendCommand([
+    "EVAL",
+    CHANNEL_MEMORY_APPEND_SCRIPT,
+    "1",
+    getChannelMemoryKey(channelId),
+    JSON.stringify(entries)
+  ]);
+
+  return parseChannelMemoryState(commandReplyToString(payload));
+}
+
+async function updateChannelMemorySettings(
+  channelId: string,
+  activeListening: boolean | "toggle"
+): Promise<ChannelMemoryState> {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return createEmptyChannelMemoryState();
+  }
+
+  const payload = await redis.sendCommand([
+    "EVAL",
+    CHANNEL_MEMORY_SET_ACTIVE_LISTENING_SCRIPT,
+    "1",
+    getChannelMemoryKey(channelId),
+    activeListening === "toggle" ? "toggle" : activeListening ? "true" : "false"
+  ]);
+
+  return parseChannelMemoryState(commandReplyToString(payload));
+}
+
+function commandReplyToString(input: unknown) {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (Buffer.isBuffer(input)) {
+    return input.toString("utf8");
+  }
+
+  return "";
 }
 
 function createEmptyChannelMemoryState(): ChannelMemoryState {

@@ -131,11 +131,13 @@ const DEFAULT_SLACK_STREAM_UPDATE_INTERVAL_MS = 750;
 const DEFAULT_SLACK_LISTENING_ANIMATION_INTERVAL_MS = 1000;
 const DEFAULT_SLACK_LISTENING_MESSAGE = "Thinking...";
 const DEFAULT_SLACK_ACK_REACTION = "eyes";
+const DEFAULT_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES = 3;
 const SLACK_SECTION_BLOCK_TEXT_LIMIT = 2900;
 const SLACK_MAX_BLOCKS = 50;
 const STREAM_FAILURE_NOTICE = "I hit an error before I could finish this reply.";
 const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
 const localEventLocks = new Map<string, number>();
+const activeListeningReplyCounts = new Map<string, number>();
 
 export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const signature = getHeader(headers, "x-slack-signature");
@@ -536,75 +538,88 @@ export async function respondToSlackActiveListeningMessage(event: SlackMessageEv
     token,
     liveEvent: event
   });
-  const responseMode = await chooseSlackActiveListeningResponse({
-    messages: modelMessages,
-    currentUserId: event.user,
-    channelMemories,
-    channelId: event.channel,
-    allowInline
-  });
+  const replySlot = acquireActiveListeningReplySlot(event.channel);
 
-  if (responseMode === "silent") {
+  if (!replySlot.acquired) {
     if (event.thread_ts) {
       await saveCachedThreadMessages(event.channel, event.thread_ts, threadMessages);
     }
     return;
   }
 
-  void acknowledgeTargetedSlackEvent(token, event);
-  const replyThreadTs = responseMode === "thread" ? threadTs : undefined;
-  const replyStream = createSlackReplyStreamer({
-    token,
-    channel: event.channel,
-    threadTs: replyThreadTs
-  });
-  let reply: string | null;
-
   try {
-    await replyStream.start();
-    reply = await createReplyForSlackEvent({
-      token,
-      threadMessages,
-      event,
-      memories,
-      modelMessages,
+    const responseMode = await chooseSlackActiveListeningResponse({
+      messages: modelMessages,
+      currentUserId: event.user,
       channelMemories,
       channelId: event.channel,
-      onTextDelta: replyStream?.append
+      allowInline
     });
-  } catch (error) {
-    await replyStream?.fail();
-    throw error;
-  }
 
-  if (!reply) {
-    return;
-  }
+    if (responseMode === "silent") {
+      if (event.thread_ts) {
+        await saveCachedThreadMessages(event.channel, event.thread_ts, threadMessages);
+      }
+      return;
+    }
 
-  const postedReply = await finishSlackReply({
-    token,
-    channel: event.channel,
-    threadTs: replyThreadTs,
-    text: reply,
-    stream: replyStream
-  });
-  await recordAssistantChannelMemory({
-    channel: event.channel,
-    threadTs: replyThreadTs ?? postedReply.ts,
-    text: reply,
-    ts: postedReply.ts
-  });
+    void acknowledgeTargetedSlackEvent(token, event);
+    const replyThreadTs = responseMode === "thread" ? threadTs : undefined;
+    const replyStream = createSlackReplyStreamer({
+      token,
+      channel: event.channel,
+      threadTs: replyThreadTs
+    });
+    let reply: string | null;
 
-  if (replyThreadTs) {
-    await saveCachedThreadMessages(
-      event.channel,
-      replyThreadTs,
-      appendCachedThreadMessage(threadMessages, {
-        role: "assistant",
-        content: reply,
-        ts: postedReply.ts
-      })
-    );
+    try {
+      await replyStream.start();
+      reply = await createReplyForSlackEvent({
+        token,
+        threadMessages,
+        event,
+        memories,
+        modelMessages,
+        channelMemories,
+        channelId: event.channel,
+        onTextDelta: replyStream?.append
+      });
+    } catch (error) {
+      await replyStream?.fail();
+      throw error;
+    }
+
+    if (!reply) {
+      return;
+    }
+
+    const postedReply = await finishSlackReply({
+      token,
+      channel: event.channel,
+      threadTs: replyThreadTs,
+      text: reply,
+      stream: replyStream
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs: replyThreadTs ?? postedReply.ts,
+      text: reply,
+      ts: postedReply.ts
+    });
+
+    if (replyThreadTs) {
+      await saveCachedThreadMessages(
+        event.channel,
+        replyThreadTs,
+        appendCachedThreadMessage(threadMessages, {
+          role: "assistant",
+          content: reply,
+          ts: postedReply.ts
+        })
+      );
+    }
+  } finally {
+    replySlot.release();
   }
 }
 
@@ -1824,6 +1839,51 @@ function getSlackEventLockTtlSeconds() {
   return parsedValue;
 }
 
+function acquireActiveListeningReplySlot(channel: string) {
+  const currentCount = activeListeningReplyCounts.get(channel) ?? 0;
+  const maxCount = getActiveListeningMaxConcurrentReplies();
+
+  if (currentCount >= maxCount) {
+    return {
+      acquired: false as const,
+      release() {}
+    };
+  }
+
+  activeListeningReplyCounts.set(channel, currentCount + 1);
+  let released = false;
+
+  return {
+    acquired: true as const,
+    release() {
+      if (released) {
+        return;
+      }
+
+      released = true;
+      const nextCount = (activeListeningReplyCounts.get(channel) ?? 1) - 1;
+
+      if (nextCount <= 0) {
+        activeListeningReplyCounts.delete(channel);
+        return;
+      }
+
+      activeListeningReplyCounts.set(channel, nextCount);
+    }
+  };
+}
+
+function getActiveListeningMaxConcurrentReplies() {
+  const rawValue = process.env.NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 1) {
+    return DEFAULT_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES;
+  }
+
+  return Math.min(parsedValue, 10);
+}
+
 function pruneLocalEventLocks() {
   const now = Date.now();
 
@@ -1947,6 +2007,8 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  acquireActiveListeningReplySlot,
+  getActiveListeningMaxConcurrentReplies,
   getSlackEventLockKey
 };
 
