@@ -2,6 +2,25 @@
 
 NoBo is a small TypeScript process that receives Slack Events API calls and replies in-thread.
 
+## Features
+
+- Slack assistant surfaces: `@NoBo` mentions, thread replies, DMs, slash commands, reaction shortcuts, active channel listening, and Slack App Home.
+- Thread-aware replies: reads Slack thread history, trims long threads, caches thread state, and decides whether normal thread replies need NoBo.
+- Streaming Slack UX: acknowledgement reaction, animated listening message, and progressive same-message block updates.
+- Web and time tools: Exa search, exact current-time tool, UTC plus user-timezone context, and timezone-aware relative scheduling.
+- User memory and preferences: per-user memories, timezone, verbosity, news interests, and reminder style in Redis.
+- Channel memory and settings: shared channel memory, active-listening state, and per-channel model overrides in Redis.
+- Active listening: records channel messages and can stay silent, reply in-thread, or reply inline, with concurrency limits.
+- Scheduling: one-time reminders, interval crons, daily/weekly jobs, prompt-style scheduled tasks, cross-channel posting, idempotency, listing, cancellation, and updates.
+- Follow-ups: extracts thread action items, tracks open items, lists thread or user follow-ups, marks items done, and schedules due reminders.
+- Decisions: channel decision log via slash commands, mentions, and natural `we decided ...` / `we agreed ...` messages.
+- Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, list/update/delete/cleanup.
+- Digests and news: weekly general news, weekly AI news, on-demand Hacker News, scheduled Hacker News, and recurring channel digests.
+- Attachments: Slack file metadata, image bytes for vision models, small text/code/CSV contents, and preview text for larger docs/spreadsheets.
+- App Home dashboard: reminders/crons, memories, active-listening channels, model status, artifacts, preferences, and shortcuts.
+- Utility commands: `/nobo-help`, `/nobo-status`, and `/nobo-dad-joke`.
+- Ops and safety: Slack signature verification, retry suppression, duplicate event locks, Redis status, async error recording, `/healthz`, and CI checks.
+
 ## Stack
 
 - Flue Node.js target and generated HTTP server
@@ -84,7 +103,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
@@ -108,6 +127,18 @@ If you only grant `app_mentions:read` and `chat:write`, the bot still works, but
 To allow users to type directly in NoBo's App DM, enable the Messages tab in Slack App Home and turn on "Allow users to send Slash commands and messages from the messages tab", then reinstall the app after adding `message.im` and `im:history`.
 
 Enable the Slack App Home surface if you want NoBo to show a dashboard with reminders, saved memory, active-listening channel status, and recent artifacts.
+
+## App Home
+
+NoBo publishes a Slack App Home dashboard on `app_home_opened`. It includes:
+
+- Upcoming reminders and crons for the current user
+- Saved personal memories
+- Active-listening channel status and shared-memory counts
+- Channel model overrides
+- Recent generated artifacts
+- Current user preferences
+- Quick command examples for threads, channel settings, digests, and preferences
 
 For local development, expose the app with a tunnel:
 
@@ -149,6 +180,16 @@ For Railway GitHub autodeploys, enable `Wait for CI` on the NoBo service deploy 
 ## Web search
 
 If `EXA_API_KEY` is set, NoBo can call Exa web search during Flue agent runs for current or hard-to-recall questions. The integration uses Exa's canonical JavaScript SDK and `/search` with `contents.highlights: true` for token-efficient excerpts. It defaults to `type: "auto"` and only forces livecrawl when the model explicitly asks for fresh content.
+
+## News digests
+
+NoBo can post channel-visible digests on demand:
+
+- `/nobo-news [focus]`: this week's broad news; uses saved news interests when no focus is supplied
+- `/nobo-ai-news [focus]`: this week's AI news
+- `/nobo-hacker-news [focus]`: top trending Hacker News stories, optionally filtered by title/URL focus
+
+The general and AI news digests use web search. Hacker News uses the official Firebase API.
 
 ## Time awareness
 
@@ -218,6 +259,8 @@ NoBo can persist simple per-user memory in Redis across threads. Supported comma
 - `forget ...`
 - `show my memory`
 - `clear my memory`
+- `what do you remember about me?`
+- `forget everything`
 
 `show my memory` returns a numbered list, and `forget ...` can remove by exact text, unique partial match, or number.
 
@@ -265,6 +308,7 @@ Shared channel memory controls:
 - `/nobo-memory forget <number|text>`
 - `/nobo-memory clear confirm`
 - `@NoBo show channel memory`
+- `@NoBo what do you remember about this channel?`
 - `@NoBo forget channel memory <number|text>`
 - `@NoBo clear channel memory confirm`
 
@@ -278,9 +322,11 @@ Supported commands:
 
 - `/nobo-decisions add Use Redis for shared channel state`
 - `/nobo-decisions list`
+- `/nobo-decision add Use Redis for shared channel state`
 - `@NoBo decision add Use Redis for shared channel state`
 - `@NoBo decisions`
 - `@NoBo we decided to use Redis for shared channel state`
+- `@NoBo we agreed to use Redis for shared channel state`
 
 When active listening is on, NoBo also captures explicit `we decided ...` or `we agreed ...` channel messages that reach it.
 
@@ -320,9 +366,9 @@ Reminder delivery uses the same Redis scheduler as reminders and crons. If an it
 
 NoBo handles a small allowlist of `reaction_added` shortcuts on Slack messages. Add the reaction to the root message of a thread for best results.
 
-- `:summary:`, `:summarize:`, `:thread_summary:`, `:nobo_summary:`: summarize the thread
-- `:memo:`, `:note:`, `:artifact:`, `:nobo_note:`, `:nobo_artifact:`: create a Markdown note artifact from the thread
-- `:alarm_clock:`, `:reminder:`, `:remind:`, `:nobo_remind:`: create a next-day 9 AM America/Chicago reminder for the reacting user
+- `:summary:`, `:summarize:`, `:summarise:`, `:thread_summary:`, `:thread-summary:`, `:nobo_summary:`, `:nobo-summary:`: summarize the thread
+- `:memo:`, `:note:`, `:artifact:`, `:nobo_note:`, `:nobo_artifact:`, `:page_facing_up:`, `:spiral_note_pad:`: create a Markdown note artifact from the thread
+- `:alarm_clock:`, `:reminder:`, `:remind:`, `:nobo_remind:`, `:nobo_reminder:`: create a next-day 9 AM America/Chicago reminder for the reacting user
 
 Unknown reactions, non-message reactions, and bot reactions are ignored.
 
@@ -338,7 +384,7 @@ Current skills:
 - `/nobo-prefs [setting]`
 - `/nobo-memory [show|forget <number|text>|clear confirm]`
 - `/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`
-- `/nobo-decisions [add <decision>|list]`
+- `/nobo-decisions [add <decision>|list]` or `/nobo-decision ...`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`
@@ -347,20 +393,22 @@ Current skills:
 - `/nobo-dad-joke`
 - `@NoBo skills` or `@NoBo help`
 - `@NoBo decision add <decision>` or `@NoBo decisions`
-- `@NoBo summarize-thread [focus]`
-- `@NoBo follow-ups`
-- `@NoBo thread-todos`
-- `@NoBo channel-digest daily 09:00 [focus]`
-- `@NoBo web-search <query>`
+- `@NoBo summarize-thread [focus]` or `@NoBo summary [focus]`
+- `@NoBo follow-ups`, `@NoBo follow-ups list`, `@NoBo follow-ups mine`, `@NoBo follow-ups done <id>`
+- `@NoBo thread-todos`, `@NoBo todos`, or `@NoBo action-items`
+- `@NoBo channel-digest daily 09:00 [focus]` or `@NoBo digest daily 09:00 [focus]`
+- `@NoBo web-search <query>` or `@NoBo search <query>`
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`
 - `@NoBo clear channel memory confirm`
 - `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
-- `@NoBo prefs ...`
+- `@NoBo list-artifacts`, `delete-artifact`, `update-artifact`, `edit-artifact`, `cleanup-artifacts`, or `prune-artifacts`
+- `@NoBo prefs ...`, `preferences ...`, or `settings ...`
 
 Memory commands also remain available:
 
 - `@NoBo remember ...`
+- `@NoBo forget ...`
 - `@NoBo show my memory`
 - `@NoBo clear my memory`
 
