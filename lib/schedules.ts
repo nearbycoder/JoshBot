@@ -9,6 +9,11 @@ import {
   type UserPreferences
 } from "./preferences.js";
 import { getRedisClient } from "./redis.js";
+import {
+  assertSlackTargetChannelAllowed,
+  normalizeSlackChannelId,
+  resolveSlackTargetChannel
+} from "./slack-targets.js";
 
 type SlackMessageEvent = {
   channel: string;
@@ -248,6 +253,13 @@ export async function createScheduleFromTool(
   const preferences = await getUserPreferences(context.ownerUserId);
   const parsed = scheduleToolInputToParsedSchedule(input, context.timeZone ?? preferences.timeZone);
   const destination = getScheduleDestination(context, input);
+  await assertSlackTargetChannelAllowed({
+    userId: context.ownerUserId,
+    channelId: destination.channel,
+    action: "create_schedule",
+    surface: "slack-tool"
+  });
+
   const idempotencyResult = await getIdempotentCreatedSchedule(context);
 
   if (idempotencyResult.status === "exists") {
@@ -484,32 +496,13 @@ function getScheduleDestinationForUpdate(
 }
 
 function getTargetChannel(context: SlackScheduleContext, input: OptionalScheduleDestination) {
-  const targetChannelId = normalizeSlackChannelId(input.targetChannelId);
+  const resolution = resolveSlackTargetChannel(context, input);
 
-  if (targetChannelId) {
-    const mentionedChannel = context.mentionedChannels.find((channel) => channel.id === targetChannelId);
-    return {
-      id: targetChannelId,
-      name: input.targetChannelName?.trim() || mentionedChannel?.name
-    };
+  if (!resolution.ok) {
+    throw new Error(resolution.reason);
   }
 
-  const targetChannelName = input.targetChannelName?.trim().replace(/^#/, "").toLowerCase();
-  if (targetChannelName) {
-    const mentionedChannel = context.mentionedChannels.find(
-      (channel) => channel.name?.toLowerCase() === targetChannelName
-    );
-
-    if (mentionedChannel) {
-      return mentionedChannel;
-    }
-  }
-
-  if (context.mentionedChannels.length === 1) {
-    return context.mentionedChannels[0] ?? null;
-  }
-
-  return null;
+  return resolution.channel;
 }
 
 function inferResponseMode(task: string): "reminder" | "prompt" {
@@ -1083,21 +1076,6 @@ function normalizeDashboardLimit(input: number, fallback: number, max: number) {
   }
 
   return Math.min(input, max);
-}
-
-function normalizeSlackChannelId(input: string | undefined) {
-  if (!input) {
-    return null;
-  }
-
-  const trimmed = input.trim();
-  const channelIdMatch = trimmed.match(/#?(C[A-Z0-9]+|G[A-Z0-9]+|D[A-Z0-9]+)/i);
-
-  if (!channelIdMatch) {
-    return null;
-  }
-
-  return channelIdMatch[1]?.toUpperCase() ?? null;
 }
 
 function cleanTask(input: string) {

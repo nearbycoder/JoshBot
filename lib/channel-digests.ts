@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createSlackSkillReply } from "./ai.js";
 import { fetchSlackChannelHistory } from "./channel-history.js";
 import { getRedisClient } from "./redis.js";
+import { assertSlackTargetChannelAllowed } from "./slack-targets.js";
 
 type ChannelDigestFrequency = "daily" | "weekly";
 
@@ -91,6 +92,13 @@ export async function handleChannelDigestCommand({
   }
 
   try {
+    await assertSlackTargetChannelAllowed({
+      userId: ownerUserId,
+      channelId,
+      action: "channel_digest",
+      surface: "slack-command"
+    });
+
     if (command.kind === "list") {
       return listChannelDigestSubscriptions(channelId);
     }

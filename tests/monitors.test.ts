@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { __testing, type MonitorToolInput } from "../lib/monitors.js";
+import { __testing, createMonitorFromTool, type MonitorToolInput } from "../lib/monitors.js";
+import type { SlackScheduleContext } from "../lib/schedules.js";
+
+const baseContext: SlackScheduleContext = {
+  ownerUserId: "U123",
+  channel: "CGENERAL",
+  threadTs: "1000.000",
+  sourceTs: "1001.000",
+  mentionedChannels: [{ id: "CAI123", name: "ai" }]
+};
 
 test("parses interval monitor commands", () => {
   const parsed = __testing.parseMonitorCommandText(
@@ -42,6 +51,40 @@ test("monitor input accepts numeric strings and infers source", () => {
   assert.equal(parsed.source, "web_search");
 });
 
+test("monitor creation rejects arbitrary target channel IDs", async () => {
+  await assert.rejects(
+    createMonitorFromTool(baseContext, {
+      kind: "interval",
+      amount: 5,
+      unit: "minutes",
+      query: "deploy failed",
+      conditionType: "appears",
+      targetChannelId: "CSECRET"
+    }),
+    /current channel or a channel mentioned/
+  );
+});
+
+test("monitor creation enforces target channel access", async () => {
+  const originalDeniedChannels = process.env.NOBO_DENIED_CHANNEL_IDS;
+  process.env.NOBO_DENIED_CHANNEL_IDS = "CAI123";
+
+  try {
+    await assert.rejects(
+      createMonitorFromTool(baseContext, {
+        kind: "interval",
+        amount: 5,
+        unit: "minutes",
+        query: "deploy failed",
+        conditionType: "appears"
+      }),
+      /NoBo access denied/
+    );
+  } finally {
+    restoreEnv("NOBO_DENIED_CHANNEL_IDS", originalDeniedChannels);
+  }
+});
+
 test("channel history appears monitor matches only new messages", () => {
   const result = __testing.evaluateChannelHistoryMonitor(
     {
@@ -80,3 +123,12 @@ test("monitor alert posting is idempotent by fingerprint", () => {
   assert.equal(__testing.shouldPostMonitorAlert({ lastAlertFingerprint: undefined }, result), true);
   assert.equal(__testing.shouldPostMonitorAlert({ lastAlertFingerprint: "abc" }, result), false);
 });
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}

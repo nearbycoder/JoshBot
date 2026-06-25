@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { __testing, type ScheduleToolInput, type SlackScheduleContext } from "../lib/schedules.js";
+import {
+  __testing,
+  createScheduleFromTool,
+  type ScheduleToolInput,
+  type SlackScheduleContext
+} from "../lib/schedules.js";
 
 const baseContext: SlackScheduleContext = {
   ownerUserId: "U123",
@@ -64,6 +69,44 @@ test("schedule destination falls back to the only mentioned channel", () => {
   assert.equal(destination.channel, "CAI123");
   assert.equal(destination.channelName, "ai");
   assert.equal(destination.threadTs, undefined);
+});
+
+test("schedule destination rejects arbitrary target channel IDs", () => {
+  assert.throws(
+    () => __testing.getScheduleDestination(baseContext, {
+      kind: "once",
+      task: "check logs",
+      amount: 5,
+      unit: "minutes",
+      targetChannelId: "CSECRET"
+    }),
+    /current channel or a channel mentioned/
+  );
+});
+
+test("schedule creation enforces target channel access", async () => {
+  const originalDeniedChannels = process.env.NOBO_DENIED_CHANNEL_IDS;
+  process.env.NOBO_DENIED_CHANNEL_IDS = "CAI123";
+
+  try {
+    await assert.rejects(
+      createScheduleFromTool(
+        {
+          ...baseContext,
+          mentionedChannels: [{ id: "CAI123", name: "ai" }]
+        },
+        {
+          kind: "once",
+          task: "check logs",
+          amount: 5,
+          unit: "minutes"
+        }
+      ),
+      /NoBo access denied/
+    );
+  } finally {
+    restoreEnv("NOBO_DENIED_CHANNEL_IDS", originalDeniedChannels);
+  }
 });
 
 test("schedule destination stays in the source thread without a channel mention", () => {
@@ -146,3 +189,12 @@ test("reminder style formats delivered reminder text", () => {
   assert.equal(__testing.formatReminderText("check logs", "gentle"), "Gentle reminder: check logs");
   assert.match(__testing.formatReminderText("check logs", "detailed"), /Scheduled by NoBo/);
 });
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}

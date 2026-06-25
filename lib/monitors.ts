@@ -8,6 +8,10 @@ import {
   type UserPreferences
 } from "./preferences.js";
 import { getRedisClient } from "./redis.js";
+import {
+  assertSlackTargetChannelAllowed,
+  resolveSlackTargetChannel
+} from "./slack-targets.js";
 import type { SlackScheduleContext } from "./schedules.js";
 
 type SlackMessageEvent = {
@@ -268,6 +272,13 @@ export async function createMonitorFromTool(
   const preferences = await getUserPreferences(context.ownerUserId);
   const parsed = monitorToolInputToParsedMonitor(input, context.timeZone ?? preferences.timeZone);
   const destination = getMonitorDestination(context, input);
+  await assertSlackTargetChannelAllowed({
+    userId: context.ownerUserId,
+    channelId: destination.channel,
+    action: "create_monitor",
+    surface: "slack-tool"
+  });
+
   const idempotencyResult = await getIdempotentCreatedMonitor(context);
 
   if (idempotencyResult.status === "exists") {
@@ -699,26 +710,13 @@ function getTargetChannel(
   context: SlackScheduleContext,
   input: Pick<MonitorToolInput, "targetChannelId" | "targetChannelName">
 ) {
-  const targetChannelId = normalizeSlackChannelId(input.targetChannelId);
+  const resolution = resolveSlackTargetChannel(context, input);
 
-  if (targetChannelId) {
-    const mentionedChannel = context.mentionedChannels.find((channel) => channel.id === targetChannelId);
-    return {
-      id: targetChannelId,
-      name: input.targetChannelName?.trim() || mentionedChannel?.name
-    };
+  if (!resolution.ok) {
+    throw new Error(resolution.reason);
   }
 
-  const targetChannelName = input.targetChannelName?.trim().replace(/^#/, "").toLowerCase();
-  if (targetChannelName) {
-    return context.mentionedChannels.find((channel) => channel.name?.toLowerCase() === targetChannelName) ?? null;
-  }
-
-  if (context.mentionedChannels.length === 1) {
-    return context.mentionedChannels[0] ?? null;
-  }
-
-  return null;
+  return resolution.channel;
 }
 
 async function listUserMonitors(userId: string) {
@@ -1162,17 +1160,6 @@ function stripSlackFormatting(input: string) {
     .replace(/<@([A-Z0-9]+)>/g, "@$1")
     .replace(/<#([CGD][A-Z0-9]+)\|([^>]+)>/g, "#$2")
     .trim();
-}
-
-function normalizeSlackChannelId(input: string | undefined) {
-  const trimmed = input?.trim();
-
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const match = trimmed.match(/^<#([CGD][A-Z0-9]+)(?:\|[^>]+)?>$/);
-  return match?.[1] ?? trimmed;
 }
 
 function getMonitorRunnerIntervalMs() {

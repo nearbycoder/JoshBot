@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { __testing } from "../lib/channel-digests.js";
+import { __testing, handleChannelDigestCommand } from "../lib/channel-digests.js";
 
 test("parses daily channel digest subscriptions with focus", () => {
   const parsed = __testing.parseChannelDigestCommand("daily at 09:30 focus launch blockers");
@@ -84,3 +84,29 @@ test("channel digest runner interval follows scheduler fallback", () => {
     }
   }
 });
+
+test("channel digest commands enforce channel access", async () => {
+  const originalDeniedChannels = process.env.NOBO_DENIED_CHANNEL_IDS;
+  process.env.NOBO_DENIED_CHANNEL_IDS = "C123";
+
+  try {
+    const reply = await handleChannelDigestCommand({
+      text: "daily at 09:30",
+      channelId: "C123",
+      ownerUserId: "U123"
+    });
+
+    assert.match(reply, /NoBo access denied/);
+  } finally {
+    restoreEnv("NOBO_DENIED_CHANNEL_IDS", originalDeniedChannels);
+  }
+});
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}

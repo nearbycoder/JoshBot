@@ -13,6 +13,10 @@ import {
 import { fetchSlackChannelHistory } from "./channel-history.js";
 import { formatCurrentTime } from "./nobo-time.js";
 import {
+  assertSlackTargetChannelAllowed,
+  resolveSlackTargetChannel
+} from "./slack-targets.js";
+import {
   cancelMonitorFromTool,
   createMonitorFromTool,
   listMonitorsFromTool,
@@ -421,6 +425,13 @@ function createSlackChannelHistoryTool(scheduleContext: SlackScheduleContext) {
             "I couldn't determine which channel to read. Ask again with a channel mention, like #ai."
         });
       }
+
+      await assertSlackTargetChannelAllowed({
+        userId: scheduleContext.ownerUserId,
+        channelId: targetChannel.id,
+        action: "read_slack_channel_history",
+        surface: "slack-tool"
+      });
 
       const parsedDays = parseOptionalPositiveInteger(args.days, 7);
       const parsedLimit = parseOptionalPositiveInteger(args.limit, 150);
@@ -846,32 +857,13 @@ function monitorInputSchema() {
 }
 
 function resolveMentionedChannel(scheduleContext: SlackScheduleContext, channelId: string | undefined) {
-  const normalizedChannelId = normalizeSlackChannelId(channelId);
+  const resolution = resolveSlackTargetChannel(scheduleContext, { targetChannelId: channelId });
 
-  if (normalizedChannelId) {
-    const mentionedChannel = scheduleContext.mentionedChannels.find(
-      (channel) => channel.id === normalizedChannelId
-    );
-    return {
-      id: normalizedChannelId,
-      name: mentionedChannel?.name
-    };
+  if (!resolution.ok) {
+    throw new Error(resolution.reason);
   }
 
-  if (scheduleContext.mentionedChannels.length === 1) {
-    return scheduleContext.mentionedChannels[0] ?? null;
-  }
-
-  return null;
-}
-
-function normalizeSlackChannelId(input: string | undefined) {
-  if (!input) {
-    return null;
-  }
-
-  const match = input.trim().match(/#?([CGD][A-Z0-9]+)/i);
-  return match?.[1]?.toUpperCase() ?? null;
+  return resolution.channel;
 }
 
 function parseOptionalPositiveInteger(input: number | string | undefined, fallback: number) {
