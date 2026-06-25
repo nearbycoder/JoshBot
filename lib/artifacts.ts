@@ -25,6 +25,10 @@ export type ListedArtifact = ArtifactMetadata & {
   expired: boolean;
 };
 
+export type RecentArtifact = ListedArtifact & {
+  updatedAt: string;
+};
+
 export type ArtifactLookupResult =
   | { status: "found"; artifact: ListedArtifact }
   | { status: "missing" }
@@ -134,6 +138,14 @@ export async function listArtifacts({
   );
 
   return typeof limit === "number" && limit > 0 ? sortedArtifacts.slice(0, limit) : sortedArtifacts;
+}
+
+export async function listRecentArtifacts(limit = 5): Promise<RecentArtifact[]> {
+  const artifacts = await listArtifacts({ limit });
+  return artifacts.map((artifact) => ({
+    ...artifact,
+    updatedAt: artifact.createdAt
+  }));
 }
 
 export async function findArtifact(idPrefix: string): Promise<ArtifactLookupResult> {

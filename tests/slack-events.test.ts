@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { __testing, type SlackEventCallbackPayload } from "../lib/slack-events.js";
+import {
+  __testing,
+  handleSlackEventCallbackPayload,
+  type SlackEventCallbackPayload
+} from "../lib/slack-events.js";
 
 test("normalizes Slack app mention file attachments", () => {
   const rawEvent = {
@@ -77,3 +81,74 @@ test("ignores Slack reactions on non-message items", () => {
 
   assert.equal(__testing.normalizeSlackReactionAddedEvent(rawEvent, "T123"), null);
 });
+
+test("normalizes Slack App Home opened events for the Home tab", () => {
+  const event = __testing.normalizeSlackAppHomeOpenedEvent({
+    type: "app_home_opened",
+    user: "U123",
+    tab: "home"
+  });
+
+  assert.deepEqual(event, {
+    type: "app_home_opened",
+    user: "U123",
+    tab: "home"
+  });
+  assert.equal(
+    __testing.normalizeSlackAppHomeOpenedEvent({
+      type: "app_home_opened",
+      user: "U123",
+      tab: "messages"
+    }),
+    null
+  );
+});
+
+test("handles Slack App Home opened by publishing a Home view", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalToken = process.env.SLACK_BOT_TOKEN;
+  const originalRedisUrl = process.env.REDIS_URL;
+  const originalArtifactDir = process.env.ARTIFACT_DIR;
+  const calls: Array<{ input: string | URL | Request; init?: RequestInit }> = [];
+
+  process.env.SLACK_BOT_TOKEN = "xoxb-test";
+  delete process.env.REDIS_URL;
+  process.env.ARTIFACT_DIR = "/tmp/nobo-missing-artifacts-for-test";
+  globalThis.fetch = (async (input, init) => {
+    calls.push({ input, init });
+    return new Response(JSON.stringify({ ok: true, view: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  try {
+    await handleSlackEventCallbackPayload({
+      type: "event_callback",
+      event: {
+        type: "app_home_opened",
+        user: "U123",
+        tab: "home"
+      }
+    });
+
+    assert.equal(String(calls[0]?.input), "https://slack.com/api/views.publish");
+    const body = JSON.parse(String(calls[0]?.init?.body));
+    assert.equal(body.user_id, "U123");
+    assert.equal(body.view.type, "home");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv("SLACK_BOT_TOKEN", originalToken);
+    restoreEnv("REDIS_URL", originalRedisUrl);
+    restoreEnv("ARTIFACT_DIR", originalArtifactDir);
+  }
+});
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}

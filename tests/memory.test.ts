@@ -49,6 +49,13 @@ test("channel memory settings default off", () => {
   assert.deepEqual(state.settings, { activeListening: false });
 });
 
+test("parses Redis scan replies for channel memory status", () => {
+  assert.deepEqual(__testing.parseScanReply(["7", ["slack-channel-memory:C1"]]), {
+    cursor: "7",
+    keys: ["slack-channel-memory:C1"]
+  });
+});
+
 test("channel memory matcher supports numbered removal", () => {
   const match = __testing.findChannelMemoryMatch(
     [

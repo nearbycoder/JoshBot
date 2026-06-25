@@ -5,7 +5,8 @@ import {
   respondToSlackActiveListeningMessage,
   respondToSlackDirectMessage,
   respondToSlackMention,
-  respondToSlackThreadReply
+  respondToSlackThreadReply,
+  publishSlackAppHome
 } from "./slack.js";
 import { getChannelMemorySettings } from "./memory.js";
 import {
@@ -33,6 +34,13 @@ export function parseSlackPayload(rawBody: string) {
 }
 
 export async function handleSlackEventCallbackPayload(payload: SlackEventCallbackPayload) {
+  const appHomeEvent = normalizeSlackAppHomeOpenedEvent(payload.event);
+
+  if (appHomeEvent) {
+    await publishSlackAppHome(appHomeEvent.user);
+    return;
+  }
+
   const reactionEvent = normalizeSlackReactionAddedEvent(payload.event, payload.team_id);
 
   if (reactionEvent) {
@@ -59,6 +67,25 @@ export async function handleSlackEventCallbackPayload(payload: SlackEventCallbac
       await respondToSlackThreadReply(event);
     }
   }
+}
+
+function normalizeSlackAppHomeOpenedEvent(event: SlackEventCallbackPayload["event"]) {
+  if (getStringField(event, "type") !== "app_home_opened") {
+    return null;
+  }
+
+  const user = getStringField(event, "user");
+  const tab = getStringField(event, "tab");
+
+  if (!user || (tab && tab !== "home")) {
+    return null;
+  }
+
+  return {
+    type: "app_home_opened" as const,
+    user,
+    tab
+  };
 }
 
 async function isChannelActiveListeningEnabled(channel: string) {
@@ -225,6 +252,7 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  normalizeSlackAppHomeOpenedEvent,
   normalizeSlackMessageEvent,
   normalizeSlackReactionAddedEvent
 };

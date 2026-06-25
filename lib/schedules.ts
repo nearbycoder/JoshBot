@@ -135,6 +135,12 @@ type CreatedScheduleToolResult = {
   nextRunAt: string | null;
 };
 
+export type ScheduleDashboardItem = {
+  id: string;
+  summary: string;
+  nextRunAt: string;
+};
+
 const SCHEDULE_DUE_KEY = "schedules:due";
 const SCHEDULE_JOB_PREFIX = "schedules:job:";
 const SCHEDULE_USER_PREFIX = "schedules:user:";
@@ -259,6 +265,34 @@ export async function createScheduleFromTool(
 
 export async function listSchedulesFromTool(context: SlackScheduleContext) {
   return getUserScheduleSummaries(context.ownerUserId);
+}
+
+export async function getUserScheduleDashboardItems(
+  userId: string,
+  limit = 5
+): Promise<ScheduleDashboardItem[]> {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return [];
+  }
+
+  const ids = await redis.sMembers(getScheduleUserKey(userId));
+  const schedules = (
+    await Promise.all(ids.map((id) => loadSchedule(id)))
+  ).filter((schedule): schedule is ScheduleRecord => schedule !== null);
+
+  return schedules
+    .sort(
+      (left, right) =>
+        new Date(left.nextRunAt).getTime() - new Date(right.nextRunAt).getTime()
+    )
+    .slice(0, normalizeDashboardLimit(limit, 5, 20))
+    .map((schedule) => ({
+      id: schedule.id,
+      summary: formatScheduleSummary(schedule),
+      nextRunAt: schedule.nextRunAt
+    }));
 }
 
 export async function cancelScheduleFromTool(context: SlackScheduleContext, idPrefix: string) {
@@ -990,6 +1024,14 @@ function getScheduleCreateIdempotencyTtlSeconds() {
   }
 
   return parsedValue;
+}
+
+function normalizeDashboardLimit(input: number, fallback: number, max: number) {
+  if (!Number.isInteger(input) || input < 1) {
+    return fallback;
+  }
+
+  return Math.min(input, max);
 }
 
 function normalizeSlackChannelId(input: string | undefined) {

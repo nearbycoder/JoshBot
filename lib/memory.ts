@@ -1,6 +1,7 @@
 import { getRedisClient } from "./redis.js";
 
 const DEFAULT_MEMORY_MAX_ITEMS = 20;
+const CHANNEL_MEMORY_PREFIX = "slack-channel-memory:";
 
 export type ChannelMemorySettings = {
   activeListening: boolean;
@@ -12,6 +13,12 @@ export type ChannelMemoryEntry = {
   ts?: string;
   threadTs?: string;
   userId?: string;
+};
+
+export type ChannelMemoryStatus = {
+  channelId: string;
+  activeListening: boolean;
+  memoryCount: number;
 };
 
 export type ChannelMemoryState = {
@@ -215,6 +222,63 @@ export async function getChannelMemorySettings(channelId: string) {
   return state.settings;
 }
 
+export async function listChannelMemoryStatuses(limit = 20): Promise<ChannelMemoryStatus[]> {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return [];
+  }
+
+  const statuses: ChannelMemoryStatus[] = [];
+  let cursor = "0";
+
+  do {
+    const reply = await redis.sendCommand([
+      "SCAN",
+      cursor,
+      "MATCH",
+      `${CHANNEL_MEMORY_PREFIX}*`,
+      "COUNT",
+      "100"
+    ]);
+    const scan = parseScanReply(reply);
+    cursor = scan.cursor;
+
+    const batch = await Promise.all(
+      scan.keys.map(async (key) => {
+        const payload = await redis.get(key);
+
+        if (!payload) {
+          return null;
+        }
+
+        const channelId = key.slice(CHANNEL_MEMORY_PREFIX.length);
+        if (!channelId) {
+          return null;
+        }
+
+        const state = parseChannelMemoryState(payload);
+        return {
+          channelId,
+          activeListening: state.settings.activeListening,
+          memoryCount: state.memories.length
+        };
+      })
+    );
+
+    statuses.push(...batch.filter((status): status is ChannelMemoryStatus => status !== null));
+  } while (cursor !== "0");
+
+  return statuses
+    .sort(
+      (left, right) =>
+        Number(right.activeListening) - Number(left.activeListening) ||
+        right.memoryCount - left.memoryCount ||
+        left.channelId.localeCompare(right.channelId)
+    )
+    .slice(0, normalizeLimit(limit, 20, 100));
+}
+
 export async function getChannelMemorySnapshot(channelId: string) {
   return getChannelMemoryState(channelId);
 }
@@ -372,7 +436,7 @@ function getMemoryKey(userId: string) {
 }
 
 function getChannelMemoryKey(channelId: string) {
-  return `slack-channel-memory:${channelId}`;
+  return `${CHANNEL_MEMORY_PREFIX}${channelId}`;
 }
 
 async function getChannelMemoryState(channelId: string): Promise<ChannelMemoryState> {
@@ -453,6 +517,30 @@ function commandReplyToString(input: unknown) {
   }
 
   return "";
+}
+
+function parseScanReply(input: unknown) {
+  if (!Array.isArray(input) || input.length < 2) {
+    return { cursor: "0", keys: [] as string[] };
+  }
+
+  const keysInput = input[1];
+  const keys = Array.isArray(keysInput)
+    ? keysInput.map(commandReplyToString).filter(Boolean)
+    : [];
+
+  return {
+    cursor: commandReplyToString(input[0]) || "0",
+    keys
+  };
+}
+
+function normalizeLimit(input: number, fallback: number, max: number) {
+  if (!Number.isInteger(input) || input < 1) {
+    return fallback;
+  }
+
+  return Math.min(input, max);
 }
 
 function createEmptyChannelMemoryState(): ChannelMemoryState {
@@ -633,5 +721,6 @@ export const __testing = {
   findChannelMemoryMatch,
   getChannelMemoryKey,
   parseChannelMemoryPayload,
-  parseChannelMemoryState
+  parseChannelMemoryState,
+  parseScanReply
 };

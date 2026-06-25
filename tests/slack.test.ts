@@ -89,6 +89,51 @@ test("active listening reply slots cap concurrent channel replies", () => {
   }
 });
 
+test("builds Slack App Home dashboard sections", () => {
+  const view = __testing.buildSlackAppHomeView({
+    userId: "U123",
+    memories: ["prefers concise updates"],
+    schedules: [
+      {
+        id: "abcdef123456",
+        summary: "one-time reminder for Jun 25, 2026, 12:00 PM: check logs",
+        nextRunAt: "2026-06-25T17:00:00.000Z"
+      }
+    ],
+    artifacts: [
+      {
+        id: "00000000-0000-4000-8000-000000000000",
+        kind: "markdown",
+        filename: "launch-plan.md",
+        title: "launch plan",
+        rawUrl: "https://example.test/artifacts/00000000-0000-4000-8000-000000000000/launch-plan.md",
+        previewUrl: "https://example.test/artifacts/00000000-0000-4000-8000-000000000000/preview",
+        path: "/tmp/launch-plan.md",
+        createdAt: "2026-06-25T15:00:00.000Z",
+        updatedAt: "2026-06-25T15:00:00.000Z",
+        bytes: 12,
+        shortId: "00000000",
+        expired: false
+      }
+    ],
+    channelStatuses: [
+      {
+        channelId: "C123",
+        activeListening: true,
+        memoryCount: 4
+      }
+    ],
+    updatedAt: new Date("2026-06-25T16:00:00.000Z")
+  });
+  const rendered = JSON.stringify(view);
+
+  assert.equal(view.type, "home");
+  assert.match(rendered, /Reminders/);
+  assert.match(rendered, /prefers concise updates/);
+  assert.match(rendered, /<#C123> \(4\)/);
+  assert.match(rendered, /launch plan/);
+});
+
 test("extracts text-like Slack uploads into message context", async (t) => {
   const originalFetch = globalThis.fetch;
   const downloadUrl = "https://files.slack.com/files-pri/T123-FCSV/download/report.csv";

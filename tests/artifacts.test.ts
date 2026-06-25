@@ -8,7 +8,8 @@ import {
   deleteArtifact,
   deleteExpiredArtifacts,
   handleArtifactFetchRequest,
-  listArtifacts
+  listArtifacts,
+  listRecentArtifacts
 } from "../lib/artifacts.js";
 
 test("creates artifact metadata, lists it, and serves raw content", async () => {
@@ -31,6 +32,10 @@ test("creates artifact metadata, lists it, and serves raw content", async () => 
     assert.equal(artifacts[0]?.shortId, artifact.id.slice(0, 8));
     assert.equal(artifacts[0]?.expired, false);
     assert.match(artifacts[0]?.previewUrl ?? "", /^https:\/\/nobo.test\/artifacts\//);
+
+    const recentArtifacts = await listRecentArtifacts(1);
+    assert.equal(recentArtifacts[0]?.id, artifact.id);
+    assert.equal(recentArtifacts[0]?.updatedAt, artifact.createdAt);
 
     const response = await handleArtifactFetchRequest(new Request(artifact.rawUrl));
     assert.equal(response?.status, 200);
