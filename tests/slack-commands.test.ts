@@ -40,6 +40,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
   assert.match(response.text, /`\/nobo-artifacts \[list\|update <id> <content>\|delete <id>\|cleanup\]`/);
   assert.match(response.text, /`\/nobo-decisions \[add <decision>\|list\]`/);
+  assert.match(response.text, /`\/nobo-issues \[github\|linear\|both\] \[create\] <follow-up bullets>`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
@@ -47,6 +48,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-channel-model`/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo follow-ups/);
+  assert.match(response.text, /@NoBo issues/);
   assert.match(response.text, /@NoBo web-search/);
 });
 
@@ -169,6 +171,29 @@ test("points unknown /nobo-help slash command text at help", async () => {
   assert.equal(response.response_type, "ephemeral");
   assert.match(response.text, /don't recognize/);
   assert.match(response.text, /`\/nobo-help`/);
+});
+
+test("returns help for /nobo-issues without pasted follow-ups", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-issues",
+    text: "github"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /NoBo issues/);
+  assert.match(result.response.text, /pasted text/);
+});
+
+test("drafts issues for /nobo-issues pasted follow-ups", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-issues",
+    text: "github - Fix onboarding bug"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /NoBo issue drafts/);
+  assert.match(result.response.text, /GitHub draft/);
+  assert.match(result.response.text, /Fix onboarding bug/);
 });
 
 test("returns channel memory status for /nobo-memory", async () => {

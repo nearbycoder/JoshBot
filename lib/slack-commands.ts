@@ -14,6 +14,12 @@ import {
 import { handleArtifactCommandText } from "./artifact-commands.js";
 import { handleChannelDigestCommand } from "./channel-digests.js";
 import { handleChannelMemorySlashCommandText } from "./channel-memory-controls.js";
+import {
+  formatIssueHelp,
+  handleIssueDrafts,
+  parseFollowUpsFromText,
+  parseIssueCommandIntent
+} from "./issue-drafts.js";
 import { formatNoboOpsStatus } from "./ops-status.js";
 import { summarizeOpsError } from "./ops-errors.js";
 import {
@@ -188,10 +194,14 @@ export async function handleSlackSlashCommandPayload(
     return handleDecisionsSlashCommand(payload);
   }
 
+  if (command === "/nobo-issues") {
+    return handleIssuesSlashCommand(payload);
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -217,6 +227,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
     "`/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your generated artifacts",
     "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
+    "`/nobo-issues [github|linear|both] [create] <follow-up bullets>`: draft or create issues",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
@@ -284,6 +295,25 @@ async function handleDecisionsSlashCommand(
   }
 
   return immediate(inChannel(formatDecisionAdded(result.decision)));
+}
+
+async function handleIssuesSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  const intent = parseIssueCommandIntent(payload.text);
+
+  if (intent.action === "help" || !intent.text) {
+    return immediate(ephemeral(formatIssueHelp()));
+  }
+
+  return immediate(
+    ephemeral(
+      await handleIssueDrafts(parseFollowUpsFromText(intent.text), {
+        targets: intent.targets,
+        create: intent.create
+      })
+    )
+  );
 }
 
 function parseDecisionsSlashCommandText(text: string) {
