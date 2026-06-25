@@ -433,6 +433,7 @@ test("returns Block Kit selector for /nobo-channel-model", async () => {
     assert.match(JSON.stringify(result.response.blocks), /static_select/);
     assert.match(JSON.stringify(result.response.blocks), /nobo_channel_model_select/);
     assert.match(JSON.stringify(result.response.blocks), /deepseek-v4-pro/);
+    assert.doesNotMatch(JSON.stringify(result.response.blocks), /qwen3\.7-max/);
   });
 });
 
@@ -539,7 +540,8 @@ async function withMockOpenCodeModels(run: () => Promise<void>) {
         object: "list",
         data: [
           { id: "glm-5.2", object: "model" },
-          { id: "deepseek-v4-pro", object: "model" }
+          { id: "deepseek-v4-pro", object: "model" },
+          { id: "qwen3.7-max", object: "model" }
         ]
       }),
       {

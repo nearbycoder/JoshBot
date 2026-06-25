@@ -12,6 +12,7 @@ export const FALLBACK_SLACK_VISION_MODEL = "kimi-k2.6";
 const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/models`;
 const MODEL_CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,74}$/;
+const OPENAI_COMPAT_UNSUPPORTED_MODEL_IDS = new Set(["qwen3.7-max"]);
 
 const MODEL_LABELS = new Map([
   ["minimax-m3", "MiniMax M3"],
@@ -36,9 +37,9 @@ const MODEL_LABELS = new Map([
   ["hy3-preview", "HY3 Preview"]
 ]);
 
-const FALLBACK_OPENCODE_GO_MODELS: OpenCodeGoModel[] = Array.from(MODEL_LABELS).map(
-  ([id, name]) => ({ id, name })
-);
+const FALLBACK_OPENCODE_GO_MODELS: OpenCodeGoModel[] = Array.from(MODEL_LABELS)
+  .filter(([id]) => isOpenCodeGoOaCompatibleModelId(id))
+  .map(([id, name]) => ({ id, name }));
 
 let modelCache:
   | {
@@ -89,12 +90,21 @@ export function normalizeOpenCodeGoModelId(input: string | undefined | null) {
   return MODEL_ID_PATTERN.test(withoutProvider) ? withoutProvider : null;
 }
 
+export function normalizeOpenCodeGoOaCompatibleModelId(input: string | undefined | null) {
+  const modelId = normalizeOpenCodeGoModelId(input);
+  return modelId && isOpenCodeGoOaCompatibleModelId(modelId) ? modelId : null;
+}
+
+export function isOpenCodeGoOaCompatibleModelId(modelId: string) {
+  return !OPENAI_COMPAT_UNSUPPORTED_MODEL_IDS.has(modelId);
+}
+
 export function getDefaultSlackTextModel() {
-  return normalizeOpenCodeGoModelId(process.env.OPENCODE_GO_MODEL) ?? DEFAULT_SLACK_TEXT_MODEL;
+  return normalizeOpenCodeGoOaCompatibleModelId(process.env.OPENCODE_GO_MODEL) ?? DEFAULT_SLACK_TEXT_MODEL;
 }
 
 export function getDefaultSlackVisionModel() {
-  return normalizeOpenCodeGoModelId(process.env.OPENCODE_GO_VISION_MODEL) ?? DEFAULT_SLACK_VISION_MODEL;
+  return normalizeOpenCodeGoOaCompatibleModelId(process.env.OPENCODE_GO_VISION_MODEL) ?? DEFAULT_SLACK_VISION_MODEL;
 }
 
 export function formatOpenCodeGoModelName(modelId: string) {
@@ -129,7 +139,9 @@ function normalizeModelList(input: unknown) {
   const models: OpenCodeGoModel[] = [];
 
   for (const item of data) {
-    const id = normalizeOpenCodeGoModelId(isRecord(item) ? getString(item.id) : null);
+    const id = normalizeOpenCodeGoOaCompatibleModelId(
+      isRecord(item) ? getString(item.id) : null
+    );
 
     if (!id || seen.has(id)) {
       continue;

@@ -32,6 +32,13 @@ test("channel preferences normalize model ids", () => {
   assert.deepEqual(preferences, {
     modelId: "deepseek-v4-pro"
   });
+
+  assert.deepEqual(
+    __testing.normalizeChannelPreferences({
+      modelId: "qwen3.7-max"
+    }),
+    { modelId: null }
+  );
 });
 
 test("preference prompt injects relevant user prefs", () => {

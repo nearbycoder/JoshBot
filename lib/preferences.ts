@@ -1,5 +1,5 @@
 import { getRedisClient } from "./redis.js";
-import { normalizeOpenCodeGoModelId } from "./nobo-models.js";
+import { normalizeOpenCodeGoOaCompatibleModelId } from "./nobo-models.js";
 
 export type UserVerbosity = "concise" | "normal" | "detailed";
 export type ReminderStyle = "direct" | "gentle" | "detailed";
@@ -190,7 +190,7 @@ export async function updateChannelPreferences(
 }
 
 export async function setChannelModelPreference(channelId: string, modelId: string) {
-  const normalizedModelId = normalizeOpenCodeGoModelId(modelId);
+  const normalizedModelId = normalizeOpenCodeGoOaCompatibleModelId(modelId);
 
   if (!normalizedModelId) {
     return {
@@ -416,7 +416,7 @@ function normalizeChannelPreferences(input: unknown): ChannelPreferences {
   return {
     modelId:
       typeof record.modelId === "string"
-        ? normalizeOpenCodeGoModelId(record.modelId)
+        ? normalizeOpenCodeGoOaCompatibleModelId(record.modelId)
         : DEFAULT_CHANNEL_PREFERENCES.modelId
   };
 }

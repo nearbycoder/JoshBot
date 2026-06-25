@@ -159,3 +159,29 @@ test("channel text model override does not affect image model", () => {
     }
   }
 });
+
+test("unsupported channel text model override falls back to default", () => {
+  const originalTextModel = process.env.OPENCODE_GO_MODEL;
+  delete process.env.OPENCODE_GO_MODEL;
+
+  try {
+    assert.equal(
+      __testing.selectSlackModel(
+        [
+          {
+            role: "user",
+            content: "Use the channel model"
+          }
+        ],
+        "qwen3.7-max"
+      ),
+      "glm-5.2"
+    );
+  } finally {
+    if (originalTextModel === undefined) {
+      delete process.env.OPENCODE_GO_MODEL;
+    } else {
+      process.env.OPENCODE_GO_MODEL = originalTextModel;
+    }
+  }
+});
