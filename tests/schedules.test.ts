@@ -122,3 +122,27 @@ test("invalid zero delay is rejected", () => {
 
   assert.throws(() => __testing.scheduleToolInputToParsedSchedule(input), /positive whole number/);
 });
+
+test("schedule summaries use stored user timezone", () => {
+  const summary = __testing.formatScheduleSummary({
+    id: "abc123",
+    ownerUserId: "U123",
+    channel: "C123",
+    task: "standup",
+    kind: "daily",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nextRunAt: "2026-01-01T14:00:00.000Z",
+    hour: 9,
+    minute: 0,
+    timezone: "America/New_York"
+  });
+
+  assert.match(summary, /America\/New_York/);
+  assert.match(summary, /daily at/);
+});
+
+test("reminder style formats delivered reminder text", () => {
+  assert.equal(__testing.formatReminderText("check logs", "direct"), "check logs");
+  assert.equal(__testing.formatReminderText("check logs", "gentle"), "Gentle reminder: check logs");
+  assert.match(__testing.formatReminderText("check logs", "detailed"), /Scheduled by NoBo/);
+});

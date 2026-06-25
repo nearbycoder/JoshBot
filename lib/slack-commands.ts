@@ -16,6 +16,7 @@ import { handleChannelDigestCommand } from "./channel-digests.js";
 import { handleChannelMemorySlashCommandText } from "./channel-memory-controls.js";
 import { formatNoboOpsStatus } from "./ops-status.js";
 import { summarizeOpsError } from "./ops-errors.js";
+import { handleUserPreferencesCommand } from "./preferences.js";
 import { formatSlackSkillHelp } from "./skills.js";
 
 const DAD_JOKES = [
@@ -106,6 +107,10 @@ export async function handleSlackSlashCommandPayload(
     return handleListenSlashCommand(payload);
   }
 
+  if (command === "/nobo-prefs") {
+    return handlePrefsSlashCommand(payload);
+  }
+
   if (command === "/nobo-status") {
     return handleStatusSlashCommand(options);
   }
@@ -128,7 +133,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -150,6 +155,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-help`: show this help",
     "`/nobo-status`: show ops health",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
+    "`/nobo-prefs [setting]`: show or update personal preferences",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
     "`/nobo-artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
     "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
@@ -161,6 +167,16 @@ export function formatNoboSlashCommandHelp() {
     "",
     formatSlackSkillHelp()
   ].join("\n");
+}
+
+async function handlePrefsSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  if (!payload.user_id) {
+    return immediate(ephemeral("Slack did not send a user for this command. Try again."));
+  }
+
+  return immediate(ephemeral(await handleUserPreferencesCommand(payload.user_id, payload.text)));
 }
 
 async function handleStatusSlashCommand(

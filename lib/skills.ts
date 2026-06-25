@@ -12,6 +12,7 @@ import {
 } from "./follow-ups.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
+import { handleUserPreferencesCommand } from "./preferences.js";
 import type { SlackScheduleContext } from "./schedules.js";
 
 type SlackSkillContext = {
@@ -41,6 +42,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
+  "`@NoBo prefs ...`: show or update personal preferences",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
 ];
 
@@ -69,6 +71,8 @@ export async function maybeHandleSlackSkillCommand({
     case "help":
     case "skills":
       return formatSlackSkillHelp();
+    case "prefs":
+      return handleUserPreferencesCommand(currentUserId, command.args);
     case "summarize-thread":
       await beforeModelReply?.();
       return createSlackSkillReply({
@@ -240,7 +244,12 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "follow-ups", args };
   }
 
+  if (name === "preferences" || name === "settings") {
+    return { name: "prefs", args };
+  }
+
   if (
+    name === "prefs" ||
     name === "summarize-thread" ||
     name === "thread-todos" ||
     name === "channel-digest" ||

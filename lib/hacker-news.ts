@@ -143,6 +143,15 @@ function normalizeHackerNewsItem(input: unknown): HackerNewsStory | null {
 }
 
 function storyMatchesFocus(story: HackerNewsStory, focus: string) {
+  const phrases = focus
+    .split(/[,;]+/)
+    .map((phrase) => phrase.trim())
+    .filter(Boolean);
+
+  if (phrases.length > 1) {
+    return phrases.some((phrase) => storyMatchesFocus(story, phrase));
+  }
+
   const terms = focus
     .trim()
     .toLowerCase()

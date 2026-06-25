@@ -4,6 +4,11 @@ import { type NoboModelMessage, modelMessagesToPrompt } from "./nobo-messages.js
 import { SYSTEM_PROMPT } from "./nobo-prompt.js";
 import { formatCurrentTime, formatCurrentTimePrompt } from "./nobo-time.js";
 import type { ChannelMemoryEntry } from "./memory.js";
+import {
+  formatUserPreferencesPrompt,
+  getUserPreferences,
+  type UserPreferences
+} from "./preferences.js";
 import type { SlackScheduleContext } from "./schedules.js";
 import {
   parseFollowUpExtraction,
@@ -137,6 +142,7 @@ export async function createWeeklyAiNewsSlackDigest({
     instructions: `Your job is to produce a fresh weekly AI news digest for Slack.
 - Use web search for current sources.
 - Focus on the last 7 days from the current date unless a source is important context.
+- If no explicit focus was supplied, use the user's saved news interests when present.
 - Prioritize major model releases, product launches, research breakthroughs, AI infrastructure, developer tools, policy/regulation, and notable industry moves.
 - Prefer primary sources and reputable reporting.
 - Keep it concise: start with a one-sentence headline, then 5-8 bullets with why each item matters.
@@ -171,6 +177,7 @@ export async function createWeeklyNewsSlackDigest({
 - Use web search for current sources.
 - Focus on the last 7 days from the current date unless a source is important context.
 - If the user supplied a focus, center the digest on that topic.
+- If no explicit focus was supplied, use the user's saved news interests when present.
 - Prioritize major, widely relevant developments across world news, U.S. news, business, technology, science, policy, culture, and health.
 - Prefer primary sources and reputable reporting.
 - Avoid sensationalism; summarize what happened and why it matters.
@@ -192,6 +199,7 @@ export async function shouldReplyToSlackThread({
   channelMemories?: ChannelMemoryEntry[];
   channelId?: string;
 }) {
+  const userPreferences = await getUserPreferences(currentUserId);
   const prompt = buildPrompt({
     messages: [
       ...messages,
@@ -203,6 +211,7 @@ export async function shouldReplyToSlackThread({
     ],
     memories: [],
     currentUserId,
+    userPreferences,
     channelMemories,
     channelId,
     extraSystem: `You decide whether NoBo should reply to the latest Slack thread message.
@@ -238,6 +247,7 @@ export async function chooseSlackActiveListeningResponse({
   channelId?: string;
   allowInline?: boolean;
 }): Promise<SlackActiveListeningResponseMode> {
+  const userPreferences = await getUserPreferences(currentUserId);
   const modes = allowInline ? "INLINE, THREAD, or SILENT" : "THREAD or SILENT";
   const prompt = buildPrompt({
     messages: [
@@ -249,6 +259,7 @@ export async function chooseSlackActiveListeningResponse({
     ],
     memories: [],
     currentUserId,
+    userPreferences,
     channelMemories,
     channelId,
     extraSystem: `You decide whether NoBo should proactively reply in a Slack channel where active listening is enabled.
@@ -325,10 +336,12 @@ async function generateSlackResponse({
   scheduleContext?: SlackScheduleContext;
   onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
+  const userPreferences = await getUserPreferences(currentUserId);
   const prompt = buildPrompt({
     messages,
     memories,
     currentUserId,
+    userPreferences,
     channelMemories,
     channelId,
     extraSystem
@@ -344,7 +357,14 @@ async function generateSlackResponse({
       images,
       modelId,
       toolMode,
-      scheduleContext: toolMode === "slack" ? scheduleContext : undefined,
+      scheduleContext:
+        toolMode === "slack" && scheduleContext
+          ? {
+              ...scheduleContext,
+              timeZone: userPreferences.timeZone,
+              reminderStyle: userPreferences.reminderStyle
+            }
+          : undefined,
       onTextDelta
     });
   } catch (error) {
@@ -371,6 +391,7 @@ function buildPrompt({
   messages,
   memories,
   currentUserId,
+  userPreferences,
   channelMemories = [],
   channelId,
   extraSystem
@@ -378,6 +399,7 @@ function buildPrompt({
   messages: NoboModelMessage[];
   memories: string[];
   currentUserId: string | undefined;
+  userPreferences: UserPreferences;
   channelMemories?: ChannelMemoryEntry[];
   channelId?: string;
   extraSystem?: string;
@@ -385,9 +407,10 @@ function buildPrompt({
   const promptMessages = modelMessagesToPrompt(messages);
 
   return `${formatMemoryPrompt(memories, currentUserId)}
+${formatUserPreferencesPrompt(userPreferences, currentUserId)}
 ${formatChannelMemoryPrompt(channelMemories, channelId)}
 
-${formatCurrentTimePrompt()}
+${formatCurrentTimePrompt(userPreferences.timeZone)}
 
 ${extraSystem ? `${extraSystem}\n\n` : ""}Extra Slack rules:
 - Reply in plain text only.

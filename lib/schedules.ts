@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { requireEnv } from "./env.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "./memory.js";
 import { recordOpsError } from "./ops-errors.js";
+import {
+  getUserPreferences,
+  normalizeTimeZone,
+  type ReminderStyle,
+  type UserPreferences
+} from "./preferences.js";
 import { getRedisClient } from "./redis.js";
 
 type SlackMessageEvent = {
@@ -29,6 +35,8 @@ export type SlackScheduleContext = {
   channel: string;
   threadTs: string;
   sourceTs: string;
+  timeZone?: string;
+  reminderStyle?: ReminderStyle;
   mentionedChannels: Array<{
     id: string;
     name?: string;
@@ -97,7 +105,8 @@ type ScheduleRecord = {
   weekday?: number;
   hour?: number;
   minute?: number;
-  timezone: "America/Chicago";
+  timezone: string;
+  reminderStyle?: ReminderStyle;
 };
 
 type ParsedSchedule =
@@ -149,6 +158,7 @@ const DEFAULT_SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS = 60 * 10;
 const MAX_DUE_JOBS_PER_TICK = 10;
 const MIN_INTERVAL_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_SCHEDULE_TIME_ZONE = "America/Chicago";
 
 const WEEKDAYS = new Map([
   ["sunday", 0],
@@ -235,7 +245,8 @@ export async function createScheduleFromTool(
   context: SlackScheduleContext,
   input: ScheduleToolInput
 ) {
-  const parsed = scheduleToolInputToParsedSchedule(input);
+  const preferences = await getUserPreferences(context.ownerUserId);
+  const parsed = scheduleToolInputToParsedSchedule(input, context.timeZone ?? preferences.timeZone);
   const destination = getScheduleDestination(context, input);
   const idempotencyResult = await getIdempotentCreatedSchedule(context);
 
@@ -251,7 +262,7 @@ export async function createScheduleFromTool(
     };
   }
 
-  const schedule = await createSchedule(context, parsed, destination);
+  const schedule = await createSchedule(context, parsed, destination, preferences);
   const result = {
     id: schedule.id,
     summary: formatScheduleSummary(schedule),
@@ -316,9 +327,10 @@ export async function updateScheduleFromTool(
 
   await deleteSchedule(existingSchedule.schedule.id, context.ownerUserId);
 
-  const parsed = scheduleToolInputToParsedSchedule(input);
+  const preferences = await getUserPreferences(context.ownerUserId);
+  const parsed = scheduleToolInputToParsedSchedule(input, context.timeZone ?? preferences.timeZone);
   const destination = getScheduleDestinationForUpdate(context, input, existingSchedule.schedule);
-  const schedule = await createSchedule(context, parsed, destination);
+  const schedule = await createSchedule(context, parsed, destination, preferences);
 
   return `Updated schedule \`${existingSchedule.schedule.id.slice(0, 8)}\` -> \`${schedule.id.slice(0, 8)}\`: ${formatScheduleSummary(schedule)}`;
 }
@@ -326,11 +338,13 @@ export async function updateScheduleFromTool(
 async function createSchedule(
   context: SlackScheduleContext,
   parsed: ParsedSchedule,
-  destination: ScheduleDestination
+  destination: ScheduleDestination,
+  preferences: UserPreferences
 ) {
   const redis = await requireRedis();
   const now = new Date();
   const id = randomUUID();
+  const timeZone = normalizeTimeZone(context.timeZone ?? preferences.timeZone);
   const base = {
     id,
     ownerUserId: context.ownerUserId,
@@ -342,7 +356,8 @@ async function createSchedule(
     kind: parsed.kind,
     createdAt: now.toISOString(),
     nextRunAt: parsed.firstRunAt.toISOString(),
-    timezone: "America/Chicago" as const
+    timezone: timeZone,
+    reminderStyle: context.reminderStyle ?? preferences.reminderStyle
   };
 
   const schedule: ScheduleRecord =
@@ -505,8 +520,12 @@ function inferResponseMode(task: string): "reminder" | "prompt" {
   return "reminder";
 }
 
-function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSchedule {
+function scheduleToolInputToParsedSchedule(
+  input: ScheduleToolInput,
+  timeZone = DEFAULT_SCHEDULE_TIME_ZONE
+): ParsedSchedule {
   const task = cleanTask(input.task);
+  const normalizedTimeZone = normalizeTimeZone(timeZone);
 
   if (!task) {
     throw new Error("Schedule task cannot be empty.");
@@ -548,7 +567,7 @@ function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSche
       task,
       hour,
       minute,
-      firstRunAt: nextDailyRun(hour, minute)
+      firstRunAt: nextDailyRun(hour, minute, normalizedTimeZone)
     };
   }
 
@@ -562,7 +581,7 @@ function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSche
     weekday: WEEKDAYS.get(input.weekday) ?? 0,
     hour,
     minute,
-    firstRunAt: nextWeeklyRun(WEEKDAYS.get(input.weekday) ?? 0, hour, minute)
+    firstRunAt: nextWeeklyRun(WEEKDAYS.get(input.weekday) ?? 0, hour, minute, normalizedTimeZone)
   };
 }
 
@@ -646,7 +665,7 @@ async function runDueSchedules({
                 task: schedule.task,
                 ownerUserId: schedule.ownerUserId
               })
-            : schedule.task;
+            : formatReminderText(schedule.task, schedule.reminderStyle);
 
         const messageText = `<@${schedule.ownerUserId}> ${dueText}`;
         const postedMessage = await postSlackMessage({
@@ -749,29 +768,34 @@ function parseFutureRunAt(input: string) {
   return runAt;
 }
 
-function nextDailyRun(hour: number, minute: number) {
+function nextDailyRun(hour: number, minute: number, timeZone = DEFAULT_SCHEDULE_TIME_ZONE) {
   const now = new Date();
-  const today = getChicagoDateParts(now);
-  let next = chicagoDateToUtc(today.year, today.month, today.day, hour, minute);
+  const today = getZonedDateParts(now, timeZone);
+  let next = zonedDateToUtc(timeZone, today.year, today.month, today.day, hour, minute);
 
   if (next.getTime() <= now.getTime()) {
-    const tomorrow = addChicagoDays(today, 1);
-    next = chicagoDateToUtc(tomorrow.year, tomorrow.month, tomorrow.day, hour, minute);
+    const tomorrow = addZonedDays(today, 1, timeZone);
+    next = zonedDateToUtc(timeZone, tomorrow.year, tomorrow.month, tomorrow.day, hour, minute);
   }
 
   return next;
 }
 
-function nextWeeklyRun(weekday: number, hour: number, minute: number) {
+function nextWeeklyRun(
+  weekday: number,
+  hour: number,
+  minute: number,
+  timeZone = DEFAULT_SCHEDULE_TIME_ZONE
+) {
   const now = new Date();
-  const today = getChicagoDateParts(now);
+  const today = getZonedDateParts(now, timeZone);
   const daysUntil = (weekday - today.weekday + 7) % 7;
-  const targetDay = addChicagoDays(today, daysUntil);
-  let next = chicagoDateToUtc(targetDay.year, targetDay.month, targetDay.day, hour, minute);
+  const targetDay = addZonedDays(today, daysUntil, timeZone);
+  let next = zonedDateToUtc(timeZone, targetDay.year, targetDay.month, targetDay.day, hour, minute);
 
   if (next.getTime() <= now.getTime()) {
-    const followingWeek = addChicagoDays(targetDay, 7);
-    next = chicagoDateToUtc(followingWeek.year, followingWeek.month, followingWeek.day, hour, minute);
+    const followingWeek = addZonedDays(targetDay, 7, timeZone);
+    next = zonedDateToUtc(timeZone, followingWeek.year, followingWeek.month, followingWeek.day, hour, minute);
   }
 
   return next;
@@ -787,18 +811,21 @@ function getNextRunAt(schedule: ScheduleRecord) {
   }
 
   if (schedule.kind === "daily") {
+    const timeZone = normalizeTimeZone(schedule.timezone);
     const nextBase = new Date(new Date(schedule.nextRunAt).getTime() + 60_000);
-    const nextDay = addChicagoDays(getChicagoDateParts(nextBase), 1);
-    return chicagoDateToUtc(nextDay.year, nextDay.month, nextDay.day, schedule.hour ?? 0, schedule.minute ?? 0);
+    const nextDay = addZonedDays(getZonedDateParts(nextBase, timeZone), 1, timeZone);
+    return zonedDateToUtc(timeZone, nextDay.year, nextDay.month, nextDay.day, schedule.hour ?? 0, schedule.minute ?? 0);
   }
 
+  const timeZone = normalizeTimeZone(schedule.timezone);
   const nextBase = new Date(new Date(schedule.nextRunAt).getTime() + 60_000);
-  const nextWeek = addChicagoDays(getChicagoDateParts(nextBase), 7);
-  return chicagoDateToUtc(nextWeek.year, nextWeek.month, nextWeek.day, schedule.hour ?? 0, schedule.minute ?? 0);
+  const nextWeek = addZonedDays(getZonedDateParts(nextBase, timeZone), 7, timeZone);
+  return zonedDateToUtc(timeZone, nextWeek.year, nextWeek.month, nextWeek.day, schedule.hour ?? 0, schedule.minute ?? 0);
 }
 
 function formatScheduleSummary(schedule: ScheduleRecord) {
-  const next = formatDateTime(new Date(schedule.nextRunAt));
+  const timeZone = normalizeTimeZone(schedule.timezone);
+  const next = formatDateTime(new Date(schedule.nextRunAt), timeZone);
   const destination = formatScheduleDestination(schedule);
 
   if (schedule.kind === "once") {
@@ -810,10 +837,10 @@ function formatScheduleSummary(schedule: ScheduleRecord) {
   }
 
   if (schedule.kind === "daily") {
-    return `daily at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0)} CT, next ${next}${destination}: ${schedule.task}`;
+    return `daily at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0, timeZone)} ${formatTimeZoneLabel(timeZone)}, next ${next}${destination}: ${schedule.task}`;
   }
 
-  return `every ${formatWeekday(schedule.weekday ?? 0)} at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0)} CT, next ${next}${destination}: ${schedule.task}`;
+  return `every ${formatWeekday(schedule.weekday ?? 0)} at ${formatTime(schedule.hour ?? 0, schedule.minute ?? 0, timeZone)} ${formatTimeZoneLabel(timeZone)}, next ${next}${destination}: ${schedule.task}`;
 }
 
 function formatScheduleDestination(schedule: ScheduleRecord) {
@@ -850,29 +877,45 @@ function formatDuration(intervalMs: number) {
   return `${intervalMs / minuteMs} minute${intervalMs === minuteMs ? "" : "s"}`;
 }
 
-function formatDateTime(date: Date) {
+function formatReminderText(task: string, reminderStyle: ReminderStyle = "direct") {
+  if (reminderStyle === "gentle") {
+    return `Gentle reminder: ${task}`;
+  }
+
+  if (reminderStyle === "detailed") {
+    return `Reminder: ${task}\nScheduled by NoBo.`;
+  }
+
+  return task;
+}
+
+function formatDateTime(date: Date, timeZone = DEFAULT_SCHEDULE_TIME_ZONE) {
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: "America/Chicago"
+    timeZone
   }).format(date);
 }
 
-function formatTime(hour: number, minute: number) {
+function formatTime(hour: number, minute: number, timeZone = DEFAULT_SCHEDULE_TIME_ZONE) {
   return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: "America/Chicago"
-  }).format(chicagoDateToUtc(2026, 1, 1, hour, minute));
+    timeZone
+  }).format(zonedDateToUtc(timeZone, 2026, 1, 1, hour, minute));
+}
+
+function formatTimeZoneLabel(timeZone: string) {
+  return timeZone === DEFAULT_SCHEDULE_TIME_ZONE ? "CT" : timeZone;
 }
 
 function formatWeekday(weekday: number) {
   return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][weekday] ?? "Sunday";
 }
 
-function getChicagoDateParts(date: Date) {
+function getZonedDateParts(date: Date, timeZone = DEFAULT_SCHEDULE_TIME_ZONE) {
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Chicago",
+    timeZone,
     year: "numeric",
     month: "numeric",
     day: "numeric",
@@ -896,11 +939,18 @@ function getChicagoDateParts(date: Date) {
   };
 }
 
-function chicagoDateToUtc(year: number, month: number, day: number, hour: number, minute: number) {
+function zonedDateToUtc(
+  timeZone: string,
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
   let utc = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0));
 
   for (let index = 0; index < 2; index += 1) {
-    const parts = getChicagoDateParts(utc);
+    const parts = getZonedDateParts(utc, timeZone);
     const renderedAsUtc = Date.UTC(
       parts.year,
       parts.month - 1,
@@ -917,12 +967,13 @@ function chicagoDateToUtc(year: number, month: number, day: number, hour: number
   return utc;
 }
 
-function addChicagoDays(
-  date: Pick<ReturnType<typeof getChicagoDateParts>, "year" | "month" | "day">,
-  days: number
+function addZonedDays(
+  date: Pick<ReturnType<typeof getZonedDateParts>, "year" | "month" | "day">,
+  days: number,
+  timeZone = DEFAULT_SCHEDULE_TIME_ZONE
 ) {
-  const noon = chicagoDateToUtc(date.year, date.month, date.day + days, 12, 0);
-  return getChicagoDateParts(noon);
+  const noon = zonedDateToUtc(timeZone, date.year, date.month, date.day + days, 12, 0);
+  return getZonedDateParts(noon, timeZone);
 }
 
 async function loadSchedule(id: string) {
@@ -1084,8 +1135,11 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  formatReminderText,
+  formatScheduleSummary,
   getScheduleDestination,
   getScheduleDestinationForUpdate,
   inferResponseMode,
+  nextDailyRun,
   scheduleToolInputToParsedSchedule
 };

@@ -27,6 +27,7 @@ import {
   type ChannelMemoryStatus
 } from "./memory.js";
 import { getRedisClient } from "./redis.js";
+import { maybeHandleUserPreferencesCommand } from "./preferences.js";
 import {
   getUserScheduleDashboardItems,
   maybeHandleScheduleCommand,
@@ -329,7 +330,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
   const channelMemories = await loadChannelMemories(event.channel);
   await recordUserChannelMemory(event, incomingMessage, threadTs);
-  const commandReply = await maybeHandleMemoryCommand(event);
+  const commandReply =
+    (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
   const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
   const scheduleReply = commandReply || decisionReply ? null : await maybeHandleScheduleCommand(event);
 
@@ -494,7 +496,8 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
 
   const token = requireEnv("SLACK_BOT_TOKEN");
   const incomingMessage = await createCachedUserMessage(token, event);
-  const commandReply = await maybeHandleMemoryCommand(event);
+  const commandReply =
+    (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
   const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
   const minimalThreadMessages = [incomingMessage];
 
@@ -796,7 +799,8 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   const threadMessages: CachedThreadMessage[] = [incomingMessage];
   const channelMemories = await loadChannelMemories(event.channel);
   await recordUserChannelMemory(event, incomingMessage, event.ts);
-  const commandReply = await maybeHandleMemoryCommand(event);
+  const commandReply =
+    (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
   const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
   const scheduleReply = commandReply || decisionReply ? null : await maybeHandleScheduleCommand(event);
 
@@ -1755,6 +1759,13 @@ async function safeGetSlackMessagePermalink({
     console.warn(`Unable to load Slack decision permalink: ${summarizeError(error)}`);
     return undefined;
   }
+}
+
+async function maybeHandlePreferenceCommand(event: SlackMessageEvent) {
+  return maybeHandleUserPreferencesCommand({
+    userId: event.user,
+    commandText: stripSlackFormatting(event.text)
+  });
 }
 
 async function createCachedUserMessage(token: string, event: SlackMessageEvent): Promise<CachedThreadMessage> {

@@ -26,6 +26,13 @@ test("current time prompt names relative date phrases", () => {
   assert.match(prompt, /over the past week/);
 });
 
+test("current time prompt can use user timezone", () => {
+  const prompt = __testing.formatCurrentTimePrompt("America/New_York");
+
+  assert.match(prompt, /America\/New_York/);
+  assert.doesNotMatch(prompt, /Timezone: America\/Chicago/);
+});
+
 test("Slack markdown normalization converts Markdown links and bold", () => {
   const normalized = __testing.normalizeSlackMrkdwn(
     "See [OpenAI](https://openai.com) and **bold** text"

@@ -91,7 +91,7 @@ test("fetches top trending Hacker News stories by topstories rank", async (t) =>
   });
 
   const stories = await fetchTrendingHackerNewsStories({
-    query: "rust",
+    query: "orbit, memory",
     limit: 2
   });
 

@@ -22,7 +22,7 @@ const jsonSchema = (schema: Record<string, unknown>) => schema as never;
 export function createNoboTools(scheduleContext?: SlackScheduleContext) {
   return [
     ...(process.env.EXA_API_KEY ? [createExaSearchTool()] : []),
-    createCurrentTimeTool(),
+    createCurrentTimeTool(scheduleContext?.timeZone),
     createArtifactTool(),
     createListArtifactsTool(),
     createDeleteArtifactTool(),
@@ -31,7 +31,7 @@ export function createNoboTools(scheduleContext?: SlackScheduleContext) {
   ];
 }
 
-function createCurrentTimeTool() {
+function createCurrentTimeTool(defaultTimeZone = "America/Chicago") {
   return defineTool({
     name: "get_current_time",
     description:
@@ -41,13 +41,13 @@ function createCurrentTimeTool() {
       properties: {
         timeZone: {
           type: "string",
-          description: "IANA timezone name. Defaults to America/Chicago."
+          description: "IANA timezone name. Defaults to the user's preferred timezone, or America/Chicago."
         }
       },
       additionalProperties: false
     }),
     execute: async (args: { timeZone?: string }) =>
-      JSON.stringify(formatCurrentTime(args.timeZone || "America/Chicago"))
+      JSON.stringify(formatCurrentTime(args.timeZone || defaultTimeZone))
   });
 }
 
@@ -506,10 +506,10 @@ function scheduleInputSchema() {
       {
         type: "object",
         properties: {
-          kind: { const: "daily", description: "A recurring daily reminder in America/Chicago time." },
+          kind: { const: "daily", description: "A recurring daily reminder in the user's preferred timezone." },
           ...baseProperties,
-          hour: { ...wholeNumber, description: "24-hour clock hour in America/Chicago time, 0-23." },
-          minute: { ...wholeNumber, description: "Minute in America/Chicago time, 0-59." }
+          hour: { ...wholeNumber, description: "24-hour clock hour in the user's preferred timezone, 0-23." },
+          minute: { ...wholeNumber, description: "Minute in the user's preferred timezone, 0-59." }
         },
         required: ["kind", "task", "hour", "minute"],
         additionalProperties: false
@@ -517,13 +517,13 @@ function scheduleInputSchema() {
       {
         type: "object",
         properties: {
-          kind: { const: "weekly", description: "A recurring weekly reminder in America/Chicago time." },
+          kind: { const: "weekly", description: "A recurring weekly reminder in the user's preferred timezone." },
           ...baseProperties,
           weekday: {
             enum: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
           },
-          hour: { ...wholeNumber, description: "24-hour clock hour in America/Chicago time, 0-23." },
-          minute: { ...wholeNumber, description: "Minute in America/Chicago time, 0-59." }
+          hour: { ...wholeNumber, description: "24-hour clock hour in the user's preferred timezone, 0-23." },
+          minute: { ...wholeNumber, description: "Minute in the user's preferred timezone, 0-59." }
         },
         required: ["kind", "task", "weekday", "hour", "minute"],
         additionalProperties: false

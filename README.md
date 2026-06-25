@@ -84,7 +84,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -151,7 +151,7 @@ If `EXA_API_KEY` is set, NoBo can call Exa web search during Flue agent runs for
 
 ## Time awareness
 
-NoBo injects the current UTC and America/Chicago time into every model call and exposes a `get_current_time` Flue tool for exact time questions. Relative schedule phrases like "in 5 minutes" and "next Monday" should be interpreted from America/Chicago unless the user specifies another timezone.
+NoBo injects the current UTC time and the current user's saved timezone into every model call, falling back to America/Chicago. It also exposes a `get_current_time` Flue tool for exact time questions. Relative schedule phrases like "in 5 minutes" and "next Monday" use the user's saved timezone unless the user specifies another timezone.
 
 ## Artifacts
 
@@ -221,6 +221,29 @@ NoBo can persist simple per-user memory in Redis across threads. Supported comma
 
 Saved memories are injected into future replies for that Slack user when relevant.
 
+## Preferences
+
+NoBo can persist per-user preferences in Redis:
+
+- Timezone
+- Verbosity: `concise`, `normal`, or `detailed`
+- News interests
+- Reminder style: `direct`, `gentle`, or `detailed`
+
+Supported commands:
+
+- `/nobo-prefs`
+- `/nobo-prefs timezone America/New_York`
+- `/nobo-prefs verbosity concise`
+- `/nobo-prefs news ai, startups, security`
+- `/nobo-prefs news add robotics`
+- `/nobo-prefs news remove security`
+- `/nobo-prefs reminder-style gentle`
+- `/nobo-prefs clear`
+- `@NoBo prefs ...`
+
+Preferences are injected into model prompts. Timezone is used for current-time context and daily/weekly schedules. News interests focus broad news digests. Reminder style changes delivered reminder wording.
+
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
 Channel settings live in that same value. `/nobo-listen` toggles active listening for the current channel; `/nobo-listen on`, `/nobo-listen off`, and `/nobo-listen status` are also supported. When active listening is on, NoBo sees normal channel messages, records them into shared channel memory, and can choose to stay silent, reply in-thread, or reply inline. Shared channel memory appends and settings updates are atomic in Redis, and active-listening replies are capped by `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`.
@@ -267,7 +290,7 @@ Supported examples:
 - `@NoBo cancel reminder abc12345`
 - `@NoBo update schedule abc12345 to every weekday at 9am remind me to triage alerts`
 
-Recurring daily and weekly schedules are interpreted in America/Chicago time. Reminder-style schedules post the saved reminder text. Prompt-style schedules, such as "post what is trending", run NoBo at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal NoBo replies.
+Recurring daily and weekly schedules are interpreted in the user's saved timezone, falling back to America/Chicago. Reminder-style schedules post with the user's reminder style. Prompt-style schedules, such as "post what is trending", run NoBo at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal NoBo replies.
 
 ## Follow-ups
 
@@ -301,6 +324,7 @@ Current skills:
 - `/nobo-help`
 - `/nobo-status`
 - `/nobo-listen [on|off|status]`
+- `/nobo-prefs [setting]`
 - `/nobo-memory [show|forget <number|text>|clear confirm]`
 - `/nobo-artifacts [list|delete <id>|cleanup]`
 - `/nobo-decisions [add <decision>|list]`
@@ -320,6 +344,7 @@ Current skills:
 - `@NoBo forget channel memory <number|text>`
 - `@NoBo clear channel memory confirm`
 - `@NoBo artifacts [list|delete <id>|cleanup]`
+- `@NoBo prefs ...`
 
 Memory commands also remain available:
 

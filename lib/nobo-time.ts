@@ -1,9 +1,9 @@
-export function formatCurrentTimePrompt() {
-  const currentTime = formatCurrentTime("America/Chicago");
+export function formatCurrentTimePrompt(timeZone = "America/Chicago") {
+  const currentTime = formatCurrentTime(timeZone);
 
   return `Current time:
 - UTC: ${currentTime.utc}
-- America/Chicago: ${currentTime.local}
+- ${currentTime.timeZone}: ${currentTime.local}
 - Timezone: ${currentTime.timeZone}
 
 Use this for relative phrases like now, today, tomorrow, yesterday, in 5 minutes, next Monday, and over the past week.`;

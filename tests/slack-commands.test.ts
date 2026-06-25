@@ -33,6 +33,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-help`/);
   assert.match(response.text, /`\/nobo-status`/);
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
+  assert.match(response.text, /`\/nobo-prefs \[setting\]`/);
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
   assert.match(response.text, /`\/nobo-artifacts \[list\|delete <id>\|cleanup\]`/);
   assert.match(response.text, /`\/nobo-decisions \[add <decision>\|list\]`/);
@@ -61,6 +62,29 @@ test("returns ephemeral ops status for /nobo-status", async () => {
   assert.match(result.response.text, /NoBo status/);
   assert.match(result.response.text, /Redis: ok/);
   assert.equal(result.task, undefined);
+});
+
+test("returns personal preferences for /nobo-prefs", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-prefs",
+    text: "",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /Your NoBo preferences/);
+  assert.match(result.response.text, /Timezone: `America\/Chicago`/);
+});
+
+test("reports Redis requirement for /nobo-prefs update without Redis", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-prefs",
+    text: "timezone America/New_York",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /Redis is not configured/);
 });
 
 test("lists artifacts for /nobo-artifacts", async () => {

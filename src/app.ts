@@ -19,6 +19,7 @@ import {
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "../lib/slack-events.js";
 import { postGeneratedSlackMessage, postSlackMessage, verifySlackRequest } from "../lib/slack.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "../lib/memory.js";
+import { getPreferredNewsFocus, getUserPreferences } from "../lib/preferences.js";
 import { startScheduleRunner } from "../lib/schedules.js";
 import { flueApp } from "./internal-flue.js";
 import { registerNoboProvider } from "./nobo-provider.js";
@@ -111,6 +112,9 @@ startChannelDigestSubscriptionRunner({
 startHackerNewsSchedule();
 
 async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText: string) {
+  const preferences = await getUserPreferences(task.userId);
+  const focus = task.focus || getPreferredNewsFocus(preferences);
+
   await recordAppChannelMemory(task.channelId, {
     role: "user",
     content: commandText,
@@ -123,7 +127,7 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText
         channel: task.channelId,
         createReply: (onTextDelta) =>
           createWeeklyAiNewsSlackDigest({
-            focus: task.focus,
+            focus,
             currentUserId: task.userId,
             onTextDelta
           })
@@ -134,7 +138,7 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText
         channel: task.channelId,
         createReply: (onTextDelta) =>
           createWeeklyNewsSlackDigest({
-            focus: task.focus,
+            focus,
             currentUserId: task.userId,
             onTextDelta
           })
@@ -145,7 +149,7 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText
         channel: task.channelId,
         createReply: () =>
           createHackerNewsSlackDigest({
-            focus: task.focus
+            focus
           })
       });
       return;
