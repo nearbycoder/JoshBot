@@ -5,9 +5,12 @@ import path from "node:path";
 import test from "node:test";
 import { createArtifact } from "../lib/artifacts.js";
 import {
+  handleSlackInteractionPayload,
   handleSlackSlashCommandPayload,
+  parseSlackInteractionPayload,
   parseSlackSlashCommandPayload
 } from "../lib/slack-commands.js";
+import { __testing as modelTesting } from "../lib/nobo-models.js";
 
 test("parses Slack slash command payloads", () => {
   const payload = parseSlackSlashCommandPayload(
@@ -41,6 +44,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-channel-digest daily\|weekly/);
+  assert.match(response.text, /`\/nobo-channel-model`/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo follow-ups/);
   assert.match(response.text, /@NoBo web-search/);
@@ -389,6 +393,59 @@ test("reports Redis requirement for /nobo-channel-digest subscription without Re
   }
 });
 
+test("returns Block Kit selector for /nobo-channel-model", async () => {
+  await withMockOpenCodeModels(async () => {
+    const result = await handleSlackSlashCommandPayload({
+      command: "/nobo-channel-model",
+      text: "",
+      channel_id: "C123",
+      user_id: "U123"
+    });
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /Current: `glm-5.2`/);
+    assert.ok(result.response.blocks);
+    assert.match(JSON.stringify(result.response.blocks), /static_select/);
+    assert.match(JSON.stringify(result.response.blocks), /nobo_channel_model_select/);
+    assert.match(JSON.stringify(result.response.blocks), /deepseek-v4-pro/);
+  });
+});
+
+test("parses Slack interaction payloads", () => {
+  const payload = parseSlackInteractionPayload(
+    `payload=${encodeURIComponent(JSON.stringify({
+      type: "block_actions",
+      channel: { id: "C123" },
+      actions: [
+        {
+          action_id: "nobo_channel_model_select",
+          selected_option: { value: "glm-5.1" }
+        }
+      ]
+    }))}`
+  );
+
+  assert.equal(payload.type, "block_actions");
+  assert.equal(payload.channel?.id, "C123");
+  assert.equal(payload.actions?.[0]?.selected_option?.value, "glm-5.1");
+});
+
+test("reports Redis requirement when channel model interaction saves without Redis", async () => {
+  const result = await handleSlackInteractionPayload({
+    type: "block_actions",
+    channel: { id: "C123" },
+    actions: [
+      {
+        action_id: "nobo_channel_model_select",
+        selected_option: { value: "glm-5.1" }
+      }
+    ]
+  });
+
+  assert.equal(result.response_type, "ephemeral");
+  assert.match(result.text, /Redis is not configured/);
+});
+
 async function withTempArtifactDir(run: () => Promise<void>) {
   const previousDir = process.env.ARTIFACT_DIR;
   const previousBaseUrl = process.env.ARTIFACT_BASE_URL;
@@ -416,4 +473,32 @@ function restoreEnv(key: string, value: string | undefined) {
   }
 
   process.env[key] = value;
+}
+
+async function withMockOpenCodeModels(run: () => Promise<void>) {
+  const originalFetch = globalThis.fetch;
+  modelTesting.clearModelCache();
+
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        object: "list",
+        data: [
+          { id: "glm-5.2", object: "model" },
+          { id: "deepseek-v4-pro", object: "model" }
+        ]
+      }),
+      {
+        headers: {
+          "content-type": "application/json"
+        }
+      }
+    );
+
+  try {
+    await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+    modelTesting.clearModelCache();
+  }
 }

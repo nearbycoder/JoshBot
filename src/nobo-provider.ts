@@ -1,7 +1,5 @@
 import { registerProvider } from "@flue/runtime";
-
-const OPENCODE_GO_PROVIDER = "opencode-go";
-const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+import { OPENCODE_GO_BASE_URL, OPENCODE_GO_PROVIDER } from "../lib/nobo-models.js";
 
 export function registerNoboProvider() {
   registerProvider(OPENCODE_GO_PROVIDER, {

@@ -11,7 +11,9 @@ import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
 import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import { recordOpsError } from "../lib/ops-errors.js";
 import {
+  handleSlackInteractionPayload,
   handleSlackSlashCommandPayload,
+  parseSlackInteractionPayload,
   parseSlackSlashCommandPayload,
   type SlackSlashCommandPayload,
   type SlackSlashCommandTask
@@ -100,6 +102,22 @@ app.post("/api/slack/commands", async (c) => {
   }
 });
 
+app.post("/api/slack/interactions", async (c) => {
+  const rawBody = await c.req.text();
+
+  if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
+    return c.text("Invalid Slack signature", 401);
+  }
+
+  try {
+    const payload = parseSlackInteractionPayload(rawBody);
+    const response = await handleSlackInteractionPayload(payload);
+    return c.json(response);
+  } catch (error) {
+    return c.text(summarizeError(error), 400);
+  }
+});
+
 app.route("/", flueApp);
 
 startScheduleRunner({
@@ -129,6 +147,7 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText
           createWeeklyAiNewsSlackDigest({
             focus,
             currentUserId: task.userId,
+            channelId: task.channelId,
             onTextDelta
           })
       });
@@ -140,6 +159,7 @@ async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText
           createWeeklyNewsSlackDigest({
             focus,
             currentUserId: task.userId,
+            channelId: task.channelId,
             onTextDelta
           })
       });

@@ -117,3 +117,45 @@ test("image-bearing Slack messages respect configured vision model", () => {
     }
   }
 });
+
+test("channel text model override does not affect image model", () => {
+  const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  delete process.env.OPENCODE_GO_VISION_MODEL;
+
+  try {
+    assert.equal(
+      __testing.selectSlackModel(
+        [
+          {
+            role: "user",
+            content: "Use the channel model"
+          }
+        ],
+        "deepseek-v4-pro"
+      ),
+      "deepseek-v4-pro"
+    );
+
+    assert.equal(
+      __testing.selectSlackModel(
+        [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "What is this?" },
+              { type: "image", image: Buffer.from("image"), mediaType: "image/jpeg" }
+            ]
+          }
+        ],
+        "deepseek-v4-pro"
+      ),
+      "kimi-k2.6"
+    );
+  } finally {
+    if (originalVisionModel === undefined) {
+      delete process.env.OPENCODE_GO_VISION_MODEL;
+    } else {
+      process.env.OPENCODE_GO_VISION_MODEL = originalVisionModel;
+    }
+  }
+});

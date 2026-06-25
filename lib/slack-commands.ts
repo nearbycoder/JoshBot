@@ -16,8 +16,20 @@ import { handleChannelDigestCommand } from "./channel-digests.js";
 import { handleChannelMemorySlashCommandText } from "./channel-memory-controls.js";
 import { formatNoboOpsStatus } from "./ops-status.js";
 import { summarizeOpsError } from "./ops-errors.js";
-import { handleUserPreferencesCommand } from "./preferences.js";
+import {
+  clearChannelModelPreference,
+  getChannelPreferences,
+  handleUserPreferencesCommand,
+  setChannelModelPreference
+} from "./preferences.js";
 import { formatSlackSkillHelp } from "./skills.js";
+import {
+  formatOpenCodeGoModelName,
+  getDefaultSlackTextModel,
+  getDefaultSlackVisionModel,
+  listOpenCodeGoModels,
+  normalizeOpenCodeGoModelId
+} from "./nobo-models.js";
 
 const DAD_JOKES = [
   "I only know 25 letters of the alphabet. I don't know y.",
@@ -29,6 +41,11 @@ const DAD_JOKES = [
   "I would avoid the sushi if I were you. It's a little fishy.",
   "What do you call fake spaghetti? An impasta."
 ];
+
+type SlackBlock = Record<string, unknown>;
+
+const CHANNEL_MODEL_ACTION_ID = "nobo_channel_model_select";
+const SLACK_SELECT_MAX_OPTIONS = 100;
 
 export type SlackSlashCommandPayload = {
   command: string;
@@ -44,6 +61,26 @@ export type SlackSlashCommandResponse = {
   response_type: "ephemeral" | "in_channel";
   text: string;
   mrkdwn: boolean;
+  blocks?: SlackBlock[];
+  replace_original?: boolean;
+};
+
+export type SlackInteractionPayload = {
+  type?: string;
+  user?: {
+    id?: string;
+  };
+  channel?: {
+    id?: string;
+  };
+  actions?: SlackInteractionAction[];
+};
+
+type SlackInteractionAction = {
+  action_id?: string;
+  selected_option?: {
+    value?: string;
+  };
 };
 
 export type SlackSlashCommandTask = {
@@ -76,6 +113,17 @@ export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashComman
   };
 }
 
+export function parseSlackInteractionPayload(rawBody: string): SlackInteractionPayload {
+  const params = new URLSearchParams(rawBody);
+  const payload = params.get("payload");
+
+  if (!payload) {
+    throw new Error("Missing required Slack interaction field: payload");
+  }
+
+  return JSON.parse(payload) as SlackInteractionPayload;
+}
+
 export async function handleSlackSlashCommandPayload(
   payload: SlackSlashCommandPayload,
   options: SlackSlashCommandOptions = {}
@@ -101,6 +149,10 @@ export async function handleSlackSlashCommandPayload(
 
   if (command === "/nobo-channel-digest") {
     return handleNoboChannelDigestSlashCommand(payload);
+  }
+
+  if (command === "/nobo-channel-model") {
+    return handleNoboChannelModelSlashCommand(payload);
   }
 
   if (command === "/nobo-listen") {
@@ -133,7 +185,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -163,6 +215,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
     "`/nobo-channel-digest daily|weekly ...`: subscribe this channel to digests",
+    "`/nobo-channel-model`: choose this channel's text model",
     "`/nobo-dad-joke`: post a dad joke",
     "",
     formatSlackSkillHelp()
@@ -314,6 +367,195 @@ async function handleNoboChannelDigestSlashCommand(
       })
     )
   );
+}
+
+export async function handleSlackInteractionPayload(
+  payload: SlackInteractionPayload
+): Promise<SlackSlashCommandResponse> {
+  if (payload.type !== "block_actions") {
+    return ephemeral("Unsupported Slack interaction.");
+  }
+
+  const action = payload.actions?.find(
+    (candidate) => candidate.action_id === CHANNEL_MODEL_ACTION_ID
+  );
+
+  if (!action) {
+    return ephemeral("Unsupported Slack action.");
+  }
+
+  const channelId = payload.channel?.id;
+  if (!channelId) {
+    return ephemeral("Slack did not send a channel for this selection.");
+  }
+
+  const modelId = normalizeOpenCodeGoModelId(action.selected_option?.value);
+  if (!modelId) {
+    return ephemeral("Slack did not send a valid model selection.");
+  }
+
+  const result = await setChannelModelPreference(channelId, modelId);
+  if (!result.ok) {
+    return ephemeral(`Couldn't update channel model: ${result.reason}`);
+  }
+
+  return {
+    ...ephemeral(formatChannelModelUpdated(modelId)),
+    replace_original: false
+  };
+}
+
+async function handleNoboChannelModelSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  if (!payload.channel_id) {
+    return immediate(ephemeral("Slack did not send a channel for this command. Try again in a channel."));
+  }
+
+  const text = payload.text.trim();
+
+  if (/^help$/i.test(text)) {
+    return immediate(ephemeral(formatChannelModelHelp()));
+  }
+
+  if (/^(status|show|list)$/i.test(text)) {
+    return immediate(ephemeral(await formatChannelModelStatus(payload.channel_id)));
+  }
+
+  if (/^(clear|reset|default)$/i.test(text)) {
+    const result = await clearChannelModelPreference(payload.channel_id);
+    return immediate(
+      ephemeral(
+        result.ok
+          ? `Reset this channel to the default text model: \`${getDefaultSlackTextModel()}\`.`
+          : `Couldn't reset channel model: ${result.reason}`
+      )
+    );
+  }
+
+  if (text) {
+    const modelId = await resolveOpenCodeGoModelId(text);
+
+    if (!modelId) {
+      return immediate(ephemeral(`I don't recognize \`${text}\` as an OpenCode Go model.`));
+    }
+
+    const result = await setChannelModelPreference(payload.channel_id, modelId);
+    return immediate(
+      ephemeral(
+        result.ok
+          ? formatChannelModelUpdated(modelId)
+          : `Couldn't update channel model: ${result.reason}`
+      )
+    );
+  }
+
+  return immediate(await buildChannelModelSelectorResponse(payload.channel_id));
+}
+
+async function buildChannelModelSelectorResponse(channelId: string): Promise<SlackSlashCommandResponse> {
+  const [models, channelPreferences] = await Promise.all([
+    listOpenCodeGoModels(),
+    getChannelPreferences(channelId)
+  ]);
+  const selectedModelId = channelPreferences.modelId ?? getDefaultSlackTextModel();
+  const options = models.slice(0, SLACK_SELECT_MAX_OPTIONS).map(createModelSelectOption);
+  const selectedOption =
+    options.find((option) => option.value === selectedModelId) ??
+    createModelSelectOption({
+      id: selectedModelId,
+      name: formatOpenCodeGoModelName(selectedModelId)
+    });
+
+  if (!options.some((option) => option.value === selectedOption.value)) {
+    if (options.length >= SLACK_SELECT_MAX_OPTIONS) {
+      options.pop();
+    }
+    options.unshift(selectedOption);
+  }
+
+  return {
+    ...ephemeral(`Choose this channel's NoBo text model. Current: \`${selectedModelId}\`.`),
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Channel model*\nCurrent text model: \`${selectedModelId}\`\nImage messages still use \`${getDefaultSlackVisionModel()}\`.`
+        }
+      },
+      {
+        type: "actions",
+        elements: [
+          {
+            type: "static_select",
+            action_id: CHANNEL_MODEL_ACTION_ID,
+            placeholder: {
+              type: "plain_text",
+              text: "Select model"
+            },
+            initial_option: selectedOption,
+            options
+          }
+        ]
+      }
+    ]
+  };
+}
+
+async function formatChannelModelStatus(channelId: string) {
+  const preferences = await getChannelPreferences(channelId);
+  const modelId = preferences.modelId ?? getDefaultSlackTextModel();
+  const source = preferences.modelId ? "channel override" : "default";
+
+  return [
+    "*NoBo channel model*",
+    `Text model: \`${modelId}\` (${source})`,
+    `Image model: \`${getDefaultSlackVisionModel()}\``
+  ].join("\n");
+}
+
+function formatChannelModelHelp() {
+  return [
+    "*NoBo channel model*",
+    "`/nobo-channel-model`: pick with a selector",
+    "`/nobo-channel-model status`: show current model",
+    "`/nobo-channel-model <model-id>`: set directly",
+    "`/nobo-channel-model reset`: use the default text model"
+  ].join("\n");
+}
+
+function formatChannelModelUpdated(modelId: string) {
+  return `Updated this channel's text model to \`${modelId}\`. Image messages still use \`${getDefaultSlackVisionModel()}\`.`;
+}
+
+async function resolveOpenCodeGoModelId(input: string) {
+  const requested = normalizeOpenCodeGoModelId(input);
+
+  if (!requested) {
+    return null;
+  }
+
+  const models = await listOpenCodeGoModels();
+  return models.some((model) => model.id === requested) ? requested : null;
+}
+
+function createModelSelectOption(model: { id: string; name: string }) {
+  return {
+    text: {
+      type: "plain_text",
+      text: truncateSlackPlainText(model.name, 75)
+    },
+    value: model.id,
+    description: {
+      type: "plain_text",
+      text: truncateSlackPlainText(model.id, 75)
+    }
+  };
+}
+
+function truncateSlackPlainText(input: string, maxLength: number) {
+  return input.length <= maxLength ? input : input.slice(0, Math.max(0, maxLength - 3)) + "...";
 }
 
 function handleNoboAiNewsSlashCommand(

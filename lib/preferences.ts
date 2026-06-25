@@ -1,4 +1,5 @@
 import { getRedisClient } from "./redis.js";
+import { normalizeOpenCodeGoModelId } from "./nobo-models.js";
 
 export type UserVerbosity = "concise" | "normal" | "detailed";
 export type ReminderStyle = "direct" | "gentle" | "detailed";
@@ -10,7 +11,12 @@ export type UserPreferences = {
   reminderStyle: ReminderStyle;
 };
 
+export type ChannelPreferences = {
+  modelId: string | null;
+};
+
 const USER_PREFERENCES_PREFIX = "slack-preferences:user:";
+const CHANNEL_PREFERENCES_PREFIX = "slack-preferences:channel:";
 const DEFAULT_TIME_ZONE = "America/Chicago";
 const DEFAULT_VERBOSITY: UserVerbosity = "normal";
 const DEFAULT_REMINDER_STYLE: ReminderStyle = "direct";
@@ -40,6 +46,10 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   reminderStyle: DEFAULT_REMINDER_STYLE
 };
 
+export const DEFAULT_CHANNEL_PREFERENCES: ChannelPreferences = {
+  modelId: null
+};
+
 export async function getUserPreferences(userId: string | undefined) {
   if (!userId) {
     return { ...DEFAULT_USER_PREFERENCES };
@@ -53,6 +63,21 @@ export async function getUserPreferences(userId: string | undefined) {
 
   const payload = await redis.get(getUserPreferencesKey(userId));
   return normalizeUserPreferencesPayload(payload);
+}
+
+export async function getChannelPreferences(channelId: string | undefined) {
+  if (!channelId) {
+    return { ...DEFAULT_CHANNEL_PREFERENCES };
+  }
+
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return { ...DEFAULT_CHANNEL_PREFERENCES };
+  }
+
+  const payload = await redis.get(getChannelPreferencesKey(channelId));
+  return normalizeChannelPreferencesPayload(payload);
 }
 
 export async function updateUserPreferences(
@@ -80,6 +105,54 @@ export async function updateUserPreferences(
     ok: true as const,
     preferences: next
   };
+}
+
+export async function updateChannelPreferences(
+  channelId: string,
+  patch: Partial<ChannelPreferences>
+) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return {
+      ok: false as const,
+      reason: "Redis is not configured."
+    };
+  }
+
+  const current = await getChannelPreferences(channelId);
+  const next = normalizeChannelPreferences({
+    ...current,
+    ...patch
+  });
+
+  await redis.set(getChannelPreferencesKey(channelId), JSON.stringify(next));
+
+  return {
+    ok: true as const,
+    preferences: next
+  };
+}
+
+export async function setChannelModelPreference(channelId: string, modelId: string) {
+  const normalizedModelId = normalizeOpenCodeGoModelId(modelId);
+
+  if (!normalizedModelId) {
+    return {
+      ok: false as const,
+      reason: "Model ID is not valid."
+    };
+  }
+
+  return updateChannelPreferences(channelId, {
+    modelId: normalizedModelId
+  });
+}
+
+export async function clearChannelModelPreference(channelId: string) {
+  return updateChannelPreferences(channelId, {
+    modelId: null
+  });
 }
 
 export async function clearUserPreferences(userId: string) {
@@ -233,6 +306,10 @@ function getUserPreferencesKey(userId: string) {
   return `${USER_PREFERENCES_PREFIX}${userId}`;
 }
 
+function getChannelPreferencesKey(channelId: string) {
+  return `${CHANNEL_PREFERENCES_PREFIX}${channelId}`;
+}
+
 function normalizeUserPreferencesPayload(payload: string | null) {
   if (!payload) {
     return { ...DEFAULT_USER_PREFERENCES };
@@ -242,6 +319,18 @@ function normalizeUserPreferencesPayload(payload: string | null) {
     return normalizeUserPreferences(JSON.parse(payload) as unknown);
   } catch {
     return { ...DEFAULT_USER_PREFERENCES };
+  }
+}
+
+function normalizeChannelPreferencesPayload(payload: string | null) {
+  if (!payload) {
+    return { ...DEFAULT_CHANNEL_PREFERENCES };
+  }
+
+  try {
+    return normalizeChannelPreferences(JSON.parse(payload) as unknown);
+  } catch {
+    return { ...DEFAULT_CHANNEL_PREFERENCES };
   }
 }
 
@@ -259,6 +348,21 @@ function normalizeUserPreferences(input: unknown): UserPreferences {
     verbosity: normalizeVerbosity(record.verbosity),
     newsInterests: normalizeNewsInterests(record.newsInterests),
     reminderStyle: normalizeReminderStyle(record.reminderStyle)
+  };
+}
+
+function normalizeChannelPreferences(input: unknown): ChannelPreferences {
+  if (!input || typeof input !== "object") {
+    return { ...DEFAULT_CHANNEL_PREFERENCES };
+  }
+
+  const record = input as Partial<Record<keyof ChannelPreferences, unknown>>;
+
+  return {
+    modelId:
+      typeof record.modelId === "string"
+        ? normalizeOpenCodeGoModelId(record.modelId)
+        : DEFAULT_CHANNEL_PREFERENCES.modelId
   };
 }
 
@@ -466,7 +570,9 @@ function normalizeForCompare(input: string) {
 }
 
 export const __testing = {
+  getChannelPreferencesKey,
   getUserPreferencesKey,
+  normalizeChannelPreferences,
   normalizeTimeZone,
   normalizeUserPreferences,
   parseNewsInterestList,

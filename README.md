@@ -33,7 +33,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
    - `PORT`: defaults to `3000`
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
-   - `OPENCODE_GO_MODEL`: defaults to `glm-5.2`
+   - `OPENCODE_GO_MODEL`: default text model, defaults to `glm-5.2`
    - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, and channel decision logs
@@ -84,7 +84,8 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -244,6 +245,15 @@ Supported commands:
 
 Preferences are injected into model prompts. Timezone is used for current-time context and daily/weekly schedules. News interests focus broad news digests. Reminder style changes delivered reminder wording.
 
+NoBo also persists per-channel preferences in Redis at `slack-preferences:channel:<channelId>`.
+
+- `/nobo-channel-model`: choose this channel's text model with a Slack Block Kit selector
+- `/nobo-channel-model status`
+- `/nobo-channel-model <model-id>`
+- `/nobo-channel-model reset`
+
+The selector loads OpenCode Go models from `https://opencode.ai/zen/go/v1/models` and falls back to the built-in model list if discovery fails. Channel model choices only affect text requests; image-bearing messages continue using `OPENCODE_GO_VISION_MODEL`.
+
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
 Channel settings live in that same value. `/nobo-listen` toggles active listening for the current channel; `/nobo-listen on`, `/nobo-listen off`, and `/nobo-listen status` are also supported. When active listening is on, NoBo sees normal channel messages, records them into shared channel memory, and can choose to stay silent, reply in-thread, or reply inline. Shared channel memory appends and settings updates are atomic in Redis, and active-listening replies are capped by `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`.
@@ -332,6 +342,7 @@ Current skills:
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`
 - `/nobo-channel-digest daily|weekly ...`
+- `/nobo-channel-model`
 - `/nobo-dad-joke`
 - `@NoBo skills` or `@NoBo help`
 - `@NoBo decision add <decision>` or `@NoBo decisions`

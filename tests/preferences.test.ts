@@ -24,6 +24,16 @@ test("preference parser normalizes stored payloads", () => {
   });
 });
 
+test("channel preferences normalize model ids", () => {
+  const preferences = __testing.normalizeChannelPreferences({
+    modelId: "opencode-go/DeepSeek-V4-Pro"
+  });
+
+  assert.deepEqual(preferences, {
+    modelId: "deepseek-v4-pro"
+  });
+});
+
 test("preference prompt injects relevant user prefs", () => {
   const prompt = __testing.formatUserPreferencesPrompt(
     {

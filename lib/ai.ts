@@ -6,6 +6,7 @@ import { formatCurrentTime, formatCurrentTimePrompt } from "./nobo-time.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import {
   formatUserPreferencesPrompt,
+  getChannelPreferences,
   getUserPreferences,
   type UserPreferences
 } from "./preferences.js";
@@ -14,10 +15,12 @@ import {
   parseFollowUpExtraction,
   type ThreadFollowUpDraft
 } from "./follow-ups.js";
-
-const DEFAULT_SLACK_TEXT_MODEL = "glm-5.2";
-const DEFAULT_SLACK_VISION_MODEL = "kimi-k2.6";
-const FALLBACK_SLACK_VISION_MODEL = "kimi-k2.6";
+import {
+  FALLBACK_SLACK_VISION_MODEL,
+  getDefaultSlackTextModel,
+  getDefaultSlackVisionModel,
+  normalizeOpenCodeGoModelId
+} from "./nobo-models.js";
 
 export async function createSlackReply(messages: NoboModelMessage[]) {
   return createSlackReplyWithMemory(messages, [], undefined);
@@ -111,7 +114,7 @@ export async function extractSlackThreadFollowUps({
   const text = await runNoboAgentPrompt({
     prompt,
     images: promptMessages.images,
-    modelId: selectSlackModel(messages),
+    modelId: await selectSlackModel(messages, channelId),
     toolMode: "none"
   });
 
@@ -121,10 +124,12 @@ export async function extractSlackThreadFollowUps({
 export async function createWeeklyAiNewsSlackDigest({
   focus,
   currentUserId,
+  channelId,
   onTextDelta
 }: {
   focus: string;
   currentUserId: string | undefined;
+  channelId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
   return createSlackSkillReply({
@@ -138,6 +143,7 @@ export async function createWeeklyAiNewsSlackDigest({
     ],
     memories: [],
     currentUserId,
+    channelId,
     skillName: "ai-news",
     instructions: `Your job is to produce a fresh weekly AI news digest for Slack.
 - Use web search for current sources.
@@ -155,10 +161,12 @@ export async function createWeeklyAiNewsSlackDigest({
 export async function createWeeklyNewsSlackDigest({
   focus,
   currentUserId,
+  channelId,
   onTextDelta
 }: {
   focus: string;
   currentUserId: string | undefined;
+  channelId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
   return createSlackSkillReply({
@@ -172,6 +180,7 @@ export async function createWeeklyNewsSlackDigest({
     ],
     memories: [],
     currentUserId,
+    channelId,
     skillName: "news",
     instructions: `Your job is to produce a fresh weekly news digest for Slack.
 - Use web search for current sources.
@@ -227,7 +236,7 @@ Do not use tools for this classification.`
   });
   const text = await runNoboAgentPrompt({
     prompt,
-    modelId: selectSlackModel(messages),
+    modelId: await selectSlackModel(messages, channelId),
     toolMode: "none"
   });
 
@@ -274,7 +283,7 @@ Do not use tools for this classification.`
   });
   const text = await runNoboAgentPrompt({
     prompt,
-    modelId: selectSlackModel(messages),
+    modelId: await selectSlackModel(messages, channelId),
     toolMode: "none"
   });
 
@@ -347,7 +356,7 @@ async function generateSlackResponse({
     extraSystem
   });
   const images = modelMessagesToPrompt(messages).images;
-  const modelId = selectSlackModel(messages);
+  const modelId = await selectSlackModel(messages, channelId);
   const toolMode: NoboAgentToolMode = images.length > 0 ? "none" : "slack";
   let text: string;
 
@@ -528,12 +537,24 @@ function isPromptResult(input: unknown): input is { text: string } {
   );
 }
 
-function selectSlackModel(messages: NoboModelMessage[]) {
+async function selectSlackModel(messages: NoboModelMessage[], channelId?: string) {
   if (containsImageInput(messages)) {
-    return process.env.OPENCODE_GO_VISION_MODEL ?? DEFAULT_SLACK_VISION_MODEL;
+    return selectSlackModelForMessages(messages);
   }
 
-  return process.env.OPENCODE_GO_MODEL ?? DEFAULT_SLACK_TEXT_MODEL;
+  const channelPreferences = channelId
+    ? await getChannelPreferences(channelId)
+    : { modelId: null };
+
+  return selectSlackModelForMessages(messages, channelPreferences.modelId ?? undefined);
+}
+
+function selectSlackModelForMessages(messages: NoboModelMessage[], channelModelId?: string) {
+  if (containsImageInput(messages)) {
+    return getDefaultSlackVisionModel();
+  }
+
+  return normalizeOpenCodeGoModelId(channelModelId) ?? getDefaultSlackTextModel();
 }
 
 function containsImageInput(messages: NoboModelMessage[]) {
@@ -622,7 +643,7 @@ export const __testing = {
   formatCurrentTimePrompt,
   formatChannelMemoryPrompt,
   normalizeSlackMrkdwn,
-  selectSlackModel
+  selectSlackModel: selectSlackModelForMessages
 };
 
 export type NoboResponseOptions = {
