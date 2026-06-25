@@ -11,7 +11,8 @@ test("lists artifacts through Slack skill command", async () => {
     const artifact = await createArtifact({
       kind: "markdown",
       title: "Skill artifact",
-      content: "hello"
+      content: "hello",
+      ownerUserId: "U123"
     });
     const reply = await maybeHandleSlackSkillCommand({
       commandText: "artifacts",

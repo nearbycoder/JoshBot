@@ -170,9 +170,10 @@ Artifact management:
 - `/nobo-artifacts list`
 - `/nobo-artifacts list all`
 - `/nobo-artifacts expired`
+- `/nobo-artifacts update abc12345 <content>`
 - `/nobo-artifacts delete abc12345`
 - `/nobo-artifacts cleanup`
-- `@NoBo artifacts [list|delete <id>|cleanup]`
+- `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
 
 ## Thread context
 
@@ -336,7 +337,7 @@ Current skills:
 - `/nobo-listen [on|off|status]`
 - `/nobo-prefs [setting]`
 - `/nobo-memory [show|forget <number|text>|clear confirm]`
-- `/nobo-artifacts [list|delete <id>|cleanup]`
+- `/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`
 - `/nobo-decisions [add <decision>|list]`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
@@ -354,7 +355,7 @@ Current skills:
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`
 - `@NoBo clear channel memory confirm`
-- `@NoBo artifacts [list|delete <id>|cleanup]`
+- `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
 - `@NoBo prefs ...`
 
 Memory commands also remain available:

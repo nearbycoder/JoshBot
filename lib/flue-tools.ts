@@ -272,6 +272,10 @@ function createCleanupExpiredArtifactsTool(ownerUserId: string | undefined) {
       additionalProperties: false
     }),
     execute: async () => {
+      if (!ownerUserId) {
+        return JSON.stringify({ error: "Artifact cleanup needs a Slack user context." });
+      }
+
       const result = await deleteExpiredArtifacts({ ownerUserId });
 
       return JSON.stringify({

@@ -5,7 +5,8 @@ import { decodeNoboAgentContext, encodeNoboAgentContext } from "../lib/nobo-agen
 test("agent context ids are unique per run", () => {
   const first = encodeNoboAgentContext({
     modelId: "glm-5.2",
-    toolMode: "slack"
+    toolMode: "slack",
+    ownerUserId: "U123"
   });
   const second = encodeNoboAgentContext({
     modelId: "glm-5.2",
@@ -14,4 +15,5 @@ test("agent context ids are unique per run", () => {
 
   assert.notEqual(first, second);
   assert.notEqual(decodeNoboAgentContext(first).nonce, decodeNoboAgentContext(second).nonce);
+  assert.equal(decodeNoboAgentContext(first).ownerUserId, "U123");
 });

@@ -46,6 +46,10 @@ export async function handleArtifactCommandText(
   }
 
   if (/^(cleanup|prune)(\s+expired)?$/.test(normalized)) {
+    if (!options.ownerUserId) {
+      return "Artifact changes need a Slack user context.";
+    }
+
     const result = await deleteExpiredArtifacts({ ownerUserId: options.ownerUserId });
     return result.deleted.length === 0
       ? "No expired artifacts to delete."

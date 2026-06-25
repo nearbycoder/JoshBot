@@ -9,7 +9,8 @@ import {
   deleteExpiredArtifacts,
   handleArtifactFetchRequest,
   listArtifacts,
-  listRecentArtifacts
+  listRecentArtifacts,
+  updateArtifact
 } from "../lib/artifacts.js";
 
 test("creates artifact metadata, lists it, and serves raw content", async () => {
@@ -18,6 +19,7 @@ test("creates artifact metadata, lists it, and serves raw content", async () => 
       kind: "markdown",
       title: "Launch notes",
       content: "# Hello",
+      ownerUserId: "U123",
       expiresInDays: "2"
     });
     const payload = JSON.parse(
@@ -25,15 +27,16 @@ test("creates artifact metadata, lists it, and serves raw content", async () => 
     ) as Record<string, unknown>;
 
     assert.equal(payload.id, artifact.id);
+    assert.equal(payload.ownerUserId, "U123");
     assert.equal(payload.expiresAt, artifact.expiresAt);
 
-    const artifacts = await listArtifacts();
+    const artifacts = await listArtifacts({ ownerUserId: "U123" });
     assert.equal(artifacts.length, 1);
     assert.equal(artifacts[0]?.shortId, artifact.id.slice(0, 8));
     assert.equal(artifacts[0]?.expired, false);
     assert.match(artifacts[0]?.previewUrl ?? "", /^https:\/\/nobo.test\/artifacts\//);
 
-    const recentArtifacts = await listRecentArtifacts(1);
+    const recentArtifacts = await listRecentArtifacts(1, { ownerUserId: "U123" });
     assert.equal(recentArtifacts[0]?.id, artifact.id);
     assert.equal(recentArtifacts[0]?.updatedAt, artifact.createdAt);
 
@@ -72,12 +75,39 @@ test("deletes artifacts by visible ID prefix", async () => {
     const artifact = await createArtifact({
       kind: "markdown",
       title: "Delete me",
-      content: "bye"
+      content: "bye",
+      ownerUserId: "U123"
     });
-    const result = await deleteArtifact(artifact.id.slice(0, 8));
+    const result = await deleteArtifact(artifact.id.slice(0, 8), { ownerUserId: "U123" });
 
     assert.equal(result.ok, true);
     assert.equal((await listArtifacts({ includeExpired: true })).length, 0);
+  });
+});
+
+test("only owners can update or delete artifacts", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({
+      kind: "markdown",
+      title: "Owned",
+      content: "old",
+      ownerUserId: "U123"
+    });
+
+    const otherDelete = await deleteArtifact(artifact.id, { ownerUserId: "U999" });
+    assert.equal(otherDelete.ok, false);
+    assert.equal(otherDelete.reason, "missing");
+
+    const update = await updateArtifact({
+      idPrefix: artifact.id.slice(0, 8),
+      ownerUserId: "U123",
+      content: "new"
+    });
+    assert.equal(update.ok, true);
+
+    const response = await handleArtifactFetchRequest(new Request(artifact.rawUrl));
+    assert.equal(response?.status, 200);
+    assert.equal(await response?.text(), "new");
   });
 });
 

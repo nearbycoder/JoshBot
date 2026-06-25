@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createArtifact } from "../lib/artifacts.js";
+import { createArtifact, listArtifacts } from "../lib/artifacts.js";
 import {
   handleSlackInteractionPayload,
   handleSlackSlashCommandPayload,
@@ -38,7 +38,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
   assert.match(response.text, /`\/nobo-prefs \[setting\]`/);
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
-  assert.match(response.text, /`\/nobo-artifacts \[list\|delete <id>\|cleanup\]`/);
+  assert.match(response.text, /`\/nobo-artifacts \[list\|update <id> <content>\|delete <id>\|cleanup\]`/);
   assert.match(response.text, /`\/nobo-decisions \[add <decision>\|list\]`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
@@ -96,11 +96,13 @@ test("lists artifacts for /nobo-artifacts", async () => {
     const artifact = await createArtifact({
       kind: "markdown",
       title: "Plan",
-      content: "hello"
+      content: "hello",
+      ownerUserId: "U123"
     });
     const result = await handleSlackSlashCommandPayload({
       command: "/nobo-artifacts",
-      text: "list"
+      text: "list",
+      user_id: "U123"
     });
 
     assert.equal(result.response.response_type, "ephemeral");
@@ -115,11 +117,13 @@ test("deletes artifacts for /nobo-artifacts", async () => {
     const artifact = await createArtifact({
       kind: "html",
       title: "Temporary page",
-      content: "<!doctype html><title>Temp</title>"
+      content: "<!doctype html><title>Temp</title>",
+      ownerUserId: "U123"
     });
     const result = await handleSlackSlashCommandPayload({
       command: "/nobo-artifacts",
-      text: `delete ${artifact.id.slice(0, 8)}`
+      text: `delete ${artifact.id.slice(0, 8)}`,
+      user_id: "U123"
     });
 
     assert.equal(result.response.response_type, "ephemeral");
@@ -127,10 +131,31 @@ test("deletes artifacts for /nobo-artifacts", async () => {
 
     const listResult = await handleSlackSlashCommandPayload({
       command: "/nobo-artifacts",
-      text: "list all"
+      text: "list all",
+      user_id: "U123"
     });
 
     assert.match(listResult.response.text, /No artifacts found/);
+  });
+});
+
+test("does not let other users delete artifacts for /nobo-artifacts", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({
+      kind: "markdown",
+      title: "Private plan",
+      content: "hello",
+      ownerUserId: "U123"
+    });
+    const result = await handleSlackSlashCommandPayload({
+      command: "/nobo-artifacts",
+      text: `delete ${artifact.id.slice(0, 8)}`,
+      user_id: "U999"
+    });
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /one of your artifacts/);
+    assert.equal((await listArtifacts({ includeExpired: true })).length, 1);
   });
 });
 
