@@ -5,6 +5,14 @@ import {
   shouldReplyToSlackThread
 } from "./ai.js";
 import { maybeHandleChannelMemoryMentionCommand } from "./channel-memory-controls.js";
+import {
+  addChannelDecision,
+  formatChannelDecisionList,
+  formatDecisionAdded,
+  formatDecisionHelp,
+  listChannelDecisions,
+  parseDecisionIntent
+} from "./decisions.js";
 import { requireEnv } from "./env.js";
 import {
   addUserMemory,
@@ -48,6 +56,10 @@ type SlackUpdateMessageResponse =
 
 type SlackReactionResponse =
   | SlackApiSuccess<Record<string, never>>
+  | SlackApiFailure;
+
+type SlackPermalinkResponse =
+  | SlackApiSuccess<{ permalink: string }>
   | SlackApiFailure;
 
 type SlackConversation = {
@@ -298,10 +310,11 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   const channelMemories = await loadChannelMemories(event.channel);
   await recordUserChannelMemory(event, incomingMessage, threadTs);
   const commandReply = await maybeHandleMemoryCommand(event);
-  const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
+  const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
+  const scheduleReply = commandReply || decisionReply ? null : await maybeHandleScheduleCommand(event);
 
-  if (commandReply || scheduleReply) {
-    const replyText = commandReply ?? scheduleReply ?? "";
+  if (commandReply || decisionReply || scheduleReply) {
+    const replyText = commandReply ?? decisionReply ?? scheduleReply ?? "";
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
@@ -461,21 +474,23 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   const token = requireEnv("SLACK_BOT_TOKEN");
   const incomingMessage = await createCachedUserMessage(token, event);
   const commandReply = await maybeHandleMemoryCommand(event);
+  const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
   const minimalThreadMessages = [incomingMessage];
 
-  if (commandReply) {
+  if (commandReply || decisionReply) {
+    const replyText = commandReply ?? decisionReply ?? "";
     void acknowledgeTargetedSlackEvent(token, event);
     await recordUserChannelMemory(event, incomingMessage, event.thread_ts);
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
       threadTs: event.thread_ts,
-      text: commandReply
+      text: replyText
     });
     await recordAssistantChannelMemory({
       channel: event.channel,
       threadTs: event.thread_ts,
-      text: commandReply,
+      text: replyText,
       ts: postedReply.ts
     });
 
@@ -484,7 +499,7 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
       event.thread_ts,
       appendCachedThreadMessage(minimalThreadMessages, {
         role: "assistant",
-        content: commandReply,
+        content: replyText,
         ts: postedReply.ts
       })
     );
@@ -617,6 +632,33 @@ export async function respondToSlackActiveListeningMessage(event: SlackMessageEv
   let threadMessages: CachedThreadMessage[] = [incomingMessage];
   const channelMemories = await loadChannelMemories(event.channel);
   await recordUserChannelMemory(event, incomingMessage, threadTs);
+  const decisionReply = await maybeHandleDecisionCommand(event, token);
+
+  if (decisionReply) {
+    void acknowledgeTargetedSlackEvent(token, event);
+    const postedReply = await postSlackMessage({
+      token,
+      channel: event.channel,
+      threadTs,
+      text: decisionReply
+    });
+    await recordAssistantChannelMemory({
+      channel: event.channel,
+      threadTs,
+      text: decisionReply,
+      ts: postedReply.ts
+    });
+    await saveCachedThreadMessages(
+      event.channel,
+      threadTs,
+      appendCachedThreadMessage(threadMessages, {
+        role: "assistant",
+        content: decisionReply,
+        ts: postedReply.ts
+      })
+    );
+    return;
+  }
 
   try {
     if (event.thread_ts && event.thread_ts !== event.ts) {
@@ -734,10 +776,11 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   const channelMemories = await loadChannelMemories(event.channel);
   await recordUserChannelMemory(event, incomingMessage, event.ts);
   const commandReply = await maybeHandleMemoryCommand(event);
-  const scheduleReply = commandReply ? null : await maybeHandleScheduleCommand(event);
+  const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
+  const scheduleReply = commandReply || decisionReply ? null : await maybeHandleScheduleCommand(event);
 
-  if (commandReply || scheduleReply) {
-    const replyText = commandReply ?? scheduleReply ?? "";
+  if (commandReply || decisionReply || scheduleReply) {
+    const replyText = commandReply ?? decisionReply ?? scheduleReply ?? "";
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
@@ -1020,6 +1063,28 @@ export async function resolveSlackChannelIdByName({
   } while (cursor);
 
   return null;
+}
+
+async function getSlackMessagePermalink({
+  token,
+  channel,
+  messageTs
+}: {
+  token: string;
+  channel: string;
+  messageTs: string;
+}) {
+  const params = new URLSearchParams({
+    channel,
+    message_ts: messageTs
+  });
+  const response = await slackApi<SlackPermalinkResponse>({
+    token,
+    method: "GET",
+    path: `chat.getPermalink?${params.toString()}`
+  });
+
+  return response.permalink;
 }
 
 async function finishSlackReply({
@@ -1432,6 +1497,67 @@ async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
   }
 
   return null;
+}
+
+async function maybeHandleDecisionCommand(event: SlackMessageEvent, token: string) {
+  const intent = parseDecisionIntent(stripSlackFormatting(event.text));
+
+  if (!intent) {
+    return null;
+  }
+
+  if (intent.action === "help") {
+    return formatDecisionHelp();
+  }
+
+  if (intent.action === "list") {
+    const result = await listChannelDecisions(event.channel);
+
+    if (!result.ok) {
+      return `Couldn't load decision log: ${result.reason}`;
+    }
+
+    return formatChannelDecisionList(result.decisions);
+  }
+
+  const threadTs = event.thread_ts ?? event.ts;
+  const threadUrl = await safeGetSlackMessagePermalink({
+    token,
+    channel: event.channel,
+    messageTs: threadTs
+  });
+  const result = await addChannelDecision({
+    channelId: event.channel,
+    text: intent.text,
+    userId: event.user,
+    threadTs,
+    messageTs: event.ts,
+    threadUrl,
+    source: "slack-message"
+  });
+
+  if (!result.ok) {
+    return `Couldn't save decision: ${result.reason}`;
+  }
+
+  return formatDecisionAdded(result.decision);
+}
+
+async function safeGetSlackMessagePermalink({
+  token,
+  channel,
+  messageTs
+}: {
+  token: string;
+  channel: string;
+  messageTs: string;
+}) {
+  try {
+    return await getSlackMessagePermalink({ token, channel, messageTs });
+  } catch (error) {
+    console.warn(`Unable to load Slack decision permalink: ${summarizeError(error)}`);
+    return undefined;
+  }
 }
 
 async function createCachedUserMessage(token: string, event: SlackMessageEvent): Promise<CachedThreadMessage> {

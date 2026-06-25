@@ -1,4 +1,12 @@
 import {
+  addChannelDecision,
+  formatChannelDecisionList,
+  formatDecisionAdded,
+  formatDecisionHelp,
+  listChannelDecisions,
+  parseDecisionIntent
+} from "./decisions.js";
+import {
   getChannelMemorySettings,
   setChannelActiveListening,
   toggleChannelActiveListening
@@ -113,10 +121,14 @@ export async function handleSlackSlashCommandPayload(
     return immediate(ephemeral(await handleArtifactCommandText(payload.text)));
   }
 
+  if (command === "/nobo-decisions" || command === "/nobo-decision") {
+    return handleDecisionsSlashCommand(payload);
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -140,6 +152,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
     "`/nobo-artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
+    "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
@@ -158,6 +171,65 @@ async function handleStatusSlashCommand(
   } catch (error) {
     return immediate(ephemeral(`NoBo status check failed: ${summarizeOpsError(error)}`));
   }
+}
+
+async function handleDecisionsSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  if (!payload.channel_id) {
+    return immediate(ephemeral("Slack did not send a channel for this command. Try again in a channel."));
+  }
+
+  const text = payload.text.trim();
+  const intent = parseDecisionsSlashCommandText(text);
+
+  if (!intent || intent.action === "help") {
+    return immediate(ephemeral(formatDecisionHelp()));
+  }
+
+  if (intent.action === "list") {
+    const result = await listChannelDecisions(payload.channel_id);
+
+    if (!result.ok) {
+      return immediate(ephemeral(`Couldn't load decision log: ${result.reason}`));
+    }
+
+    return immediate(ephemeral(formatChannelDecisionList(result.decisions)));
+  }
+
+  const result = await addChannelDecision({
+    channelId: payload.channel_id,
+    text: intent.text,
+    userId: payload.user_id,
+    source: "slash-command"
+  });
+
+  if (!result.ok) {
+    return immediate(ephemeral(`Couldn't save decision: ${result.reason}`));
+  }
+
+  return immediate(inChannel(formatDecisionAdded(result.decision)));
+}
+
+function parseDecisionsSlashCommandText(text: string) {
+  if (!text) {
+    return { action: "list" as const };
+  }
+
+  if (/^help$/i.test(text)) {
+    return { action: "help" as const };
+  }
+
+  if (/^(?:list|show)$/i.test(text)) {
+    return { action: "list" as const };
+  }
+
+  const addMatch = text.match(/^(?:add|record|log|capture)\s+(.+)$/i);
+  if (addMatch) {
+    return parseDecisionIntent(`decision add ${addMatch[1] ?? ""}`);
+  }
+
+  return parseDecisionIntent(text);
 }
 
 async function handleListenSlashCommand(

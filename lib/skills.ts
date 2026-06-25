@@ -22,6 +22,7 @@ type ParsedSkillCommand = {
 
 const SKILL_HELP_LINES = [
   "`@NoBo skills` or `@NoBo help`: list available skills",
+  "`@NoBo decision add <decision>` or `@NoBo decisions`: capture or list channel decisions",
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
