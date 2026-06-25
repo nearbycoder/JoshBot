@@ -4,7 +4,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 ## Features
 
-- Slack assistant surfaces: `@NoBo` mentions, thread replies, DMs, slash commands, reaction shortcuts, active channel listening, and Slack App Home.
+- Slack assistant surfaces: `@NoBo` mentions, thread replies, DMs, slash commands, Block Kit modals, reaction shortcuts, active channel listening, and Slack App Home.
 - Thread-aware replies: reads Slack thread history, trims long threads, caches thread state, and decides whether normal thread replies need NoBo.
 - Streaming Slack UX: acknowledgement reaction, animated listening message, and progressive same-message block updates.
 - Web and time tools: Exa search, exact current-time tool, UTC plus user-timezone context, and timezone-aware relative scheduling.
@@ -103,8 +103,9 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
+- Shortcuts: optional global/message shortcuts can use callback IDs `nobo_reminder`, `nobo_prefs`, `nobo_channel_digest`, and `nobo_artifacts`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -214,6 +215,7 @@ Artifact management:
 - `/nobo-artifacts update abc12345 <content>`
 - `/nobo-artifacts delete abc12345`
 - `/nobo-artifacts cleanup`
+- `/nobo-artifacts modal`
 - `@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`
 
 ## Thread context
@@ -243,6 +245,7 @@ NoBo can subscribe a channel to recurring daily or weekly digests. Subscriptions
 Supported examples:
 
 - `/nobo-channel-digest daily 09:00`
+- `/nobo-channel-digest`
 - `/nobo-channel-digest daily 09:00 launch blockers`
 - `/nobo-channel-digest weekly monday 09:00 customer feedback`
 - `/nobo-channel-digest list`
@@ -336,6 +339,7 @@ NoBo can persist user-owned reminders and recurring jobs in Redis. Each schedule
 
 Supported examples:
 
+- `/nobo-reminder`
 - `@NoBo remind me about the deploy in 10 minutes`
 - `@NoBo remind me in #josh to check the logs in 5 minutes`
 - `@NoBo post in #ai in 5 minutes what is currently trending on Hacker News`
@@ -389,6 +393,7 @@ Current skills:
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`
 - `/nobo-channel-digest daily|weekly ...`
+- `/nobo-reminder`
 - `/nobo-channel-model`
 - `/nobo-dad-joke`
 - `@NoBo skills` or `@NoBo help`

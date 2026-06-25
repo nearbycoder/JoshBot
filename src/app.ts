@@ -8,11 +8,12 @@ import {
 } from "../lib/ai.js";
 import { startChannelDigestSubscriptionRunner } from "../lib/channel-digests.js";
 import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
+import { requireEnv } from "../lib/env.js";
 import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import { recordOpsError } from "../lib/ops-errors.js";
 import { readLimitedRequestBody, RequestBodyTooLargeError } from "../lib/request-body.js";
 import {
-  handleSlackInteractionPayload,
+  handleSlackInteractionRequest,
   handleSlackSlashCommandPayload,
   parseSlackInteractionPayload,
   parseSlackSlashCommandPayload,
@@ -20,7 +21,7 @@ import {
   type SlackSlashCommandTask
 } from "../lib/slack-commands.js";
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "../lib/slack-events.js";
-import { postGeneratedSlackMessage, postSlackMessage, verifySlackRequest } from "../lib/slack.js";
+import { openSlackModal, postGeneratedSlackMessage, postSlackMessage, verifySlackRequest } from "../lib/slack.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "../lib/memory.js";
 import { getPreferredNewsFocus, getUserPreferences } from "../lib/preferences.js";
 import { startScheduleRunner } from "../lib/schedules.js";
@@ -94,6 +95,14 @@ app.post("/api/slack/commands", async (c) => {
     const payload = parseSlackSlashCommandPayload(rawBody);
     const result = await handleSlackSlashCommandPayload(payload);
 
+    if (result.modal) {
+      await openSlackModal({
+        token: requireEnv("SLACK_BOT_TOKEN"),
+        triggerId: result.modal.triggerId,
+        view: result.modal.view
+      });
+    }
+
     if (result.task) {
       void runSlackSlashCommandTask(result.task, formatSlackSlashCommandMemory(payload)).catch((error) => {
         recordOpsError("slack slash command task", error);
@@ -121,8 +130,17 @@ app.post("/api/slack/interactions", async (c) => {
 
   try {
     const payload = parseSlackInteractionPayload(rawBody);
-    const response = await handleSlackInteractionPayload(payload);
-    return c.json(response);
+    const result = await handleSlackInteractionRequest(payload);
+
+    if (result.modal) {
+      await openSlackModal({
+        token: requireEnv("SLACK_BOT_TOKEN"),
+        triggerId: result.modal.triggerId,
+        view: result.modal.view
+      });
+    }
+
+    return c.json(result.response);
   } catch (error) {
     return c.text(summarizeError(error), 400);
   }

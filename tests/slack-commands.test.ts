@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createArtifact, listArtifacts } from "../lib/artifacts.js";
 import {
+  handleSlackInteractionRequest,
   handleSlackInteractionPayload,
   handleSlackSlashCommandPayload,
   parseSlackInteractionPayload,
@@ -80,6 +81,20 @@ test("returns personal preferences for /nobo-prefs", async () => {
   assert.match(result.response.text, /Timezone: `America\/Chicago`/);
 });
 
+test("opens preferences modal for /nobo-prefs with a trigger", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-prefs",
+    text: "",
+    user_id: "U123",
+    channel_id: "C123",
+    trigger_id: "trigger-123"
+  });
+
+  assert.equal(result.modal?.triggerId, "trigger-123");
+  assert.match(JSON.stringify(result.modal?.view), /nobo_prefs_modal/);
+  assert.match(JSON.stringify(result.modal?.view), /prefs_timezone_input/);
+});
+
 test("reports Redis requirement for /nobo-prefs update without Redis", async () => {
   const result = await handleSlackSlashCommandPayload({
     command: "/nobo-prefs",
@@ -89,6 +104,26 @@ test("reports Redis requirement for /nobo-prefs update without Redis", async () 
 
   assert.equal(result.response.response_type, "ephemeral");
   assert.match(result.response.text, /Redis is not configured/);
+});
+
+test("handles preferences modal submissions with existing Redis errors", async () => {
+  const result = await handleSlackInteractionPayload(createViewSubmission("nobo_prefs_modal", {
+    prefs_timezone: {
+      prefs_timezone_input: { value: "America/New_York" }
+    },
+    prefs_verbosity: {
+      prefs_verbosity_select: { selected_option: { value: "concise" } }
+    },
+    prefs_news: {
+      prefs_news_input: { value: "ai, security" }
+    },
+    prefs_reminder_style: {
+      prefs_reminder_style_select: { selected_option: { value: "gentle" } }
+    }
+  }));
+
+  assert.equal("response_action" in result ? result.response_action : undefined, "update");
+  assert.match(JSON.stringify(result), /Redis is not configured/);
 });
 
 test("lists artifacts for /nobo-artifacts", async () => {
@@ -156,6 +191,30 @@ test("does not let other users delete artifacts for /nobo-artifacts", async () =
     assert.equal(result.response.response_type, "ephemeral");
     assert.match(result.response.text, /one of your artifacts/);
     assert.equal((await listArtifacts({ includeExpired: true })).length, 1);
+  });
+});
+
+test("handles artifact modal submissions with artifact command behavior", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({
+      kind: "markdown",
+      title: "Plan",
+      content: "hello",
+      ownerUserId: "U123"
+    });
+    const result = await handleSlackInteractionPayload(createViewSubmission("nobo_artifact_modal", {
+      artifact_action: {
+        artifact_action_select: { selected_option: { value: "list" } }
+      },
+      artifact_id: {
+        artifact_id_input: { value: "" }
+      },
+      artifact_content: {
+        artifact_content_input: { value: "" }
+      }
+    }));
+
+    assert.match(JSON.stringify(result), new RegExp(artifact.id.slice(0, 8)));
   });
 });
 
@@ -418,6 +477,81 @@ test("reports Redis requirement for /nobo-channel-digest subscription without Re
   }
 });
 
+test("opens channel digest modal for empty slash command with a trigger", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-channel-digest",
+    text: "",
+    channel_id: "C123",
+    user_id: "U123",
+    trigger_id: "trigger-123"
+  });
+
+  assert.equal(result.modal?.triggerId, "trigger-123");
+  assert.match(JSON.stringify(result.modal?.view), /nobo_digest_modal/);
+  assert.match(JSON.stringify(result.modal?.view), /digest_frequency_select/);
+});
+
+test("handles channel digest modal submissions with existing Redis errors", async () => {
+  const result = await handleSlackInteractionPayload(createViewSubmission("nobo_digest_modal", {
+    digest_frequency: {
+      digest_frequency_select: { selected_option: { value: "daily" } }
+    },
+    digest_weekday: {
+      digest_weekday_select: { selected_option: { value: "monday" } }
+    },
+    digest_time: {
+      digest_time_input: { value: "09:00" }
+    },
+    digest_focus: {
+      digest_focus_input: { value: "launch blockers" }
+    }
+  }));
+
+  assert.match(JSON.stringify(result), /Channel digest subscriptions require REDIS_URL/);
+});
+
+test("opens reminder modal from a Slack shortcut", async () => {
+  const result = await handleSlackInteractionRequest({
+    type: "shortcut",
+    callback_id: "nobo_reminder",
+    trigger_id: "trigger-123",
+    user: { id: "U123" },
+    channel: { id: "C123" }
+  });
+
+  assert.equal(result.modal?.triggerId, "trigger-123");
+  assert.match(JSON.stringify(result.modal?.view), /nobo_reminder_modal/);
+  assert.deepEqual(result.response, {});
+});
+
+test("handles reminder modal submissions with existing Redis errors", async () => {
+  const result = await handleSlackInteractionPayload(createViewSubmission("nobo_reminder_modal", {
+    reminder_task: {
+      reminder_task_input: { value: "check logs" }
+    },
+    reminder_kind: {
+      reminder_kind_select: { selected_option: { value: "once" } }
+    },
+    reminder_amount: {
+      reminder_amount_input: { value: "10" }
+    },
+    reminder_unit: {
+      reminder_unit_select: { selected_option: { value: "minutes" } }
+    },
+    reminder_weekday: {
+      reminder_weekday_select: { selected_option: { value: "monday" } }
+    },
+    reminder_time: {
+      reminder_time_input: { value: "09:00" }
+    },
+    reminder_mode: {
+      reminder_mode_select: { selected_option: { value: "reminder" } }
+    }
+  }));
+
+  assert.match(JSON.stringify(result), /Scheduling requires REDIS_URL/);
+});
+
 test("returns Block Kit selector for /nobo-channel-model", async () => {
   await withMockOpenCodeModels(async () => {
     const result = await handleSlackSlashCommandPayload({
@@ -468,8 +602,9 @@ test("reports Redis requirement when channel model interaction saves without Red
     ]
   });
 
-  assert.equal(result.response_type, "ephemeral");
-  assert.match(result.text, /Redis is not configured/);
+  const response = asSlashResponse(result);
+  assert.equal(response.response_type, "ephemeral");
+  assert.match(response.text, /Redis is not configured/);
 });
 
 test("channel model interaction replaces selector with updated current model", async () => {
@@ -493,11 +628,12 @@ test("channel model interaction replaces selector with updated current model", a
       }
     );
 
-    assert.equal(result.replace_original, true);
-    assert.match(result.text, /deepseek-v4-pro/);
-    assert.match(JSON.stringify(result.blocks), /Current text model: `deepseek-v4-pro`/);
-    assert.match(JSON.stringify(result.blocks), /"initial_option"/);
-    assert.match(JSON.stringify(result.blocks), /"value":"deepseek-v4-pro"/);
+    const response = asSlashResponse(result);
+    assert.equal(response.replace_original, true);
+    assert.match(response.text, /deepseek-v4-pro/);
+    assert.match(JSON.stringify(response.blocks), /Current text model: `deepseek-v4-pro`/);
+    assert.match(JSON.stringify(response.blocks), /"initial_option"/);
+    assert.match(JSON.stringify(response.blocks), /"value":"deepseek-v4-pro"/);
   });
 });
 
@@ -519,6 +655,33 @@ async function withTempArtifactDir(run: () => Promise<void>) {
     restoreEnv("ARTIFACT_BASE_URL", previousBaseUrl);
     restoreEnv("ARTIFACT_TTL_DAYS", previousTtlDays);
   }
+}
+
+function createViewSubmission(
+  callbackId: string,
+  values: Record<string, Record<string, Record<string, unknown>>>
+) {
+  return {
+    type: "view_submission",
+    user: { id: "U123" },
+    channel: { id: "C123" },
+    view: {
+      id: "V123",
+      callback_id: callbackId,
+      private_metadata: JSON.stringify({
+        userId: "U123",
+        channelId: "C123"
+      }),
+      state: {
+        values
+      }
+    }
+  };
+}
+
+function asSlashResponse(result: Awaited<ReturnType<typeof handleSlackInteractionPayload>>) {
+  assert.ok("response_type" in result);
+  return result;
 }
 
 function restoreEnv(key: string, value: string | undefined) {

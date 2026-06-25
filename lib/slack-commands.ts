@@ -18,10 +18,20 @@ import { formatNoboOpsStatus } from "./ops-status.js";
 import { summarizeOpsError } from "./ops-errors.js";
 import {
   clearChannelModelPreference,
+  formatUserPreferencesForSlack,
   getChannelPreferences,
+  getUserPreferences,
   handleUserPreferencesCommand,
-  setChannelModelPreference
+  setChannelModelPreference,
+  updateUserPreferences,
+  type ReminderStyle,
+  type UserVerbosity
 } from "./preferences.js";
+import {
+  createScheduleFromTool,
+  type ScheduleToolInput,
+  type SlackScheduleContext
+} from "./schedules.js";
 import { formatSlackSkillHelp } from "./skills.js";
 import {
   formatOpenCodeGoModelName,
@@ -45,7 +55,13 @@ const DAD_JOKES = [
 type SlackBlock = Record<string, unknown>;
 
 const CHANNEL_MODEL_ACTION_ID = "nobo_channel_model_select";
+const OPEN_MODAL_ACTION_PREFIX = "nobo_open_modal:";
+const REMINDER_MODAL_CALLBACK_ID = "nobo_reminder_modal";
+const PREFS_MODAL_CALLBACK_ID = "nobo_prefs_modal";
+const DIGEST_MODAL_CALLBACK_ID = "nobo_digest_modal";
+const ARTIFACT_MODAL_CALLBACK_ID = "nobo_artifact_modal";
 const SLACK_SELECT_MAX_OPTIONS = 100;
+const SLACK_MODAL_SECTION_TEXT_LIMIT = 2900;
 
 export type SlackSlashCommandPayload = {
   command: string;
@@ -67,6 +83,8 @@ export type SlackSlashCommandResponse = {
 
 export type SlackInteractionPayload = {
   type?: string;
+  trigger_id?: string;
+  callback_id?: string;
   user?: {
     id?: string;
   };
@@ -74,6 +92,7 @@ export type SlackInteractionPayload = {
     id?: string;
   };
   actions?: SlackInteractionAction[];
+  view?: SlackInteractionView;
 };
 
 type SlackInteractionAction = {
@@ -82,6 +101,33 @@ type SlackInteractionAction = {
     value?: string;
   };
 };
+
+type SlackInteractionView = {
+  id?: string;
+  callback_id?: string;
+  private_metadata?: string;
+  state?: {
+    values?: Record<string, Record<string, SlackViewStateValue>>;
+  };
+};
+
+type SlackViewStateValue = {
+  type?: string;
+  value?: string | null;
+  selected_conversation?: string | null;
+  selected_option?: {
+    value?: string;
+  } | null;
+};
+
+type SlackWeekday =
+  | "sunday"
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday";
 
 export type SlackSlashCommandTask = {
   type: "ai-news" | "hacker-news" | "news";
@@ -93,6 +139,7 @@ export type SlackSlashCommandTask = {
 export type SlackSlashCommandResult = {
   response: SlackSlashCommandResponse;
   task?: SlackSlashCommandTask;
+  modal?: SlackModalOpenRequest;
 };
 
 export type SlackSlashCommandOptions = {
@@ -102,6 +149,26 @@ export type SlackSlashCommandOptions = {
 export type SlackInteractionOptions = {
   setChannelModelPreference?: typeof setChannelModelPreference;
 };
+
+export type SlackModalOpenRequest = {
+  triggerId: string;
+  view: SlackView;
+};
+
+export type SlackInteractionResult = {
+  response: SlackInteractionResponse;
+  modal?: SlackModalOpenRequest;
+};
+
+export type SlackInteractionResponse =
+  | SlackSlashCommandResponse
+  | Record<string, never>
+  | {
+      response_action: "update";
+      view: SlackView;
+    };
+
+export type SlackView = Record<string, unknown>;
 
 export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashCommandPayload {
   const params = new URLSearchParams(rawBody);
@@ -155,6 +222,10 @@ export async function handleSlackSlashCommandPayload(
     return handleNoboChannelDigestSlashCommand(payload);
   }
 
+  if (command === "/nobo-reminder" || command === "/nobo-reminders") {
+    return handleNoboReminderSlashCommand(payload);
+  }
+
   if (command === "/nobo-channel-model") {
     return handleNoboChannelModelSlashCommand(payload);
   }
@@ -179,6 +250,19 @@ export async function handleSlackSlashCommandPayload(
   }
 
   if (command === "/nobo-artifacts") {
+    if (/^modal$/i.test(payload.text.trim()) && payload.trigger_id) {
+      return {
+        response: ephemeral("Opening artifact manager."),
+        modal: {
+          triggerId: payload.trigger_id,
+          view: buildArtifactModal({
+            userId: payload.user_id,
+            channelId: payload.channel_id
+          })
+        }
+      };
+    }
+
     return immediate(ephemeral(await handleArtifactCommandText(payload.text, {
       ownerUserId: payload.user_id
     })));
@@ -191,7 +275,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -221,6 +305,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
     "`/nobo-channel-digest daily|weekly ...`: subscribe this channel to digests",
+    "`/nobo-reminder`: create a reminder with a modal",
     "`/nobo-channel-model`: choose this channel's text model",
     "`/nobo-dad-joke`: post a dad joke",
     "",
@@ -233,6 +318,19 @@ async function handlePrefsSlashCommand(
 ): Promise<SlackSlashCommandResult> {
   if (!payload.user_id) {
     return immediate(ephemeral("Slack did not send a user for this command. Try again."));
+  }
+
+  if (!payload.text.trim() && payload.trigger_id) {
+    return {
+      response: ephemeral("Opening NoBo preferences."),
+      modal: {
+        triggerId: payload.trigger_id,
+        view: await buildPreferencesModal({
+          userId: payload.user_id,
+          channelId: payload.channel_id
+        })
+      }
+    };
   }
 
   return immediate(ephemeral(await handleUserPreferencesCommand(payload.user_id, payload.text)));
@@ -364,6 +462,21 @@ function formatListenStatus(activeListening: boolean) {
 async function handleNoboChannelDigestSlashCommand(
   payload: SlackSlashCommandPayload
 ): Promise<SlackSlashCommandResult> {
+  const text = payload.text.trim();
+
+  if ((!text || /^modal$/i.test(text)) && payload.trigger_id) {
+    return {
+      response: ephemeral("Opening channel digest setup."),
+      modal: {
+        triggerId: payload.trigger_id,
+        view: buildChannelDigestModal({
+          userId: payload.user_id,
+          channelId: payload.channel_id
+        })
+      }
+    };
+  }
+
   return immediate(
     ephemeral(
       await handleChannelDigestCommand({
@@ -375,12 +488,57 @@ async function handleNoboChannelDigestSlashCommand(
   );
 }
 
-export async function handleSlackInteractionPayload(
+async function handleNoboReminderSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  if (!payload.user_id) {
+    return immediate(ephemeral("Slack did not send a user for this command. Try again."));
+  }
+
+  if (!payload.channel_id) {
+    return immediate(ephemeral("Slack did not send a channel for this command. Try again in a channel."));
+  }
+
+  if (!payload.trigger_id) {
+    return immediate(ephemeral("Slack did not send a trigger for the reminder modal. Try again."));
+  }
+
+  return {
+    response: ephemeral("Opening reminder setup."),
+    modal: {
+      triggerId: payload.trigger_id,
+      view: buildReminderModal({
+        userId: payload.user_id,
+        channelId: payload.channel_id
+      })
+    }
+  };
+}
+
+export async function handleSlackInteractionRequest(
   payload: SlackInteractionPayload,
   options: SlackInteractionOptions = {}
-): Promise<SlackSlashCommandResponse> {
+): Promise<SlackInteractionResult> {
+  if (payload.type === "shortcut" || payload.type === "message_action") {
+    return handleSlackShortcutPayload(payload);
+  }
+
+  if (payload.type === "view_submission") {
+    return {
+      response: await handleSlackViewSubmissionPayload(payload)
+    };
+  }
+
   if (payload.type !== "block_actions") {
-    return ephemeral("Unsupported Slack interaction.");
+    return { response: ephemeral("Unsupported Slack interaction.") };
+  }
+
+  const modalAction = payload.actions?.find((candidate) =>
+    candidate.action_id?.startsWith(OPEN_MODAL_ACTION_PREFIX)
+  );
+
+  if (modalAction) {
+    return handleSlackOpenModalAction(payload, modalAction.action_id ?? "");
   }
 
   const action = payload.actions?.find(
@@ -388,23 +546,23 @@ export async function handleSlackInteractionPayload(
   );
 
   if (!action) {
-    return ephemeral("Unsupported Slack action.");
+    return { response: ephemeral("Unsupported Slack action.") };
   }
 
   const channelId = payload.channel?.id;
   if (!channelId) {
-    return ephemeral("Slack did not send a channel for this selection.");
+    return { response: ephemeral("Slack did not send a channel for this selection.") };
   }
 
   const modelId = normalizeOpenCodeGoOaCompatibleModelId(action.selected_option?.value);
   if (!modelId) {
-    return ephemeral("Slack did not send a valid model selection.");
+    return { response: ephemeral("Slack did not send a valid model selection.") };
   }
 
   const setModelPreference = options.setChannelModelPreference ?? setChannelModelPreference;
   const result = await setModelPreference(channelId, modelId);
   if (!result.ok) {
-    return ephemeral(`Couldn't update channel model: ${result.reason}`);
+    return { response: ephemeral(`Couldn't update channel model: ${result.reason}`) };
   }
 
   const response = await buildChannelModelSelectorResponse(
@@ -413,10 +571,576 @@ export async function handleSlackInteractionPayload(
   );
 
   return {
-    ...response,
-    text: formatChannelModelUpdated(modelId),
-    replace_original: true
+    response: {
+      ...response,
+      text: formatChannelModelUpdated(modelId),
+      replace_original: true
+    }
   };
+}
+
+export async function handleSlackInteractionPayload(
+  payload: SlackInteractionPayload,
+  options: SlackInteractionOptions = {}
+): Promise<SlackInteractionResponse> {
+  return (await handleSlackInteractionRequest(payload, options)).response;
+}
+
+async function handleSlackShortcutPayload(
+  payload: SlackInteractionPayload
+): Promise<SlackInteractionResult> {
+  const triggerId = payload.trigger_id;
+  const callbackId = normalizeShortcutCallbackId(payload.callback_id);
+
+  if (!triggerId) {
+    return { response: ephemeral("Slack did not send a trigger for this shortcut.") };
+  }
+
+  const view = await buildModalForKind(callbackId, {
+    userId: payload.user?.id,
+    channelId: payload.channel?.id
+  });
+
+  if (!view) {
+    return { response: ephemeral("Unsupported NoBo shortcut.") };
+  }
+
+  return {
+    response: {},
+    modal: {
+      triggerId,
+      view
+    }
+  };
+}
+
+async function handleSlackOpenModalAction(
+  payload: SlackInteractionPayload,
+  actionId: string
+): Promise<SlackInteractionResult> {
+  const triggerId = payload.trigger_id;
+  const kind = actionId.slice(OPEN_MODAL_ACTION_PREFIX.length);
+
+  if (!triggerId) {
+    return { response: ephemeral("Slack did not send a trigger for this action.") };
+  }
+
+  const view = await buildModalForKind(kind, {
+    userId: payload.user?.id,
+    channelId: payload.channel?.id
+  });
+
+  if (!view) {
+    return { response: ephemeral("Unsupported NoBo action.") };
+  }
+
+  return {
+    response: {},
+    modal: {
+      triggerId,
+      view
+    }
+  };
+}
+
+async function buildModalForKind(
+  kind: string | undefined,
+  context: SlackModalContext
+) {
+  switch (kind) {
+    case "reminder":
+    case REMINDER_MODAL_CALLBACK_ID:
+      return buildReminderModal(context);
+    case "prefs":
+    case "preferences":
+    case PREFS_MODAL_CALLBACK_ID:
+      return buildPreferencesModal(context);
+    case "digest":
+    case "channel_digest":
+    case DIGEST_MODAL_CALLBACK_ID:
+      return buildChannelDigestModal(context);
+    case "artifacts":
+    case "artifact":
+    case ARTIFACT_MODAL_CALLBACK_ID:
+      return buildArtifactModal(context);
+    default:
+      return null;
+  }
+}
+
+async function handleSlackViewSubmissionPayload(
+  payload: SlackInteractionPayload
+): Promise<SlackInteractionResponse> {
+  const callbackId = payload.view?.callback_id;
+
+  try {
+    if (callbackId === PREFS_MODAL_CALLBACK_ID) {
+      return updateModal(await handlePreferencesModalSubmission(payload));
+    }
+
+    if (callbackId === DIGEST_MODAL_CALLBACK_ID) {
+      return updateModal(await handleDigestModalSubmission(payload));
+    }
+
+    if (callbackId === ARTIFACT_MODAL_CALLBACK_ID) {
+      return updateModal(await handleArtifactModalSubmission(payload));
+    }
+
+    if (callbackId === REMINDER_MODAL_CALLBACK_ID) {
+      return updateModal(await handleReminderModalSubmission(payload));
+    }
+
+    return {};
+  } catch (error) {
+    return updateModal(`Couldn't handle that modal: ${summarizeOpsError(error)}`);
+  }
+}
+
+type SlackModalContext = {
+  userId?: string;
+  channelId?: string;
+};
+
+function buildReminderModal(context: SlackModalContext): SlackView {
+  return {
+    type: "modal",
+    callback_id: REMINDER_MODAL_CALLBACK_ID,
+    private_metadata: encodeModalMetadata(context),
+    title: plainText("NoBo reminder"),
+    submit: plainText("Save"),
+    close: plainText("Cancel"),
+    blocks: [
+      inputBlock("reminder_channel", "Channel", conversationSelect("reminder_channel_select", context.channelId), Boolean(context.channelId)),
+      inputBlock("reminder_task", "Task", plainTextInput("reminder_task_input", "Check logs")),
+      inputBlock(
+        "reminder_kind",
+        "Schedule",
+        staticSelect("reminder_kind_select", "Choose", [
+          option("In a delay", "once"),
+          option("Every interval", "interval"),
+          option("Daily", "daily"),
+          option("Weekly", "weekly")
+        ], "once")
+      ),
+      inputBlock("reminder_amount", "Delay amount", plainTextInput("reminder_amount_input", "10")),
+      inputBlock(
+        "reminder_unit",
+        "Delay unit",
+        staticSelect("reminder_unit_select", "Unit", [
+          option("Minutes", "minutes"),
+          option("Hours", "hours"),
+          option("Days", "days")
+        ], "minutes")
+      ),
+      inputBlock(
+        "reminder_weekday",
+        "Weekly day",
+        staticSelect("reminder_weekday_select", "Day", [
+          option("Monday", "monday"),
+          option("Tuesday", "tuesday"),
+          option("Wednesday", "wednesday"),
+          option("Thursday", "thursday"),
+          option("Friday", "friday"),
+          option("Saturday", "saturday"),
+          option("Sunday", "sunday")
+        ], "monday"),
+        true
+      ),
+      inputBlock("reminder_time", "Daily/weekly time", plainTextInput("reminder_time_input", "09:00"), true),
+      inputBlock(
+        "reminder_mode",
+        "Delivery",
+        staticSelect("reminder_mode_select", "Mode", [
+          option("Reminder", "reminder"),
+          option("Prompt NoBo", "prompt")
+        ], "reminder")
+      )
+    ]
+  };
+}
+
+async function buildPreferencesModal(context: SlackModalContext): Promise<SlackView> {
+  const preferences = await getUserPreferences(context.userId);
+
+  return {
+    type: "modal",
+    callback_id: PREFS_MODAL_CALLBACK_ID,
+    private_metadata: encodeModalMetadata(context),
+    title: plainText("NoBo prefs"),
+    submit: plainText("Save"),
+    close: plainText("Cancel"),
+    blocks: [
+      inputBlock("prefs_timezone", "Timezone", plainTextInput("prefs_timezone_input", preferences.timeZone)),
+      inputBlock(
+        "prefs_verbosity",
+        "Verbosity",
+        staticSelect("prefs_verbosity_select", "Verbosity", [
+          option("Concise", "concise"),
+          option("Normal", "normal"),
+          option("Detailed", "detailed")
+        ], preferences.verbosity)
+      ),
+      inputBlock("prefs_news", "News interests", plainTextInput("prefs_news_input", preferences.newsInterests.join(", ")), true),
+      inputBlock(
+        "prefs_reminder_style",
+        "Reminder style",
+        staticSelect("prefs_reminder_style_select", "Style", [
+          option("Direct", "direct"),
+          option("Gentle", "gentle"),
+          option("Detailed", "detailed")
+        ], preferences.reminderStyle)
+      )
+    ]
+  };
+}
+
+function buildChannelDigestModal(context: SlackModalContext): SlackView {
+  return {
+    type: "modal",
+    callback_id: DIGEST_MODAL_CALLBACK_ID,
+    private_metadata: encodeModalMetadata(context),
+    title: plainText("Channel digest"),
+    submit: plainText("Save"),
+    close: plainText("Cancel"),
+    blocks: [
+      inputBlock("digest_channel", "Channel", conversationSelect("digest_channel_select", context.channelId), Boolean(context.channelId)),
+      inputBlock(
+        "digest_frequency",
+        "Frequency",
+        staticSelect("digest_frequency_select", "Frequency", [
+          option("Daily", "daily"),
+          option("Weekly", "weekly")
+        ], "daily")
+      ),
+      inputBlock(
+        "digest_weekday",
+        "Weekly day",
+        staticSelect("digest_weekday_select", "Day", [
+          option("Monday", "monday"),
+          option("Tuesday", "tuesday"),
+          option("Wednesday", "wednesday"),
+          option("Thursday", "thursday"),
+          option("Friday", "friday"),
+          option("Saturday", "saturday"),
+          option("Sunday", "sunday")
+        ], "monday"),
+        true
+      ),
+      inputBlock("digest_time", "Time CT", plainTextInput("digest_time_input", "09:00")),
+      inputBlock("digest_focus", "Focus", plainTextInput("digest_focus_input", "launch blockers"), true)
+    ]
+  };
+}
+
+function buildArtifactModal(context: SlackModalContext): SlackView {
+  return {
+    type: "modal",
+    callback_id: ARTIFACT_MODAL_CALLBACK_ID,
+    private_metadata: encodeModalMetadata(context),
+    title: plainText("Artifacts"),
+    submit: plainText("Run"),
+    close: plainText("Cancel"),
+    blocks: [
+      inputBlock(
+        "artifact_action",
+        "Action",
+        staticSelect("artifact_action_select", "Action", [
+          option("List", "list"),
+          option("List all", "list all"),
+          option("Expired", "expired"),
+          option("Cleanup expired", "cleanup"),
+          option("Delete", "delete"),
+          option("Update", "update")
+        ], "list")
+      ),
+      inputBlock("artifact_id", "Artifact ID", plainTextInput("artifact_id_input", "abc12345"), true),
+      inputBlock("artifact_content", "Replacement content", plainTextInput("artifact_content_input", ""), true)
+    ]
+  };
+}
+
+async function handlePreferencesModalSubmission(payload: SlackInteractionPayload) {
+  const metadata = parseModalMetadata(payload.view?.private_metadata);
+  const userId = payload.user?.id ?? metadata.userId;
+
+  if (!userId) {
+    return "Slack did not send a user for this modal.";
+  }
+
+  const patch = {
+    timeZone: getTextValue(payload, "prefs_timezone", "prefs_timezone_input"),
+    verbosity: getSelectedValue(payload, "prefs_verbosity", "prefs_verbosity_select") as UserVerbosity,
+    newsInterests: parseModalList(getTextValue(payload, "prefs_news", "prefs_news_input")),
+    reminderStyle: getSelectedValue(payload, "prefs_reminder_style", "prefs_reminder_style_select") as ReminderStyle
+  };
+  const result = await updateUserPreferences(userId, patch);
+
+  return result.ok
+    ? `Updated preferences.\n${formatUserPreferencesForSlack(result.preferences)}`
+    : `Couldn't update preferences: ${result.reason}`;
+}
+
+async function handleDigestModalSubmission(payload: SlackInteractionPayload) {
+  const metadata = parseModalMetadata(payload.view?.private_metadata);
+  const channelId =
+    payload.channel?.id ??
+    metadata.channelId ??
+    getConversationValue(payload, "digest_channel", "digest_channel_select");
+  const ownerUserId = payload.user?.id ?? metadata.userId;
+
+  if (!channelId) {
+    return "Slack did not send a channel for this modal.";
+  }
+
+  const frequency = getSelectedValue(payload, "digest_frequency", "digest_frequency_select") || "daily";
+  const weekday = getSelectedValue(payload, "digest_weekday", "digest_weekday_select") || "monday";
+  const time = getTextValue(payload, "digest_time", "digest_time_input") || "09:00";
+  const focus = getTextValue(payload, "digest_focus", "digest_focus_input");
+  const text = [frequency, frequency === "weekly" ? weekday : "", time, focus].filter(Boolean).join(" ");
+
+  return handleChannelDigestCommand({
+    text,
+    channelId,
+    ownerUserId
+  });
+}
+
+async function handleArtifactModalSubmission(payload: SlackInteractionPayload) {
+  const metadata = parseModalMetadata(payload.view?.private_metadata);
+  const ownerUserId = payload.user?.id ?? metadata.userId;
+  const action = getSelectedValue(payload, "artifact_action", "artifact_action_select") || "list";
+  const id = getTextValue(payload, "artifact_id", "artifact_id_input");
+  const content = getTextValue(payload, "artifact_content", "artifact_content_input");
+  const text =
+    action === "delete" || action === "update"
+      ? [action, id, action === "update" ? content : ""].filter(Boolean).join(" ")
+      : action;
+
+  return handleArtifactCommandText(text, { ownerUserId });
+}
+
+async function handleReminderModalSubmission(payload: SlackInteractionPayload) {
+  const metadata = parseModalMetadata(payload.view?.private_metadata);
+  const ownerUserId = payload.user?.id ?? metadata.userId;
+  const channel =
+    payload.channel?.id ??
+    metadata.channelId ??
+    getConversationValue(payload, "reminder_channel", "reminder_channel_select");
+
+  if (!ownerUserId) {
+    return "Slack did not send a user for this modal.";
+  }
+
+  if (!channel) {
+    return "Slack did not send a channel for this modal.";
+  }
+
+  const task = getTextValue(payload, "reminder_task", "reminder_task_input");
+  const kind = getSelectedValue(payload, "reminder_kind", "reminder_kind_select") || "once";
+  const mode = (getSelectedValue(payload, "reminder_mode", "reminder_mode_select") || "reminder") as "reminder" | "prompt";
+  const input = buildScheduleToolInputFromModal(payload, kind, task, mode);
+  const context: SlackScheduleContext = {
+    ownerUserId,
+    channel,
+    threadTs: "",
+    sourceTs: payload.view?.id ?? `${Date.now()}`,
+    mentionedChannels: []
+  };
+  const result = await createScheduleFromTool(context, input);
+
+  return `Saved reminder \`${result.id.slice(0, 8)}\`: ${result.summary}`;
+}
+
+function buildScheduleToolInputFromModal(
+  payload: SlackInteractionPayload,
+  kind: string,
+  task: string,
+  responseMode: "reminder" | "prompt"
+): ScheduleToolInput {
+  if (kind === "daily") {
+    const time = parseModalTime(getTextValue(payload, "reminder_time", "reminder_time_input") || "09:00");
+    return {
+      kind: "daily",
+      task,
+      hour: time.hour,
+      minute: time.minute,
+      responseMode
+    };
+  }
+
+  if (kind === "weekly") {
+    const time = parseModalTime(getTextValue(payload, "reminder_time", "reminder_time_input") || "09:00");
+    const weekday = (getSelectedValue(payload, "reminder_weekday", "reminder_weekday_select") || "monday") as SlackWeekday;
+
+    return {
+      kind: "weekly",
+      task,
+      weekday,
+      hour: time.hour,
+      minute: time.minute,
+      responseMode
+    };
+  }
+
+  return {
+    kind: kind === "interval" ? "interval" : "once",
+    task,
+    amount: getTextValue(payload, "reminder_amount", "reminder_amount_input") || "10",
+    unit: (getSelectedValue(payload, "reminder_unit", "reminder_unit_select") || "minutes") as "minutes" | "hours" | "days",
+    responseMode
+  };
+}
+
+function updateModal(text: string): SlackInteractionResponse {
+  return {
+    response_action: "update",
+    view: buildResultModal("NoBo", text)
+  };
+}
+
+function buildResultModal(title: string, text: string): SlackView {
+  return {
+    type: "modal",
+    title: plainText(title),
+    close: plainText("Close"),
+    blocks: [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: truncateSlackModalText(text)
+        }
+      }
+    ]
+  };
+}
+
+function normalizeShortcutCallbackId(callbackId: string | undefined) {
+  return callbackId?.replace(/^nobo_/, "").replace(/_modal$/, "");
+}
+
+function getTextValue(payload: SlackInteractionPayload, blockId: string, actionId: string) {
+  const value = payload.view?.state?.values?.[blockId]?.[actionId]?.value;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function getSelectedValue(payload: SlackInteractionPayload, blockId: string, actionId: string) {
+  const value = payload.view?.state?.values?.[blockId]?.[actionId]?.selected_option?.value;
+  return typeof value === "string" ? value : "";
+}
+
+function getConversationValue(payload: SlackInteractionPayload, blockId: string, actionId: string) {
+  const value = payload.view?.state?.values?.[blockId]?.[actionId]?.selected_conversation;
+  return typeof value === "string" ? value : "";
+}
+
+function parseModalMetadata(input: string | undefined): SlackModalContext {
+  if (!input) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(input) as SlackModalContext;
+  } catch {
+    return {};
+  }
+}
+
+function encodeModalMetadata(context: SlackModalContext) {
+  return JSON.stringify({
+    ...(context.userId ? { userId: context.userId } : {}),
+    ...(context.channelId ? { channelId: context.channelId } : {})
+  });
+}
+
+function parseModalList(input: string) {
+  return input
+    .split(/[,;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseModalTime(input: string) {
+  const match = input.trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+
+  if (!match) {
+    throw new Error("Use 24-hour time like 09:00.");
+  }
+
+  return {
+    hour: Number(match[1]),
+    minute: Number(match[2])
+  };
+}
+
+function inputBlock(blockId: string, label: string, element: Record<string, unknown>, optional = false) {
+  return {
+    type: "input",
+    block_id: blockId,
+    label: plainText(label),
+    element,
+    optional
+  };
+}
+
+function plainTextInput(actionId: string, initialValue: string) {
+  return {
+    type: "plain_text_input",
+    action_id: actionId,
+    ...(initialValue ? { initial_value: initialValue } : {}),
+    multiline: initialValue.length > 80
+  };
+}
+
+function conversationSelect(actionId: string, initialConversation: string | undefined) {
+  return {
+    type: "conversations_select",
+    action_id: actionId,
+    placeholder: plainText("Select channel"),
+    filter: {
+      include: ["public", "private"],
+      exclude_bot_users: true
+    },
+    ...(initialConversation ? { initial_conversation: initialConversation } : {})
+  };
+}
+
+function staticSelect(
+  actionId: string,
+  placeholder: string,
+  options: Array<ReturnType<typeof option>>,
+  initialValue: string
+) {
+  const initialOption = options.find((candidate) => candidate.value === initialValue) ?? options[0];
+
+  return {
+    type: "static_select",
+    action_id: actionId,
+    placeholder: plainText(placeholder),
+    options,
+    ...(initialOption ? { initial_option: initialOption } : {})
+  };
+}
+
+function option(text: string, value: string) {
+  return {
+    text: plainText(text),
+    value
+  };
+}
+
+function plainText(text: string) {
+  return {
+    type: "plain_text",
+    text,
+    emoji: true
+  };
+}
+
+function truncateSlackModalText(input: string) {
+  return input.length <= SLACK_MODAL_SECTION_TEXT_LIMIT
+    ? input
+    : `${input.slice(0, SLACK_MODAL_SECTION_TEXT_LIMIT - 4)}...`;
 }
 
 async function handleNoboChannelModelSlashCommand(
