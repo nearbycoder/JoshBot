@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import AdmZip from "adm-zip";
 import { __testing, isSlackDirectMessage } from "../lib/slack.js";
 
 test("detects Slack IM events by channel_type", () => {
@@ -189,8 +190,48 @@ test("extracts text-like Slack uploads into message context", async (t) => {
   assert.match(content, /Attachment extracted text:\nname,total\nalpha,12\nbeta,9/);
 });
 
-test("uses Slack previews and reports current binary document limits", async () => {
-  const pdfContent = await __testing.buildSlackMessageContent("xoxb-test", {
+test("extracts supported binary documents from Slack uploads", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const pdfUrl = "https://files.slack.com/files-pri/T123-FPDF/download/brief.pdf";
+  const docxUrl = "https://files.slack.com/files-pri/T123-FDOCX/download/brief.docx";
+  const xlsxUrl = "https://files.slack.com/files-pri/T123-FXLSX/download/forecast.xlsx";
+  const downloads = new Map([
+    [pdfUrl, { bytes: createPdfFixture("Quarterly findings and risks."), contentType: "application/pdf" }],
+    [
+      docxUrl,
+      {
+        bytes: createDocxFixture("Launch plan", "Owner: NoBo"),
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }
+    ],
+    [
+      xlsxUrl,
+      {
+        bytes: createXlsxFixture([["metric", "total"], ["alpha", "12"]]),
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      }
+    ]
+  ]);
+
+  globalThis.fetch = (async (input, init) => {
+    assert.equal((init?.headers as Record<string, string>).authorization, "Bearer xoxb-test");
+
+    const download = downloads.get(String(input));
+    assert.ok(download, `unexpected fetch ${String(input)}`);
+
+    return new Response(download.bytes, {
+      headers: {
+        "content-length": String(download.bytes.byteLength),
+        "content-type": download.contentType
+      }
+    });
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const content = await __testing.buildSlackMessageContent("xoxb-test", {
     files: [
       {
         id: "FPDF",
@@ -198,29 +239,67 @@ test("uses Slack previews and reports current binary document limits", async () 
         mimetype: "application/pdf",
         filetype: "pdf",
         pretty_type: "PDF",
-        preview_plain_text: "Quarterly findings and risks."
-      }
-    ]
-  });
-
-  assert.match(pdfContent, /Attached PDF: brief\.pdf/);
-  assert.match(pdfContent, /Attachment extracted text:\nQuarterly findings and risks\./);
-  assert.doesNotMatch(pdfContent, /limited to Slack-provided previews/);
-
-  const xlsxContent = await __testing.buildSlackMessageContent("xoxb-test", {
-    files: [
+        url_private_download: pdfUrl
+      },
+      {
+        id: "FDOCX",
+        name: "brief.docx",
+        mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filetype: "docx",
+        pretty_type: "Word Document",
+        url_private_download: docxUrl
+      },
       {
         id: "FXLSX",
         name: "forecast.xlsx",
-        mimetype: "application\/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        mimetype: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         filetype: "xlsx",
-        pretty_type: "Excel Spreadsheet"
+        pretty_type: "Excel Spreadsheet",
+        url_private_download: xlsxUrl
       }
     ]
   });
 
-  assert.match(xlsxContent, /Attached Excel Spreadsheet: forecast\.xlsx/);
-  assert.match(xlsxContent, /binary spreadsheet extraction is limited/);
+  assert.match(content, /Attached PDF: brief\.pdf/);
+  assert.match(content, /Quarterly findings and risks\./);
+  assert.match(content, /Attached Word Document: brief\.docx/);
+  assert.match(content, /Launch plan\nOwner: NoBo/);
+  assert.match(content, /Attached Excel Spreadsheet: forecast\.xlsx/);
+  assert.match(content, /Sheet Forecast:\nmetric\ttotal\nalpha\t12/);
+  assert.doesNotMatch(content, /limited to Slack-provided previews/);
+});
+
+test("falls back to Slack document previews when binary extraction fails", async (t) => {
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = (async () =>
+    new Response("<html>login</html>", {
+      headers: {
+        "content-length": "18",
+        "content-type": "text/html"
+      }
+    })) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const content = await __testing.buildSlackMessageContent("xoxb-test", {
+    files: [
+      {
+        id: "FPDF",
+        name: "brief.pdf",
+        mimetype: "application/pdf",
+        filetype: "pdf",
+        pretty_type: "PDF",
+        preview_plain_text: "Slack preview text.",
+        url_private_download: "https://files.slack.com/files-pri/T123-FPDF/download/brief.pdf"
+      }
+    ]
+  });
+
+  assert.match(content, /Attachment extracted text:\nSlack preview text\./);
+  assert.match(content, /Attachment extraction fallback: used Slack-provided preview because Slack returned HTML/);
 });
 
 test("keeps image parts while adding text attachment context", async (t) => {
@@ -300,3 +379,89 @@ test("keeps image parts while adding text attachment context", async (t) => {
   assert.match(text, /Current user \(U123\): what is here\?/);
   assert.match(text, /Attachment extracted text:\nfirst note\nsecond note/);
 });
+
+function createPdfFixture(text: string) {
+  return Buffer.from(`%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 56 >>
+stream
+BT /F1 24 Tf 72 720 Td (${text}) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer
+<< /Root 1 0 R /Size 6 >>
+startxref
+416
+%%EOF`);
+}
+
+function createDocxFixture(...paragraphs: string[]) {
+  const zip = new AdmZip();
+  zip.addFile(
+    "word/document.xml",
+    Buffer.from(
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs
+        .map((paragraph) => `<w:p><w:r><w:t>${escapeXml(paragraph)}</w:t></w:r></w:p>`)
+        .join("")}</w:body></w:document>`
+    )
+  );
+  return zip.toBuffer();
+}
+
+function createXlsxFixture(rows: string[][]) {
+  const zip = new AdmZip();
+  const sharedStrings = rows.flat();
+  zip.addFile(
+    "xl/workbook.xml",
+    Buffer.from(
+      `<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Forecast" sheetId="1" r:id="rId1"/></sheets></workbook>`
+    )
+  );
+  zip.addFile(
+    "xl/sharedStrings.xml",
+    Buffer.from(`<sst>${sharedStrings.map((value) => `<si><t>${escapeXml(value)}</t></si>`).join("")}</sst>`)
+  );
+  zip.addFile(
+    "xl/worksheets/sheet1.xml",
+    Buffer.from(
+      `<worksheet><sheetData>${rows
+        .map(
+          (row, rowIndex) =>
+            `<row r="${rowIndex + 1}">${row
+              .map((_, cellIndex) => `<c t="s"><v>${rowIndex * row.length + cellIndex}</v></c>`)
+              .join("")}</row>`
+        )
+        .join("")}</sheetData></worksheet>`
+    )
+  );
+  return zip.toBuffer();
+}
+
+function escapeXml(input: string) {
+  return input
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&apos;");
+}
