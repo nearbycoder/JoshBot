@@ -22,6 +22,7 @@ import {
   handleUserPreferencesCommand,
   setChannelModelPreference
 } from "./preferences.js";
+import { handlePollCommandText } from "./polls.js";
 import { formatSlackSkillHelp } from "./skills.js";
 import {
   formatOpenCodeGoModelName,
@@ -188,10 +189,14 @@ export async function handleSlackSlashCommandPayload(
     return handleDecisionsSlashCommand(payload);
   }
 
+  if (command === "/nobo-polls" || command === "/nobo-poll") {
+    return handlePollsSlashCommand(payload);
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-polls`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -217,6 +222,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
     "`/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your generated artifacts",
     "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
+    "`/nobo-polls [create|list|vote|results|close]`: run lightweight channel polls",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
@@ -236,6 +242,21 @@ async function handlePrefsSlashCommand(
   }
 
   return immediate(ephemeral(await handleUserPreferencesCommand(payload.user_id, payload.text)));
+}
+
+async function handlePollsSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  const result = await handlePollCommandText({
+    text: payload.text,
+    channelId: payload.channel_id,
+    userId: payload.user_id,
+    source: "slash-command"
+  });
+
+  return immediate(
+    result.responseType === "in_channel" ? inChannel(result.text) : ephemeral(result.text)
+  );
 }
 
 async function handleStatusSlashCommand(

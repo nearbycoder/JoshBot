@@ -40,6 +40,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
   assert.match(response.text, /`\/nobo-artifacts \[list\|update <id> <content>\|delete <id>\|cleanup\]`/);
   assert.match(response.text, /`\/nobo-decisions \[add <decision>\|list\]`/);
+  assert.match(response.text, /`\/nobo-polls \[create\|list\|vote\|results\|close\]`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
@@ -263,6 +264,29 @@ test("reports Redis requirement for /nobo-decisions add without Redis", async ()
     const result = await handleSlackSlashCommandPayload({
       command: "/nobo-decisions",
       text: "add Use Redis for the decision log",
+      channel_id: "C123",
+      user_id: "U123"
+    });
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /Redis is not configured/);
+  } finally {
+    if (originalRedisUrl === undefined) {
+      delete process.env.REDIS_URL;
+    } else {
+      process.env.REDIS_URL = originalRedisUrl;
+    }
+  }
+});
+
+test("reports Redis requirement for /nobo-polls create without Redis", async () => {
+  const originalRedisUrl = process.env.REDIS_URL;
+  delete process.env.REDIS_URL;
+
+  try {
+    const result = await handleSlackSlashCommandPayload({
+      command: "/nobo-polls",
+      text: "create Ship Friday? | Yes | No",
       channel_id: "C123",
       user_id: "U123"
     });

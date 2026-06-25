@@ -1,3 +1,4 @@
+import { recordSlackPollReactionVote } from "./polls.js";
 import { respondToSlackMention } from "./slack.js";
 
 export type SlackReactionAddedEvent = {
@@ -42,9 +43,24 @@ const REMINDER_REACTIONS = new Set([
 ]);
 
 export async function handleSlackReactionShortcut(event: SlackReactionAddedEvent) {
+  if (shouldIgnoreReactionShortcutEvent(event)) {
+    return;
+  }
+
+  const pollVote = await recordSlackPollReactionVote({
+    channelId: event.item.channel,
+    threadTs: event.item.ts,
+    userId: event.user,
+    reaction: event.reaction
+  });
+
+  if (pollVote.ok) {
+    return;
+  }
+
   const shortcut = getSlackReactionShortcut(event.reaction);
 
-  if (!shortcut || shouldIgnoreReactionShortcutEvent(event)) {
+  if (!shortcut) {
     return;
   }
 
