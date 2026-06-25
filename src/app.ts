@@ -22,7 +22,13 @@ import {
   type SlackSlashCommandTask
 } from "../lib/slack-commands.js";
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "../lib/slack-events.js";
-import { openSlackModal, postGeneratedSlackMessage, postSlackMessage, verifySlackRequest } from "../lib/slack.js";
+import {
+  isSlackRetryRequest,
+  openSlackModal,
+  postGeneratedSlackMessage,
+  postSlackMessage,
+  verifySlackRequest
+} from "../lib/slack.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "../lib/memory.js";
 import { startMonitorRunner } from "../lib/monitors.js";
 import { getPreferredNewsFocus, getUserPreferences } from "../lib/preferences.js";
@@ -73,7 +79,7 @@ app.post("/api/slack/events", async (c) => {
     return c.text(payload.challenge);
   }
 
-  if (!c.req.header("x-slack-retry-num")) {
+  if (!isSlackRetryRequest(c.req.raw.headers)) {
     void handleSlackEventCallbackPayload(payload).catch((error) => {
       recordOpsError("slack event", error);
       console.error(`Slack event handling failed: ${summarizeError(error)}`);
@@ -91,6 +97,10 @@ app.post("/api/slack/commands", async (c) => {
 
   if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
     return c.text("Invalid Slack signature", 401);
+  }
+
+  if (isSlackRetryRequest(c.req.raw.headers)) {
+    return c.text("");
   }
 
   try {
@@ -128,6 +138,10 @@ app.post("/api/slack/interactions", async (c) => {
 
   if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
     return c.text("Invalid Slack signature", 401);
+  }
+
+  if (isSlackRetryRequest(c.req.raw.headers)) {
+    return c.text("");
   }
 
   try {

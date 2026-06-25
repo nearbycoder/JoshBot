@@ -1,5 +1,6 @@
 import { createSlackChannel } from "@flue/slack";
 import { handleSlackEventCallbackPayload } from "../../lib/slack-events.js";
+import { isSlackRetryRequest } from "../../lib/slack.js";
 
 const missingSlackSigningSecret = "nobo-disabled-slack-signing-secret";
 
@@ -14,7 +15,7 @@ export const channel = createSlackChannel({
       return undefined;
     }
 
-    if (c.req.header("x-slack-retry-num")) {
+    if (isSlackRetryRequest(c.req.raw.headers)) {
       return undefined;
     }
 

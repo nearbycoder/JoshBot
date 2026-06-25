@@ -365,6 +365,10 @@ export function isSlackDirectMessage(event: SlackMessageEvent) {
   return event.channel_type === "im" || event.channel.startsWith("D");
 }
 
+export function isSlackRetryRequest(headers: SlackHeaders) {
+  return Boolean(getHeader(headers, "x-slack-retry-num"));
+}
+
 export async function respondToSlackMention(event: SlackMessageEvent) {
   const lock = await acquireSlackEventLock(event, "mention");
   if (!lock.acquired) {

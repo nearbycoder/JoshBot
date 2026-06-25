@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import AdmZip from "adm-zip";
-import { __testing, isSlackDirectMessage } from "../lib/slack.js";
+import { __testing, isSlackDirectMessage, isSlackRetryRequest } from "../lib/slack.js";
+
+test("detects Slack retry request headers", () => {
+  assert.equal(isSlackRetryRequest(new Headers({ "x-slack-retry-num": "1" })), true);
+  assert.equal(isSlackRetryRequest({ "x-slack-retry-num": "2" }), true);
+  assert.equal(isSlackRetryRequest(new Headers()), false);
+});
 
 test("detects Slack IM events by channel_type", () => {
   assert.equal(
