@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 
 export type ArtifactKind = "html" | "markdown";
 
-export type CreatedArtifact = {
+export type ArtifactMetadata = {
   id: string;
   kind: ArtifactKind;
   filename: string;
@@ -13,21 +13,51 @@ export type CreatedArtifact = {
   rawUrl: string;
   previewUrl: string;
   path: string;
+  createdAt: string;
+  expiresAt?: string;
+  bytes: number;
+};
+
+export type CreatedArtifact = ArtifactMetadata;
+
+export type ListedArtifact = ArtifactMetadata & {
+  shortId: string;
+  expired: boolean;
+};
+
+export type ArtifactLookupResult =
+  | { status: "found"; artifact: ListedArtifact }
+  | { status: "missing" }
+  | { status: "ambiguous"; matches: ListedArtifact[] }
+  | { status: "invalid" };
+
+export type DeleteArtifactResult =
+  | { ok: true; artifact: ListedArtifact }
+  | { ok: false; reason: "invalid" | "missing" | "ambiguous"; matches?: ListedArtifact[] };
+
+export type DeleteExpiredArtifactsResult = {
+  deleted: ListedArtifact[];
 };
 
 const DEFAULT_ARTIFACT_DIR = "artifacts";
 const MAX_ARTIFACT_BYTES = 1024 * 1024 * 2;
+const ARTIFACT_METADATA_FILENAME = ".artifact.json";
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export async function createArtifact({
   kind,
   title,
   filename,
-  content
+  content,
+  expiresAt,
+  expiresInDays
 }: {
   kind: ArtifactKind;
   title: string;
   filename?: string;
   content: string;
+  expiresAt?: string;
+  expiresInDays?: number | string | null;
 }): Promise<CreatedArtifact> {
   const bytes = Buffer.byteLength(content, "utf8");
 
@@ -35,6 +65,8 @@ export async function createArtifact({
     throw new Error(`Artifact is too large (${bytes} bytes). Limit is ${MAX_ARTIFACT_BYTES} bytes.`);
   }
 
+  const createdAt = new Date();
+  const resolvedExpiresAt = resolveArtifactExpiresAt({ expiresAt, expiresInDays }, createdAt);
   const id = randomUUID();
   const extension = kind === "html" ? ".html" : ".md";
   const safeFilename = sanitizeFilename(filename || title || `artifact${extension}`, extension);
@@ -51,14 +83,126 @@ export async function createArtifact({
       ? `${getArtifactBaseUrl()}/artifacts/${encodeURIComponent(id)}/preview`
       : rawUrl;
 
-  return {
+  const artifact = {
     id,
     kind,
     filename: safeFilename,
     title: title.trim() || safeFilename,
     rawUrl,
     previewUrl,
-    path: targetPath
+    path: targetPath,
+    createdAt: createdAt.toISOString(),
+    ...(resolvedExpiresAt ? { expiresAt: resolvedExpiresAt } : {}),
+    bytes
+  };
+
+  await writeFile(path.join(targetDir, ARTIFACT_METADATA_FILENAME), JSON.stringify(artifact, null, 2), "utf8");
+
+  return artifact;
+}
+
+export async function listArtifacts({
+  includeExpired = false,
+  limit,
+  now = new Date()
+}: {
+  includeExpired?: boolean;
+  limit?: number;
+  now?: Date;
+} = {}): Promise<ListedArtifact[]> {
+  let entries;
+
+  try {
+    entries = await readdir(getArtifactDirectory(), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const artifacts = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && isSafeArtifactId(entry.name))
+        .map((entry) => loadArtifactMetadata(entry.name, now))
+    )
+  ).filter((artifact): artifact is ListedArtifact => artifact !== null);
+
+  const filteredArtifacts = includeExpired
+    ? artifacts
+    : artifacts.filter((artifact) => !artifact.expired);
+  const sortedArtifacts = filteredArtifacts.sort(
+    (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
+  );
+
+  return typeof limit === "number" && limit > 0 ? sortedArtifacts.slice(0, limit) : sortedArtifacts;
+}
+
+export async function findArtifact(idPrefix: string): Promise<ArtifactLookupResult> {
+  const normalizedPrefix = idPrefix.trim().toLowerCase();
+
+  if (!/^[0-9a-f-]{4,36}$/.test(normalizedPrefix)) {
+    return { status: "invalid" };
+  }
+
+  if (isSafeArtifactId(normalizedPrefix)) {
+    const artifact = await loadArtifactMetadata(normalizedPrefix, new Date());
+    return artifact ? { status: "found", artifact } : { status: "missing" };
+  }
+
+  const matches = (await listArtifacts({ includeExpired: true })).filter((artifact) =>
+    artifact.id.startsWith(normalizedPrefix)
+  );
+
+  if (matches.length === 0) {
+    return { status: "missing" };
+  }
+
+  if (matches.length > 1) {
+    return { status: "ambiguous", matches };
+  }
+
+  return { status: "found", artifact: matches[0] as ListedArtifact };
+}
+
+export async function deleteArtifact(idPrefix: string): Promise<DeleteArtifactResult> {
+  const match = await findArtifact(idPrefix);
+
+  if (match.status === "invalid") {
+    return { ok: false, reason: "invalid" };
+  }
+
+  if (match.status === "missing") {
+    return { ok: false, reason: "missing" };
+  }
+
+  if (match.status === "ambiguous") {
+    return { ok: false, reason: "ambiguous", matches: match.matches };
+  }
+
+  await rm(path.join(getArtifactDirectory(), match.artifact.id), { recursive: true, force: true });
+
+  return {
+    ok: true,
+    artifact: match.artifact
+  };
+}
+
+export async function deleteExpiredArtifacts({
+  now = new Date()
+}: {
+  now?: Date;
+} = {}): Promise<DeleteExpiredArtifactsResult> {
+  const expiredArtifacts = (await listArtifacts({ includeExpired: true, now })).filter(
+    (artifact) => artifact.expired
+  );
+
+  await Promise.all(
+    expiredArtifacts.map((artifact) =>
+      rm(path.join(getArtifactDirectory(), artifact.id), { recursive: true, force: true })
+    )
+  );
+
+  return {
+    deleted: expiredArtifacts
   };
 }
 
@@ -155,6 +299,203 @@ export async function handleArtifactFetchRequest(request: Request) {
   } catch {
     return textResponse("Artifact not found", 404);
   }
+}
+
+async function loadArtifactMetadata(id: string, now: Date): Promise<ListedArtifact | null> {
+  const artifactDir = path.join(getArtifactDirectory(), id);
+  const metadataPath = path.join(artifactDir, ARTIFACT_METADATA_FILENAME);
+
+  try {
+    const payload = await readFile(metadataPath, "utf8");
+    const metadata = await normalizeStoredArtifactMetadata(id, JSON.parse(payload));
+
+    if (metadata) {
+      return toListedArtifact(metadata, now);
+    }
+  } catch {
+    // Fall through to legacy artifact discovery below.
+  }
+
+  const legacyMetadata = await readLegacyArtifactMetadata(id);
+  return legacyMetadata ? toListedArtifact(legacyMetadata, now) : null;
+}
+
+async function normalizeStoredArtifactMetadata(
+  id: string,
+  input: unknown
+): Promise<ArtifactMetadata | null> {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const filename = typeof record.filename === "string" ? record.filename : "";
+
+  if (!isSafeFilename(filename)) {
+    return null;
+  }
+
+  const kind = normalizeArtifactKind(record.kind, filename);
+  const filePath = path.join(getArtifactDirectory(), id, filename);
+  const fileStats = await stat(filePath);
+  const createdAt = normalizeIsoDate(record.createdAt) ?? fileStats.birthtime.toISOString();
+  const expiresAt = normalizeIsoDate(record.expiresAt);
+
+  return createArtifactMetadata({
+    id,
+    kind,
+    filename,
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : filename,
+    createdAt,
+    expiresAt,
+    bytes: typeof record.bytes === "number" && record.bytes >= 0 ? record.bytes : fileStats.size
+  });
+}
+
+async function readLegacyArtifactMetadata(id: string): Promise<ArtifactMetadata | null> {
+  const artifactDir = path.join(getArtifactDirectory(), id);
+
+  try {
+    const files = await readdir(artifactDir);
+    const filename = files.find((file) => isSafeFilename(file));
+
+    if (!filename) {
+      return null;
+    }
+
+    const fileStats = await stat(path.join(artifactDir, filename));
+
+    return createArtifactMetadata({
+      id,
+      kind: normalizeArtifactKind(undefined, filename),
+      filename,
+      title: filename,
+      createdAt: fileStats.birthtime.toISOString(),
+      bytes: fileStats.size
+    });
+  } catch {
+    return null;
+  }
+}
+
+function createArtifactMetadata({
+  id,
+  kind,
+  filename,
+  title,
+  createdAt,
+  expiresAt,
+  bytes
+}: {
+  id: string;
+  kind: ArtifactKind;
+  filename: string;
+  title: string;
+  createdAt: string;
+  expiresAt?: string;
+  bytes: number;
+}): ArtifactMetadata {
+  const rawUrl = `${getArtifactBaseUrl()}/artifacts/${encodeURIComponent(id)}/${encodeURIComponent(filename)}`;
+  const previewUrl =
+    kind === "markdown"
+      ? `${getArtifactBaseUrl()}/artifacts/${encodeURIComponent(id)}/preview`
+      : rawUrl;
+
+  return {
+    id,
+    kind,
+    filename,
+    title,
+    rawUrl,
+    previewUrl,
+    path: path.join(getArtifactDirectory(), id, filename),
+    createdAt,
+    ...(expiresAt ? { expiresAt } : {}),
+    bytes
+  };
+}
+
+function toListedArtifact(artifact: ArtifactMetadata, now: Date): ListedArtifact {
+  return {
+    ...artifact,
+    shortId: artifact.id.slice(0, 8),
+    expired: isArtifactExpired(artifact, now)
+  };
+}
+
+function isArtifactExpired(artifact: ArtifactMetadata, now: Date) {
+  return Boolean(artifact.expiresAt && Date.parse(artifact.expiresAt) <= now.getTime());
+}
+
+function normalizeArtifactKind(kind: unknown, filename: string): ArtifactKind {
+  if (kind === "html" || kind === "markdown") {
+    return kind;
+  }
+
+  return filename.endsWith(".md") ? "markdown" : "html";
+}
+
+function normalizeIsoDate(input: unknown) {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(input);
+
+  if (!Number.isFinite(timestamp)) {
+    return undefined;
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function resolveArtifactExpiresAt(
+  input: {
+    expiresAt?: string;
+    expiresInDays?: number | string | null;
+  },
+  createdAt: Date
+) {
+  if (input.expiresAt && input.expiresInDays !== undefined && input.expiresInDays !== null) {
+    throw new Error("Use either expiresAt or expiresInDays, not both.");
+  }
+
+  if (input.expiresAt) {
+    const normalizedDate = normalizeIsoDate(input.expiresAt);
+
+    if (!normalizedDate) {
+      throw new Error("Artifact expiresAt must be a valid date.");
+    }
+
+    return normalizedDate;
+  }
+
+  const expiresInDays =
+    input.expiresInDays === undefined || input.expiresInDays === null
+      ? parseArtifactTtlDaysFromEnv()
+      : parsePositiveDays(input.expiresInDays, "expiresInDays");
+
+  return expiresInDays ? new Date(createdAt.getTime() + expiresInDays * MS_PER_DAY).toISOString() : undefined;
+}
+
+function parseArtifactTtlDaysFromEnv() {
+  const rawValue = process.env.ARTIFACT_TTL_DAYS?.trim();
+
+  if (!rawValue || rawValue === "0" || rawValue.toLowerCase() === "never") {
+    return undefined;
+  }
+
+  return parsePositiveDays(rawValue, "ARTIFACT_TTL_DAYS");
+}
+
+function parsePositiveDays(input: number | string, label: string) {
+  const value = typeof input === "number" ? input : Number(input);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${label} must be a positive number of days.`);
+  }
+
+  return value;
 }
 
 async function sendMarkdownPreview(

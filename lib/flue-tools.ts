@@ -1,6 +1,11 @@
 import { defineTool } from "@flue/runtime";
 import { Exa } from "exa-js";
-import { createArtifact } from "./artifacts.js";
+import {
+  createArtifact,
+  deleteArtifact,
+  deleteExpiredArtifacts,
+  listArtifacts
+} from "./artifacts.js";
 import { fetchSlackChannelHistory } from "./channel-history.js";
 import { formatCurrentTime } from "./nobo-time.js";
 import {
@@ -19,6 +24,9 @@ export function createNoboTools(scheduleContext?: SlackScheduleContext) {
     ...(process.env.EXA_API_KEY ? [createExaSearchTool()] : []),
     createCurrentTimeTool(),
     createArtifactTool(),
+    createListArtifactsTool(),
+    createDeleteArtifactTool(),
+    createCleanupExpiredArtifactsTool(),
     ...(scheduleContext ? createSlackContextTools(scheduleContext) : [])
   ];
 }
@@ -71,6 +79,15 @@ function createArtifactTool() {
           type: "string",
           minLength: 1,
           description: "The complete file content to write. HTML artifacts should be complete documents."
+        },
+        expiresInDays: {
+          anyOf: [{ type: "number", exclusiveMinimum: 0 }, { type: "string", pattern: "^\\d+(\\.\\d+)?$" }],
+          description:
+            "Optional expiration in days. If omitted, ARTIFACT_TTL_DAYS is used when configured."
+        },
+        expiresAt: {
+          type: "string",
+          description: "Optional ISO timestamp or parseable date for expiration. Do not combine with expiresInDays."
         }
       },
       required: ["kind", "title", "content"],
@@ -81,6 +98,8 @@ function createArtifactTool() {
       title: string;
       filename?: string;
       content: string;
+      expiresInDays?: number | string;
+      expiresAt?: string;
     }) => {
       const artifact = await createArtifact(args);
 
@@ -88,8 +107,101 @@ function createArtifactTool() {
         id: artifact.id,
         title: artifact.title,
         filename: artifact.filename,
+        createdAt: artifact.createdAt,
+        expiresAt: artifact.expiresAt ?? null,
         previewUrl: artifact.previewUrl,
         rawUrl: artifact.rawUrl
+      });
+    }
+  });
+}
+
+function createListArtifactsTool() {
+  return defineTool({
+    name: "list_artifacts",
+    description: "List generated artifacts, including preview links and expiration metadata.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        includeExpired: {
+          type: "boolean",
+          description: "Set true to include expired artifacts. Defaults to false."
+        },
+        limit: {
+          anyOf: [{ type: "integer", minimum: 1 }, { type: "string", pattern: "^\\d+$" }],
+          description: "Maximum artifacts to return. Defaults to 10."
+        }
+      },
+      additionalProperties: false
+    }),
+    execute: async (args: { includeExpired?: boolean; limit?: number | string }) => {
+      const limit = parseOptionalPositiveInteger(args.limit, 10);
+      const artifacts = await listArtifacts({
+        includeExpired: args.includeExpired === true,
+        limit
+      });
+
+      return JSON.stringify({
+        artifacts: artifacts.map((artifact) => ({
+          id: artifact.id,
+          shortId: artifact.shortId,
+          title: artifact.title,
+          kind: artifact.kind,
+          filename: artifact.filename,
+          bytes: artifact.bytes,
+          createdAt: artifact.createdAt,
+          expiresAt: artifact.expiresAt ?? null,
+          expired: artifact.expired,
+          previewUrl: artifact.previewUrl,
+          rawUrl: artifact.rawUrl
+        }))
+      });
+    }
+  });
+}
+
+function createDeleteArtifactTool() {
+  return defineTool({
+    name: "delete_artifact",
+    description: "Delete a generated artifact by UUID or visible short ID prefix.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 4,
+          description: "Artifact UUID or visible prefix, e.g. abc12345."
+        }
+      },
+      required: ["idPrefix"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string }) => {
+      const result = await deleteArtifact(args.idPrefix);
+
+      return JSON.stringify(result);
+    }
+  });
+}
+
+function createCleanupExpiredArtifactsTool() {
+  return defineTool({
+    name: "cleanup_expired_artifacts",
+    description: "Delete generated artifacts whose expiration timestamp is in the past.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {},
+      additionalProperties: false
+    }),
+    execute: async () => {
+      const result = await deleteExpiredArtifacts();
+
+      return JSON.stringify({
+        deleted: result.deleted.map((artifact) => ({
+          id: artifact.id,
+          shortId: artifact.shortId,
+          title: artifact.title
+        }))
       });
     }
   });

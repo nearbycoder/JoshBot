@@ -3,6 +3,7 @@ import {
   setChannelActiveListening,
   toggleChannelActiveListening
 } from "./memory.js";
+import { handleArtifactCommandText } from "./artifact-commands.js";
 import { handleChannelDigestCommand } from "./channel-digests.js";
 import { handleChannelMemorySlashCommandText } from "./channel-memory-controls.js";
 import { formatNoboOpsStatus } from "./ops-status.js";
@@ -108,10 +109,14 @@ export async function handleSlackSlashCommandPayload(
     })));
   }
 
+  if (command === "/nobo-artifacts") {
+    return immediate(ephemeral(await handleArtifactCommandText(payload.text)));
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -134,6 +139,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-status`: show ops health",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
+    "`/nobo-artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",

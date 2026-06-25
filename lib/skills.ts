@@ -1,4 +1,5 @@
 import { createSlackSkillReply } from "./ai.js";
+import { handleArtifactCommandText } from "./artifact-commands.js";
 import { handleChannelDigestCommand } from "./channel-digests.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
@@ -26,6 +27,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
+  "`@NoBo artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
 ];
 
@@ -129,6 +131,16 @@ export async function maybeHandleSlackSkillCommand({
 - End with a short 'Sources:' section when you used web search.`,
         onTextDelta
       });
+    case "artifacts":
+      return handleArtifactCommandText(command.args || "list");
+    case "list-artifacts":
+      return handleArtifactCommandText(command.args ? `list ${command.args}` : "list");
+    case "delete-artifact":
+      return command.args
+        ? handleArtifactCommandText(`delete ${command.args}`)
+        : "Usage: `@NoBo delete-artifact <id>`";
+    case "cleanup-artifacts":
+      return handleArtifactCommandText(command.args || "cleanup");
     default:
       return null;
   }
@@ -170,12 +182,25 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "channel-digest", args };
   }
 
+  if (name === "artifact") {
+    return { name: "artifacts", args };
+  }
+
   if (
     name === "summarize-thread" ||
     name === "thread-todos" ||
     name === "channel-digest" ||
-    name === "web-search"
+    name === "web-search" ||
+    name === "artifacts" ||
+    name === "list-artifacts" ||
+    name === "delete-artifact" ||
+    name === "cleanup-artifacts" ||
+    name === "prune-artifacts"
   ) {
+    if (name === "prune-artifacts") {
+      return { name: "cleanup-artifacts", args };
+    }
+
     return { name, args };
   }
 

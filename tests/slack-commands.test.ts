@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { createArtifact } from "../lib/artifacts.js";
 import {
   handleSlackSlashCommandPayload,
   parseSlackSlashCommandPayload
@@ -30,6 +34,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-status`/);
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
   assert.match(response.text, /`\/nobo-memory \[show\|forget <number\|text>\|clear confirm\]`/);
+  assert.match(response.text, /`\/nobo-artifacts \[list\|delete <id>\|cleanup\]`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
@@ -54,6 +59,49 @@ test("returns ephemeral ops status for /nobo-status", async () => {
   assert.match(result.response.text, /NoBo status/);
   assert.match(result.response.text, /Redis: ok/);
   assert.equal(result.task, undefined);
+});
+
+test("lists artifacts for /nobo-artifacts", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({
+      kind: "markdown",
+      title: "Plan",
+      content: "hello"
+    });
+    const result = await handleSlackSlashCommandPayload({
+      command: "/nobo-artifacts",
+      text: "list"
+    });
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /\*Artifacts\*/);
+    assert.match(result.response.text, new RegExp(artifact.id.slice(0, 8)));
+    assert.match(result.response.text, /preview/);
+  });
+});
+
+test("deletes artifacts for /nobo-artifacts", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({
+      kind: "html",
+      title: "Temporary page",
+      content: "<!doctype html><title>Temp</title>"
+    });
+    const result = await handleSlackSlashCommandPayload({
+      command: "/nobo-artifacts",
+      text: `delete ${artifact.id.slice(0, 8)}`
+    });
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /Deleted artifact/);
+
+    const listResult = await handleSlackSlashCommandPayload({
+      command: "/nobo-artifacts",
+      text: "list all"
+    });
+
+    assert.match(listResult.response.text, /No artifacts found/);
+  });
 });
 
 test("points unknown /nobo-help slash command text at help", async () => {
@@ -255,3 +303,32 @@ test("reports Redis requirement for /nobo-channel-digest subscription without Re
     }
   }
 });
+
+async function withTempArtifactDir(run: () => Promise<void>) {
+  const previousDir = process.env.ARTIFACT_DIR;
+  const previousBaseUrl = process.env.ARTIFACT_BASE_URL;
+  const previousTtlDays = process.env.ARTIFACT_TTL_DAYS;
+  const artifactDir = await mkdtemp(path.join(tmpdir(), "nobo-slack-artifacts-"));
+
+  process.env.ARTIFACT_DIR = artifactDir;
+  process.env.ARTIFACT_BASE_URL = "https://nobo.test";
+  delete process.env.ARTIFACT_TTL_DAYS;
+
+  try {
+    await run();
+  } finally {
+    await rm(artifactDir, { recursive: true, force: true });
+    restoreEnv("ARTIFACT_DIR", previousDir);
+    restoreEnv("ARTIFACT_BASE_URL", previousBaseUrl);
+    restoreEnv("ARTIFACT_TTL_DAYS", previousTtlDays);
+  }
+}
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+
+  process.env[key] = value;
+}

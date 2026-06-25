@@ -55,6 +55,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_ATTACHMENT_TEXT_MAX_CHARS`: defaults to `6000`; max extracted attachment text sent into model context, capped at 20000
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
+   - `ARTIFACT_TTL_DAYS`: optional default artifact expiration window; blank or `0` means no default expiration
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
    - `CHANNEL_DIGEST_SCHEDULER_INTERVAL_MS`: optional override for channel digest subscription checks; falls back to `SCHEDULER_INTERVAL_MS`
    - `NOBO_HACKER_NEWS_CHANNEL_NAME`: defaults to `hacker-news`; channel name for the scheduled Hacker News digest
@@ -83,7 +84,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-memory`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -157,6 +158,17 @@ NoBo can generate browser-previewable artifacts when a Slack user asks for a sta
 - `GET /artifacts/:id/preview` for a rendered Markdown preview
 
 Set `ARTIFACT_BASE_URL` to the same public HTTPS origin you use for Slack events, such as your ngrok URL in local development, so links posted in Slack are clickable by teammates.
+
+Each new artifact also writes `.artifact.json` metadata with title, kind, size, creation time, and optional expiration. Expired artifacts are still served by URL until deleted; cleanup removes them.
+
+Artifact management:
+
+- `/nobo-artifacts list`
+- `/nobo-artifacts list all`
+- `/nobo-artifacts expired`
+- `/nobo-artifacts delete abc12345`
+- `/nobo-artifacts cleanup`
+- `@NoBo artifacts [list|delete <id>|cleanup]`
 
 ## Thread context
 
@@ -260,6 +272,7 @@ Current skills:
 - `/nobo-status`
 - `/nobo-listen [on|off|status]`
 - `/nobo-memory [show|forget <number|text>|clear confirm]`
+- `/nobo-artifacts [list|delete <id>|cleanup]`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`
@@ -273,6 +286,7 @@ Current skills:
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`
 - `@NoBo clear channel memory confirm`
+- `@NoBo artifacts [list|delete <id>|cleanup]`
 
 Memory commands also remain available:
 
