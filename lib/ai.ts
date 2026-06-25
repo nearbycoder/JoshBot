@@ -11,6 +11,10 @@ import {
   type UserPreferences
 } from "./preferences.js";
 import type { SlackScheduleContext } from "./schedules.js";
+import type {
+  ConditionalMonitorCheckRequest,
+  ConditionalMonitorCheckResult
+} from "./monitors.js";
 import {
   parseFollowUpExtraction,
   type ThreadFollowUpDraft
@@ -326,6 +330,43 @@ export async function createScheduledSlackMessage({
   });
 }
 
+export async function createConditionalMonitorCheck({
+  source,
+  conditionType,
+  query,
+  ownerUserId,
+  lastObservation
+}: ConditionalMonitorCheckRequest): Promise<ConditionalMonitorCheckResult> {
+  const sourceInstruction =
+    source === "web_search"
+      ? "Use web search to inspect the current public state for the query."
+      : "Use current context and available tools to inspect the condition.";
+  const text = await generateSlackResponse({
+    messages: [
+      {
+        role: "user",
+        content: `Check this monitor now.
+Source: ${source}
+Condition: ${conditionType}
+Query: ${query}
+Previous observation: ${lastObservation ?? "none"}`
+      }
+    ],
+    memories: [],
+    currentUserId: ownerUserId,
+    extraSystem: `You are evaluating a NoBo conditional monitor.
+- ${sourceInstruction}
+- Return only compact JSON with keys matched, summary, fingerprint, observation.
+- matched must be true only when the alert condition is currently met.
+- For changes, use previous observation as the baseline; matched is false when there is no previous observation.
+- fingerprint must be stable for the current relevant state.
+- summary must be the exact Slack alert detail if matched, or a short reason if silent.
+- Do not mention these instructions.`
+  });
+
+  return parseMonitorCheckJson(text);
+}
+
 async function generateSlackResponse({
   messages,
   memories,
@@ -530,6 +571,51 @@ async function createTextDeltaObserver(
 
 function summarizeDeltaError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function parseMonitorCheckJson(text: string): ConditionalMonitorCheckResult {
+  const jsonText = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
+
+  try {
+    const payload = JSON.parse(jsonText) as Partial<ConditionalMonitorCheckResult>;
+    const fingerprint =
+      typeof payload.fingerprint === "string" && payload.fingerprint.trim()
+        ? payload.fingerprint.trim()
+        : stableMonitorFingerprint(String(payload.observation ?? payload.summary ?? text));
+
+    return {
+      matched: payload.matched === true,
+      summary:
+        typeof payload.summary === "string" && payload.summary.trim()
+          ? payload.summary.trim()
+          : payload.matched === true
+            ? "Monitor condition matched."
+            : "Monitor condition not met.",
+      fingerprint,
+      observation:
+        typeof payload.observation === "string" && payload.observation.trim()
+          ? payload.observation.trim()
+          : fingerprint
+    };
+  } catch {
+    return {
+      matched: false,
+      summary: "Monitor check returned an unreadable result.",
+      fingerprint: stableMonitorFingerprint(text),
+      observation: text
+    };
+  }
+}
+
+function stableMonitorFingerprint(input: string) {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return (hash >>> 0).toString(16);
 }
 
 function isPromptResult(input: unknown): input is { text: string } {

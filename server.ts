@@ -1,7 +1,7 @@
 import { config as loadEnv } from "dotenv";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleArtifactRequest } from "./lib/artifacts.js";
-import { createScheduledSlackMessage } from "./lib/ai.js";
+import { createConditionalMonitorCheck, createScheduledSlackMessage } from "./lib/ai.js";
 import { readLimitedNodeRequestBody, RequestBodyTooLargeError } from "./lib/request-body.js";
 import {
   postGeneratedSlackMessage,
@@ -10,6 +10,7 @@ import {
 } from "./lib/slack.js";
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "./lib/slack-events.js";
 import { startScheduleRunner } from "./lib/schedules.js";
+import { startMonitorRunner } from "./lib/monitors.js";
 import { startChannelDigestSubscriptionRunner } from "./lib/channel-digests.js";
 
 loadEnv({ path: ".env.local" });
@@ -85,6 +86,10 @@ server.listen(port, () => {
 startScheduleRunner({
   postSlackMessage,
   runScheduledTask: createScheduledSlackMessage
+});
+startMonitorRunner({
+  postSlackMessage,
+  runMonitorCheck: createConditionalMonitorCheck
 });
 startChannelDigestSubscriptionRunner({
   postGeneratedSlackMessage

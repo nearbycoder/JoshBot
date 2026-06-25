@@ -11,6 +11,7 @@ import {
   trackThreadFollowUps
 } from "./follow-ups.js";
 import type { ChannelMemoryEntry } from "./memory.js";
+import { handleMonitorCommandText } from "./monitors.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 import { handleUserPreferencesCommand } from "./preferences.js";
 import type { SlackScheduleContext } from "./schedules.js";
@@ -39,6 +40,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
   "`@NoBo follow-ups`: track thread action items and schedule due reminders",
+  "`@NoBo monitor every 10 minutes alert if <thing> appears|changes|fails`: conditional alerts",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your artifacts",
@@ -124,6 +126,12 @@ export async function maybeHandleSlackSkillCommand({
         channelId,
         ownerUserId: currentUserId,
         commandName: "@NoBo channel-digest"
+      });
+    case "monitor":
+    case "monitors":
+      return handleMonitorCommandText({
+        text: command.name === "monitors" && !command.args ? "list" : `monitor ${command.args}`,
+        context: scheduleContext
       });
     case "follow-ups": {
       const followUpCommand = parseFollowUpSkillCommand(command.args);
@@ -242,6 +250,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "channel-digest", args };
   }
 
+  if (name === "monitors") {
+    return { name: "monitors", args };
+  }
+
   if (name === "artifact") {
     return { name: "artifacts", args };
   }
@@ -259,6 +271,7 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "summarize-thread" ||
     name === "thread-todos" ||
     name === "channel-digest" ||
+    name === "monitor" ||
     name === "follow-ups" ||
     name === "web-search" ||
     name === "artifacts" ||

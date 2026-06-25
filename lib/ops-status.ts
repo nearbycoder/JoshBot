@@ -2,6 +2,7 @@ import { getHackerNewsScheduleStatus } from "./hacker-news-schedule.js";
 import { getRecentOpsErrors, summarizeOpsError, type OpsErrorRecord } from "./ops-errors.js";
 import { getRedisClient } from "./redis.js";
 import { getScheduleRunnerStatus } from "./schedules.js";
+import { getMonitorRunnerStatus } from "./monitors.js";
 
 const DEFAULT_TEXT_MODEL = "glm-5.2";
 const DEFAULT_VISION_MODEL = "kimi-k2.6";
@@ -18,6 +19,7 @@ export type OpsStatus = {
   generatedAt: string;
   redis: RedisOpsStatus;
   scheduler: ReturnType<typeof getScheduleRunnerStatus>;
+  monitors: ReturnType<typeof getMonitorRunnerStatus>;
   hackerNewsSchedule: ReturnType<typeof getHackerNewsScheduleStatus>;
   slack: {
     botToken: boolean;
@@ -37,6 +39,7 @@ type CollectOpsStatusOptions = {
   redisTimeoutMs?: number;
   checkRedis?: () => Promise<RedisOpsStatus>;
   getScheduler?: () => OpsStatus["scheduler"];
+  getMonitors?: () => OpsStatus["monitors"];
   getHackerNewsScheduler?: () => OpsStatus["hackerNewsSchedule"];
   getRecentErrors?: () => OpsErrorRecord[];
 };
@@ -46,6 +49,7 @@ export async function collectOpsStatus(options: CollectOpsStatusOptions = {}): P
     generatedAt: new Date().toISOString(),
     redis: await (options.checkRedis ?? (() => checkRedisHealth(options.redisTimeoutMs)))(),
     scheduler: (options.getScheduler ?? getScheduleRunnerStatus)(),
+    monitors: (options.getMonitors ?? getMonitorRunnerStatus)(),
     hackerNewsSchedule: (options.getHackerNewsScheduler ?? getHackerNewsScheduleStatus)(),
     slack: {
       botToken: hasEnv("SLACK_BOT_TOKEN"),
@@ -74,6 +78,9 @@ export function formatOpsStatus(status: OpsStatus) {
     `Scheduler: ${status.scheduler.started ? "started" : "not started"}, ${
       status.scheduler.running ? "running" : "idle"
     }, interval ${status.scheduler.intervalMs}ms, Redis ${status.scheduler.redisConfigured ? "configured" : "missing"}`,
+    `Monitors: ${status.monitors.started ? "started" : "not started"}, ${
+      status.monitors.running ? "running" : "idle"
+    }, interval ${status.monitors.intervalMs}ms, Redis ${status.monitors.redisConfigured ? "configured" : "missing"}`,
     `Hacker News schedule: ${formatHackerNewsScheduleStatus(status.hackerNewsSchedule)}`,
     `Slack config: token ${present(status.slack.botToken)}, signing secret ${present(
       status.slack.signingSecret

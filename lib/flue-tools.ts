@@ -10,6 +10,12 @@ import {
 import { fetchSlackChannelHistory } from "./channel-history.js";
 import { formatCurrentTime } from "./nobo-time.js";
 import {
+  cancelMonitorFromTool,
+  createMonitorFromTool,
+  listMonitorsFromTool,
+  type MonitorToolInput
+} from "./monitors.js";
+import {
   cancelScheduleFromTool,
   createScheduleFromTool,
   listSchedulesFromTool,
@@ -295,6 +301,9 @@ function createSlackContextTools(scheduleContext: SlackScheduleContext) {
     createListSchedulesTool(scheduleContext),
     createCancelScheduleTool(scheduleContext),
     createUpdateScheduleTool(scheduleContext),
+    createMonitorTool(scheduleContext),
+    createListMonitorsTool(scheduleContext),
+    createCancelMonitorTool(scheduleContext),
     createSlackChannelHistoryTool(scheduleContext)
   ];
 }
@@ -437,6 +446,71 @@ function createUpdateScheduleTool(scheduleContext: SlackScheduleContext) {
     execute: async (args: { idPrefix: string; schedule: ScheduleToolInput }) =>
       JSON.stringify({
         result: await updateScheduleFromTool(scheduleContext, args.idPrefix, args.schedule)
+      })
+  });
+}
+
+function createMonitorTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "create_monitor",
+    description:
+      `Create a recurring conditional monitor that posts only when its alert condition is met. Use for requests like "alert if X appears/changes/fails". If the user mentions a channel, set targetChannelId and targetChannelName from these raw Slack channel mentions when available: ${JSON.stringify(scheduleContext.mentionedChannels)}.`,
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        monitor: monitorInputSchema()
+      },
+      required: ["monitor"],
+      additionalProperties: false
+    }),
+    execute: async (args: { monitor: MonitorToolInput }) => {
+      const monitor = await createMonitorFromTool(scheduleContext, args.monitor);
+
+      return JSON.stringify({
+        id: monitor.id.slice(0, 8),
+        fullId: monitor.id,
+        summary: monitor.summary,
+        nextRunAt: monitor.nextRunAt
+      });
+    }
+  });
+}
+
+function createListMonitorsTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "list_monitors",
+    description: "List active conditional monitors owned by the current Slack user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {},
+      additionalProperties: false
+    }),
+    execute: async () =>
+      JSON.stringify({
+        result: await listMonitorsFromTool(scheduleContext)
+      })
+  });
+}
+
+function createCancelMonitorTool(scheduleContext: SlackScheduleContext) {
+  return defineTool({
+    name: "cancel_monitor",
+    description: "Cancel or delete an active conditional monitor owned by the current Slack user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 1,
+          description: "The monitor ID or visible prefix, e.g. abc12345."
+        }
+      },
+      required: ["idPrefix"],
+      additionalProperties: false
+    }),
+    execute: async (args: { idPrefix: string }) =>
+      JSON.stringify({
+        result: await cancelMonitorFromTool(scheduleContext, args.idPrefix)
       })
   });
 }
@@ -608,6 +682,83 @@ function scheduleInputSchema() {
           minute: { ...wholeNumber, description: "Minute in the user's preferred timezone, 0-59." }
         },
         required: ["kind", "task", "weekday", "hour", "minute"],
+        additionalProperties: false
+      }
+    ]
+  };
+}
+
+function monitorInputSchema() {
+  const source = {
+    enum: ["channel_history", "web_search", "prompt"],
+    description:
+      "Use channel_history for Slack channel appearances, web_search for public web changes, prompt for current checks such as status/failure conditions."
+  };
+  const conditionType = {
+    enum: ["appears", "changes", "fails"],
+    description: "The alert condition. Appears checks for a term, changes alerts after a changed baseline, fails checks failure/status conditions."
+  };
+  const targetChannelId = {
+    type: "string",
+    description: "Optional Slack channel ID to post into, such as C123ABC. Use only when the user mentions a channel."
+  };
+  const targetChannelName = {
+    type: "string",
+    description: "Optional visible channel name, without #."
+  };
+  const wholeNumber = {
+    anyOf: [{ type: "integer" }, { type: "string", pattern: "^\\d+$" }],
+    description: "A whole number. Numeric strings are accepted."
+  };
+  const baseProperties = {
+    query: {
+      type: "string",
+      minLength: 1,
+      maxLength: 1000,
+      description: "The thing to monitor, such as an error phrase, product name, URL, status page, or search query."
+    },
+    conditionType,
+    source,
+    targetChannelId,
+    targetChannelName
+  };
+
+  return {
+    oneOf: [
+      {
+        type: "object",
+        properties: {
+          kind: { const: "interval", description: "A recurring monitor every N minutes, hours, or days." },
+          ...baseProperties,
+          amount: wholeNumber,
+          unit: { enum: ["minutes", "hours", "days"], description: "Repeat interval unit." }
+        },
+        required: ["kind", "query", "conditionType", "amount", "unit"],
+        additionalProperties: false
+      },
+      {
+        type: "object",
+        properties: {
+          kind: { const: "daily", description: "A recurring daily monitor in the user's preferred timezone." },
+          ...baseProperties,
+          hour: { ...wholeNumber, description: "24-hour clock hour in the user's preferred timezone, 0-23." },
+          minute: { ...wholeNumber, description: "Minute in the user's preferred timezone, 0-59." }
+        },
+        required: ["kind", "query", "conditionType", "hour", "minute"],
+        additionalProperties: false
+      },
+      {
+        type: "object",
+        properties: {
+          kind: { const: "weekly", description: "A recurring weekly monitor in the user's preferred timezone." },
+          ...baseProperties,
+          weekday: {
+            enum: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+          },
+          hour: { ...wholeNumber, description: "24-hour clock hour in the user's preferred timezone, 0-23." },
+          minute: { ...wholeNumber, description: "Minute in the user's preferred timezone, 0-59." }
+        },
+        required: ["kind", "query", "conditionType", "weekday", "hour", "minute"],
         additionalProperties: false
       }
     ]
