@@ -67,6 +67,27 @@ test("builds meeting notes prompts with artifact intent", () => {
   assert.match(instructions, /create_artifact/);
 });
 
+test("routes poll Slack skill commands", async () => {
+  const originalRedisUrl = process.env.REDIS_URL;
+  delete process.env.REDIS_URL;
+
+  try {
+    const reply = await maybeHandleSlackSkillCommand({
+      commandText: "poll create Ship Friday? | Yes | No",
+      modelMessages: [],
+      memories: [],
+      currentUserId: "U123",
+      channelId: "C123",
+      threadTs: "1000.000",
+      messageTs: "1001.000"
+    });
+
+    assert.match(reply ?? "", /Redis is not configured/);
+  } finally {
+    restoreEnv("REDIS_URL", originalRedisUrl);
+  }
+});
+
 async function withTempArtifactDir(run: () => Promise<void>) {
   const previousDir = process.env.ARTIFACT_DIR;
   const previousBaseUrl = process.env.ARTIFACT_BASE_URL;

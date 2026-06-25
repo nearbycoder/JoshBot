@@ -18,6 +18,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Decisions: channel decision log via slash commands, mentions, and natural `we decided ...` / `we agreed ...` messages.
 - Artifacts: standalone HTML/Markdown generation, preview/raw URLs, metadata, expiration, version history, diffs, rollback, list/update/delete/cleanup.
 - Semantic search: user-facing search over recent Slack channel history and owned artifacts, currently using a lexical scorer behind the semantic search interface.
+- Polls: lightweight channel/thread polls with command or reaction votes, result summaries, closing, and optional decision logging.
 - Digests and news: weekly general news, weekly AI news, on-demand Hacker News, scheduled Hacker News, and recurring channel digests.
 - Attachments: Slack file metadata, image bytes for vision models, small text/code/CSV contents, and bounded text extraction for PDF, DOCX, and XLSX uploads with Slack preview fallback.
 - App Home dashboard: reminders/crons, memories, active-listening channels, model status, artifacts, preferences, and shortcuts.
@@ -58,7 +59,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `OPENCODE_GO_MODEL`: default text model, defaults to `glm-5.2`
    - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
-   - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, and channel decision logs
+  - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, channel polls, and channel decision logs
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
    - `SLACK_EVENT_LOCK_TTL_SECONDS`: defaults to `600`; prevents duplicate Slack event processing across retries or concurrent instances
    - `SCHEDULE_CREATE_IDEMPOTENCY_TTL_SECONDS`: defaults to `600`; prevents duplicate schedule creation from one Slack ask
@@ -118,7 +119,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-polls`, `/nobo-poll`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
@@ -258,6 +259,21 @@ NoBo can search recent Slack channel history plus artifacts owned by the request
 - `@NoBo semantic-search database migration`
 
 The current backend is `LexicalSemanticSearchProvider`, exposed through the `SemanticSearchProvider` interface. It uses BM25-style lexical ranking so the feature works without embeddings or a vector DB. To swap in embeddings later, add a provider that implements that interface and route `NOBO_SEMANTIC_SEARCH_PROVIDER` to it.
+
+## Polls
+
+NoBo can run lightweight polls scoped to a Slack channel or thread. Polls live in Redis under `slack-channel-polls:<channelId>`.
+
+Supported examples:
+
+- `/nobo-polls create Ship Friday? | Yes | No`
+- `/nobo-polls vote abc12345 1`
+- `/nobo-polls results abc12345`
+- `/nobo-polls close abc12345 decision`
+- `@NoBo poll create Ship Friday? | Yes | No`
+- `@NoBo poll vote 1`
+
+Votes can be changed by voting again. In threads, users can also react to the poll thread/root message with option emoji such as `:one:`, `:two:`, `:three:`, or `:regional_indicator_a:`, `:regional_indicator_b:`, `:regional_indicator_c:`. Closing with `decision` records the current winner, tie, or no-consensus outcome in the channel decision log.
 
 ## Thread context
 

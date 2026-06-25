@@ -21,6 +21,7 @@ import {
 } from "./issue-drafts.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
+import { handlePollCommandText } from "./polls.js";
 import { handleUserPreferencesCommand } from "./preferences.js";
 import type { SlackScheduleContext } from "./schedules.js";
 import { handleSemanticSearchCommandText } from "./semantic-search.js";
@@ -32,6 +33,8 @@ type SlackSkillContext = {
   currentUserId: string | undefined;
   channelMemories?: ChannelMemoryEntry[];
   channelId?: string;
+  threadTs?: string;
+  messageTs?: string;
   scheduleContext?: SlackScheduleContext;
   onTextDelta?: (delta: string) => void | Promise<void>;
   beforeModelReply?: () => void | Promise<void>;
@@ -45,6 +48,7 @@ type ParsedSkillCommand = {
 const SKILL_HELP_LINES = [
   "`@NoBo skills` or `@NoBo help`: list available skills",
   "`@NoBo decision add <decision>` or `@NoBo decisions`: capture or list channel decisions",
+  "`@NoBo poll create <question> | <option> | <option>`: run a lightweight poll",
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo meeting-notes [artifact]`: turn a Slack huddle transcript, transcript upload, or thread text into meeting notes",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
@@ -71,6 +75,8 @@ export async function maybeHandleSlackSkillCommand({
   currentUserId,
   channelMemories,
   channelId,
+  threadTs,
+  messageTs,
   scheduleContext,
   onTextDelta,
   beforeModelReply
@@ -170,6 +176,16 @@ export async function maybeHandleSlackSkillCommand({
         ownerUserId: currentUserId,
         commandName: "@NoBo channel-digest"
       });
+    case "poll":
+    case "polls":
+      return (await handlePollCommandText({
+        text: command.args,
+        channelId,
+        userId: currentUserId,
+        threadTs,
+        messageTs,
+        source: "slack-message"
+      })).text;
     case "follow-ups": {
       const followUpCommand = parseFollowUpSkillCommand(command.args);
 
@@ -361,6 +377,8 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
 
   if (
     name === "prefs" ||
+    name === "poll" ||
+    name === "polls" ||
     name === "summarize-thread" ||
     name === "meeting-notes" ||
     name === "thread-todos" ||
