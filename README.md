@@ -51,6 +51,8 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how many new characters accumulate before updating a streamed Slack reply
    - `SLACK_STREAM_UPDATE_INTERVAL_MS`: defaults to `750`; maximum update cadence for streamed Slack reply updates
    - `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`: defaults to `3`; caps simultaneous active-listening replies per channel in this process
+   - `SLACK_TEXT_ATTACHMENT_MAX_BYTES`: defaults to `262144`; max private Slack file download size for text/CSV-like extraction, capped at 2 MB
+   - `SLACK_ATTACHMENT_TEXT_MAX_CHARS`: defaults to `6000`; max extracted attachment text sent into model context, capped at 20000
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
@@ -95,7 +97,7 @@ Create a Slack app and configure:
   - `im:history` for direct messages
   - `channels:history` for thread context in public channels
   - `groups:history` if NoBo should summarize private channels it has joined
-  - `files:read` so uploaded attachment metadata and previews can be passed into the model
+  - `files:read` so uploaded attachment metadata, previews, small text-like files, and image bytes can be passed into the model
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
 
@@ -262,9 +264,15 @@ Memory commands also remain available:
 
 ## Attachments
 
-NoBo passes Slack attachment metadata into the model, and for image uploads it will also attempt to download the image and attach the bytes to the current user message.
+NoBo passes Slack attachment metadata into the model. For image uploads it attempts to download the image and attach the bytes to the current user message. For small text-like uploads such as `.txt`, Markdown, JSON, logs, code, CSV, and TSV, it downloads the private Slack file and includes extracted text in context.
 
 This requires the Slack app to have `files:read`.
+
+Attachment limits:
+
+- Images are capped at 5 MB.
+- Text-like files are capped by `SLACK_TEXT_ATTACHMENT_MAX_BYTES` and `SLACK_ATTACHMENT_TEXT_MAX_CHARS`.
+- PDFs, Word docs, and binary spreadsheets use Slack-provided preview text when available; otherwise NoBo includes metadata and notes the current extraction limit. CSV/TSV spreadsheet exports are extracted as text.
 
 NoBo uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k2.6`. If the configured vision model fails, NoBo retries the image request once with `kimi-k2.6` before falling back to text-only attachment context.
 

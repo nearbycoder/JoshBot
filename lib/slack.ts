@@ -106,6 +106,10 @@ type SlackFile = {
   mimetype?: string;
   filetype?: string;
   pretty_type?: string;
+  size?: number;
+  created?: number;
+  timestamp?: number;
+  user?: string;
   preview?: string;
   preview_plain_text?: string;
   plain_text?: string;
@@ -137,6 +141,99 @@ const SLACK_SECTION_BLOCK_TEXT_LIMIT = 2900;
 const SLACK_MAX_BLOCKS = 50;
 const STREAM_FAILURE_NOTICE = "I hit an error before I could finish this reply.";
 const MAX_SLACK_IMAGE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_SLACK_TEXT_ATTACHMENT_MAX_BYTES = 256 * 1024;
+const DEFAULT_SLACK_ATTACHMENT_TEXT_MAX_CHARS = 6000;
+const TEXT_ATTACHMENT_MIMETYPES = new Set([
+  "application/csv",
+  "application/javascript",
+  "application/json",
+  "application/ld+json",
+  "application/rtf",
+  "application/sql",
+  "application/x-javascript",
+  "application/x-ndjson",
+  "application/x-yaml",
+  "application/xml",
+  "application/yaml"
+]);
+const TEXT_ATTACHMENT_FILETYPES = new Set([
+  "bash",
+  "csv",
+  "css",
+  "html",
+  "javascript",
+  "js",
+  "json",
+  "jsonl",
+  "log",
+  "markdown",
+  "md",
+  "ndjson",
+  "plain_text",
+  "post",
+  "rtf",
+  "sql",
+  "tab",
+  "tsv",
+  "text",
+  "ts",
+  "typescript",
+  "xml",
+  "yaml",
+  "yml"
+]);
+const TEXT_ATTACHMENT_EXTENSIONS = [
+  ".bash",
+  ".c",
+  ".conf",
+  ".cpp",
+  ".cs",
+  ".css",
+  ".csv",
+  ".env",
+  ".go",
+  ".h",
+  ".html",
+  ".htm",
+  ".ini",
+  ".java",
+  ".js",
+  ".json",
+  ".jsonl",
+  ".jsx",
+  ".kt",
+  ".log",
+  ".md",
+  ".ndjson",
+  ".php",
+  ".py",
+  ".rb",
+  ".rs",
+  ".rtf",
+  ".sh",
+  ".sql",
+  ".tab",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".tsv",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+  ".zsh"
+];
+const WORD_ATTACHMENT_MIMETYPES = new Set([
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+]);
+const WORD_ATTACHMENT_FILETYPES = new Set(["doc", "docx"]);
+const SPREADSHEET_ATTACHMENT_MIMETYPES = new Set([
+  "application/vnd.apple.numbers",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+]);
+const SPREADSHEET_ATTACHMENT_FILETYPES = new Set(["numbers", "xls", "xlsx"]);
 const localEventLocks = new Map<string, number>();
 const activeListeningReplyCounts = new Map<string, number>();
 
@@ -1492,7 +1589,9 @@ async function buildSlackMessageContent(
 ) {
   const text = stripSlackFormatting(message.text ?? "");
   const files = await enrichSlackFiles(token, message.files ?? []);
-  const fileContext = files.map(formatSlackFileForModel).filter(Boolean).join("\n");
+  const fileContext = (await Promise.all(
+    files.map((file) => formatSlackFileForModel(token, file))
+  )).filter(Boolean).join("\n\n");
 
   return [text, fileContext].filter(Boolean).join("\n\n").trim();
 }
@@ -1520,22 +1619,24 @@ async function enrichSlackFiles(token: string, files: SlackFile[]) {
   );
 }
 
-function formatSlackFileForModel(file: SlackFile) {
+async function formatSlackFileForModel(token: string, file: SlackFile) {
   const title = file.title || file.name || file.id;
   const typeLabel = file.pretty_type || file.filetype || file.mimetype || "file";
   const parts = [`Attached ${typeLabel}: ${title}`];
+  const metadata = formatSlackFileMetadata(file);
 
-  const preview =
-    file.plain_text ||
-    file.preview_plain_text ||
-    file.preview ||
-    file.contents ||
-    file.alt_txt ||
-    file.initial_comment?.comment ||
-    "";
+  if (metadata) {
+    parts.push(`Attachment metadata: ${metadata}`);
+  }
 
-  if (preview) {
-    parts.push(`Attachment details: ${collapseWhitespace(preview).slice(0, 1200)}`);
+  const extractedText = await extractSlackFileText(token, file);
+  const preview = getSlackFileProvidedText(file);
+  const attachmentText = extractedText.text || preview;
+
+  if (attachmentText) {
+    parts.push(`Attachment extracted text:\n${limitAttachmentText(attachmentText)}`);
+  } else if (extractedText.reason) {
+    parts.push(`Attachment extraction: ${extractedText.reason}`);
   }
 
   const link = file.external_url || file.permalink;
@@ -1544,6 +1645,249 @@ function formatSlackFileForModel(file: SlackFile) {
   }
 
   return parts.join("\n");
+}
+
+function formatSlackFileMetadata(file: SlackFile) {
+  const parts: string[] = [];
+
+  if (file.mimetype) {
+    parts.push(`MIME ${file.mimetype}`);
+  }
+
+  if (file.filetype) {
+    parts.push(`Slack type ${file.filetype}`);
+  }
+
+  if (typeof file.size === "number" && Number.isFinite(file.size)) {
+    parts.push(`size ${formatByteCount(file.size)}`);
+  }
+
+  const createdAt = file.created ?? file.timestamp;
+  if (typeof createdAt === "number" && Number.isFinite(createdAt)) {
+    parts.push(`uploaded ${new Date(createdAt * 1000).toISOString()}`);
+  }
+
+  if (file.user) {
+    parts.push(`uploaded by ${file.user}`);
+  }
+
+  return parts.join("; ");
+}
+
+function getSlackFileProvidedText(file: SlackFile) {
+  return (
+    file.plain_text ||
+    file.preview_plain_text ||
+    file.preview ||
+    file.contents ||
+    file.alt_txt ||
+    file.initial_comment?.comment ||
+    ""
+  );
+}
+
+async function extractSlackFileText(token: string, file: SlackFile) {
+  if (file.mimetype?.startsWith("image/")) {
+    return { text: null as string | null };
+  }
+
+  if (!isTextLikeSlackFile(file)) {
+    return {
+      text: null as string | null,
+      reason: getUnsupportedSlackAttachmentReason(file)
+    };
+  }
+
+  const url = file.url_private_download || file.url_private;
+
+  if (!url) {
+    return {
+      text: null as string | null,
+      reason: "no private download URL was available"
+    };
+  }
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        authorization: `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      return {
+        text: null as string | null,
+        reason: `download failed with HTTP ${response.status}`
+      };
+    }
+
+    const maxBytes = getSlackTextAttachmentMaxBytes();
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+      return {
+        text: null as string | null,
+        reason: `file is too large to extract (${formatByteCount(contentLength)}; limit ${formatByteCount(maxBytes)})`
+      };
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const bytes = Buffer.from(await response.arrayBuffer());
+
+    if (bytes.byteLength > maxBytes) {
+      return {
+        text: null as string | null,
+        reason: `file is too large to extract after download (${formatByteCount(bytes.byteLength)}; limit ${formatByteCount(maxBytes)})`
+      };
+    }
+
+    if ((contentType.includes("text/html") || looksLikeHtml(bytes)) && !isHtmlLikeSlackFile(file)) {
+      return {
+        text: null as string | null,
+        reason: "Slack returned HTML instead of file bytes; confirm `files:read` is granted and the app was reinstalled"
+      };
+    }
+
+    if (!isTextualHttpContent(contentType) && !isTextLikeSlackFile(file)) {
+      return {
+        text: null as string | null,
+        reason: `download returned non-text content (${contentType || "unknown content type"})`
+      };
+    }
+
+    if (looksBinary(bytes)) {
+      return {
+        text: null as string | null,
+        reason: "downloaded file appears to be binary"
+      };
+    }
+
+    return {
+      text: decodeSlackTextBytes(bytes, contentType)
+    };
+  } catch (error) {
+    console.warn(`Unable to extract Slack file ${file.id}: ${summarizeError(error)}`);
+    return {
+      text: null as string | null,
+      reason: "download failed before text extraction"
+    };
+  }
+}
+
+function isTextLikeSlackFile(file: SlackFile) {
+  const mimetype = file.mimetype?.toLowerCase() ?? "";
+  const filetype = file.filetype?.toLowerCase() ?? "";
+
+  if (mimetype.startsWith("text/") || TEXT_ATTACHMENT_MIMETYPES.has(mimetype)) {
+    return true;
+  }
+
+  if (TEXT_ATTACHMENT_FILETYPES.has(filetype)) {
+    return true;
+  }
+
+  return hasSlackFileExtension(file, TEXT_ATTACHMENT_EXTENSIONS);
+}
+
+function isTextualHttpContent(contentType: string) {
+  const mimetype = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  return mimetype.startsWith("text/") || TEXT_ATTACHMENT_MIMETYPES.has(mimetype);
+}
+
+function isHtmlLikeSlackFile(file: SlackFile) {
+  const mimetype = file.mimetype?.toLowerCase() ?? "";
+  const filetype = file.filetype?.toLowerCase() ?? "";
+
+  return mimetype === "text/html" || filetype === "html" || hasSlackFileExtension(file, [".html", ".htm"]);
+}
+
+function getUnsupportedSlackAttachmentReason(file: SlackFile) {
+  const mimetype = file.mimetype?.toLowerCase() ?? "";
+  const filetype = file.filetype?.toLowerCase() ?? "";
+
+  if (mimetype === "application/pdf" || filetype === "pdf" || hasSlackFileExtension(file, [".pdf"])) {
+    return "PDF text extraction is limited to Slack-provided previews with current dependencies";
+  }
+
+  if (
+    WORD_ATTACHMENT_MIMETYPES.has(mimetype) ||
+    WORD_ATTACHMENT_FILETYPES.has(filetype) ||
+    hasSlackFileExtension(file, [".doc", ".docx"])
+  ) {
+    return "Word document text extraction is limited to Slack-provided previews with current dependencies";
+  }
+
+  if (
+    SPREADSHEET_ATTACHMENT_MIMETYPES.has(mimetype) ||
+    SPREADSHEET_ATTACHMENT_FILETYPES.has(filetype) ||
+    hasSlackFileExtension(file, [".xls", ".xlsx", ".numbers"])
+  ) {
+    return "binary spreadsheet extraction is limited to Slack-provided previews; CSV/TSV files can be extracted";
+  }
+
+  return undefined;
+}
+
+function hasSlackFileExtension(file: SlackFile, extensions: string[]) {
+  const names = [file.name, file.title].filter((value): value is string => Boolean(value));
+  return names.some((name) => {
+    const normalizedName = name.toLowerCase();
+    return extensions.some((extension) => normalizedName.endsWith(extension));
+  });
+}
+
+function decodeSlackTextBytes(bytes: Buffer, contentType: string) {
+  const charset = contentType.match(/charset=([^;]+)/i)?.[1]?.trim().toLowerCase();
+
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return bytes.subarray(2).toString("utf16le");
+  }
+
+  if (charset === "utf-16le" || charset === "utf16le") {
+    return bytes.toString("utf16le");
+  }
+
+  return bytes.toString("utf8");
+}
+
+function limitAttachmentText(input: string) {
+  const normalized = decodeSlackEntities(input)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\S\n\t]+/g, " ")
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+  const maxChars = getSlackAttachmentTextMaxChars();
+
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxChars).trimEnd()}\n...[truncated]`;
+}
+
+function looksBinary(bytes: Buffer) {
+  const sample = bytes.subarray(0, Math.min(bytes.byteLength, 8000));
+
+  for (const byte of sample) {
+    if (byte === 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function formatByteCount(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function decodeSlackEntities(input: string) {
@@ -1721,7 +2065,7 @@ async function buildLiveUserContent(
       parts.push(imagePart);
     }
 
-    const fileSummary = formatSlackFileForModel(file);
+    const fileSummary = await formatSlackFileForModel(token, file);
     if (fileSummary) {
       parts.push({
         type: "text",
@@ -2017,7 +2361,11 @@ function summarizeError(error: unknown) {
 
 export const __testing = {
   acquireActiveListeningReplySlot,
+  buildLiveUserContent,
+  buildSlackMessageContent,
   getActiveListeningMaxConcurrentReplies,
+  getSlackAttachmentTextMaxChars,
+  getSlackTextAttachmentMaxBytes,
   getSlackEventLockKey
 };
 
@@ -2030,6 +2378,28 @@ function getSlackContextMessageLimit() {
   }
 
   return parsedValue;
+}
+
+function getSlackTextAttachmentMaxBytes() {
+  const rawValue = process.env.SLACK_TEXT_ATTACHMENT_MAX_BYTES;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 1024) {
+    return DEFAULT_SLACK_TEXT_ATTACHMENT_MAX_BYTES;
+  }
+
+  return Math.min(parsedValue, 2 * 1024 * 1024);
+}
+
+function getSlackAttachmentTextMaxChars() {
+  const rawValue = process.env.SLACK_ATTACHMENT_TEXT_MAX_CHARS;
+  const parsedValue = Number(rawValue);
+
+  if (!rawValue || !Number.isInteger(parsedValue) || parsedValue < 500) {
+    return DEFAULT_SLACK_ATTACHMENT_TEXT_MAX_CHARS;
+  }
+
+  return Math.min(parsedValue, 20000);
 }
 
 function getSlackStreamBufferSize() {

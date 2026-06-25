@@ -178,6 +178,10 @@ function normalizeSlackFile(input: unknown) {
     mimetype: getStringField(record, "mimetype"),
     filetype: getStringField(record, "filetype"),
     pretty_type: getStringField(record, "pretty_type"),
+    size: getNumberField(record, "size"),
+    created: getNumberField(record, "created"),
+    timestamp: getNumberField(record, "timestamp"),
+    user: getStringField(record, "user"),
     preview: getStringField(record, "preview"),
     preview_plain_text: getStringField(record, "preview_plain_text"),
     plain_text: getStringField(record, "plain_text"),
@@ -194,6 +198,11 @@ function normalizeSlackFile(input: unknown) {
 function getNullableStringField(record: object, key: string) {
   const value = (record as Record<string, unknown>)[key];
   return typeof value === "string" || value === null ? value : undefined;
+}
+
+function getNumberField(record: object, key: string) {
+  const value = (record as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function getInitialCommentField(record: object) {

@@ -17,6 +17,9 @@ test("normalizes Slack app mention file attachments", () => {
         mimetype: "image/jpeg",
         filetype: "jpg",
         pretty_type: "JPEG",
+        size: 12345,
+        created: 1771804800,
+        user: "U123",
         url_private: "https://files.slack.com/files-pri/T123-F123/image.jpg",
         url_private_download: "https://files.slack.com/files-pri/T123-F123/download/image.jpg"
       }
@@ -28,6 +31,9 @@ test("normalizes Slack app mention file attachments", () => {
   assert.equal(event?.files?.length, 1);
   assert.equal(event?.files?.[0]?.id, "F123");
   assert.equal(event?.files?.[0]?.mimetype, "image/jpeg");
+  assert.equal(event?.files?.[0]?.size, 12345);
+  assert.equal(event?.files?.[0]?.created, 1771804800);
+  assert.equal(event?.files?.[0]?.user, "U123");
   assert.equal(
     event?.files?.[0]?.url_private_download,
     "https://files.slack.com/files-pri/T123-F123/download/image.jpg"

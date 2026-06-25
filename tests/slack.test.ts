@@ -88,3 +88,156 @@ test("active listening reply slots cap concurrent channel replies", () => {
     }
   }
 });
+
+test("extracts text-like Slack uploads into message context", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const downloadUrl = "https://files.slack.com/files-pri/T123-FCSV/download/report.csv";
+
+  globalThis.fetch = (async (input, init) => {
+    assert.equal(String(input), downloadUrl);
+    assert.equal((init?.headers as Record<string, string>).authorization, "Bearer xoxb-test");
+
+    return new Response("name,total\nalpha,12\nbeta,9\n", {
+      headers: {
+        "content-length": "29",
+        "content-type": "text/csv"
+      }
+    });
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const content = await __testing.buildSlackMessageContent("xoxb-test", {
+    text: "<@U999> summarize this",
+    files: [
+      {
+        id: "FCSV",
+        name: "report.csv",
+        mimetype: "text/csv",
+        filetype: "csv",
+        pretty_type: "CSV",
+        size: 29,
+        url_private_download: downloadUrl
+      }
+    ]
+  });
+
+  assert.match(content, /summarize this/);
+  assert.match(content, /Attached CSV: report\.csv/);
+  assert.match(content, /Attachment metadata: MIME text\/csv; Slack type csv; size 29 B/);
+  assert.match(content, /Attachment extracted text:\nname,total\nalpha,12\nbeta,9/);
+});
+
+test("uses Slack previews and reports current binary document limits", async () => {
+  const pdfContent = await __testing.buildSlackMessageContent("xoxb-test", {
+    files: [
+      {
+        id: "FPDF",
+        name: "brief.pdf",
+        mimetype: "application/pdf",
+        filetype: "pdf",
+        pretty_type: "PDF",
+        preview_plain_text: "Quarterly findings and risks."
+      }
+    ]
+  });
+
+  assert.match(pdfContent, /Attached PDF: brief\.pdf/);
+  assert.match(pdfContent, /Attachment extracted text:\nQuarterly findings and risks\./);
+  assert.doesNotMatch(pdfContent, /limited to Slack-provided previews/);
+
+  const xlsxContent = await __testing.buildSlackMessageContent("xoxb-test", {
+    files: [
+      {
+        id: "FXLSX",
+        name: "forecast.xlsx",
+        mimetype: "application\/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filetype: "xlsx",
+        pretty_type: "Excel Spreadsheet"
+      }
+    ]
+  });
+
+  assert.match(xlsxContent, /Attached Excel Spreadsheet: forecast\.xlsx/);
+  assert.match(xlsxContent, /binary spreadsheet extraction is limited/);
+});
+
+test("keeps image parts while adding text attachment context", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const imageUrl = "https://files.slack.com/files-pri/T123-FIMG/download/photo.png";
+  const textUrl = "https://files.slack.com/files-pri/T123-FTXT/download/notes.txt";
+  const imageBytes = new Uint8Array([137, 80, 78, 71]);
+
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+
+    if (url === imageUrl) {
+      return new Response(imageBytes, {
+        headers: {
+          "content-length": String(imageBytes.byteLength),
+          "content-type": "image/png"
+        }
+      });
+    }
+
+    if (url === textUrl) {
+      return new Response("first note\nsecond note", {
+        headers: {
+          "content-length": "22",
+          "content-type": "text/plain"
+        }
+      });
+    }
+
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const content = await __testing.buildLiveUserContent(
+    "xoxb-test",
+    {
+      channel: "D123",
+      channel_type: "im",
+      text: "what is here?",
+      ts: "1000.000",
+      user: "U123",
+      files: [
+        {
+          id: "FIMG",
+          name: "photo.png",
+          mimetype: "image/png",
+          filetype: "png",
+          pretty_type: "PNG",
+          url_private_download: imageUrl
+        },
+        {
+          id: "FTXT",
+          name: "notes.txt",
+          mimetype: "text/plain",
+          filetype: "text",
+          pretty_type: "Plain Text",
+          url_private_download: textUrl
+        }
+      ]
+    },
+    "U123"
+  );
+
+  assert.ok(Array.isArray(content));
+
+  const imagePart = content.find((part) => part.type === "image");
+  assert.ok(imagePart);
+  assert.deepEqual(imagePart.image, Buffer.from(imageBytes));
+
+  const text = content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  assert.match(text, /Current user \(U123\): what is here\?/);
+  assert.match(text, /Attachment extracted text:\nfirst note\nsecond note/);
+});
