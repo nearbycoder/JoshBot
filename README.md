@@ -56,6 +56,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `ARTIFACT_BASE_URL`: public base URL used in Slack artifact links; defaults to `http://localhost:$PORT`
    - `ARTIFACT_DIR`: local directory for generated artifacts; defaults to `artifacts`
    - `SCHEDULER_INTERVAL_MS`: defaults to `30000`; how often NoBo checks Redis for due reminders and crons
+   - `CHANNEL_DIGEST_SCHEDULER_INTERVAL_MS`: optional override for channel digest subscription checks; falls back to `SCHEDULER_INTERVAL_MS`
    - `NOBO_HACKER_NEWS_CHANNEL_NAME`: defaults to `hacker-news`; channel name for the scheduled Hacker News digest
    - `NOBO_HACKER_NEWS_CHANNEL_ID`: optional Slack channel ID override for scheduled Hacker News posts
    - `NOBO_HACKER_NEWS_SCHEDULE_TIMES`: defaults to `09:00,14:00`; daily post times in America/Chicago
@@ -82,7 +83,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-memory`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-memory`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -177,6 +178,21 @@ NoBo posts top trending Hacker News stories to `#hacker-news` twice daily at 9:0
 
 Set `NOBO_HACKER_NEWS_CHANNEL_ID` to the Slack channel ID when possible. Otherwise NoBo resolves `NOBO_HACKER_NEWS_CHANNEL_NAME` by name, which requires the Slack app to have `channels:read`.
 
+## Channel digest subscriptions
+
+NoBo can subscribe a channel to recurring daily or weekly digests. Subscriptions live in Redis and read recent channel history at delivery time, so the bot needs `REDIS_URL` plus the matching Slack history scope.
+
+Supported examples:
+
+- `/nobo-channel-digest daily 09:00`
+- `/nobo-channel-digest daily 09:00 launch blockers`
+- `/nobo-channel-digest weekly monday 09:00 customer feedback`
+- `/nobo-channel-digest list`
+- `/nobo-channel-digest cancel abc12345`
+- `@NoBo channel-digest daily 09:00 release risk`
+
+Times are interpreted in America/Chicago. Daily digests read the last day; weekly digests read the last 7 days. Optional focus text steers the digest without changing which channel messages are read.
+
 ## Memory
 
 NoBo can persist simple per-user memory in Redis across threads. Supported commands:
@@ -247,10 +263,12 @@ Current skills:
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`
 - `/nobo-ai-news [focus]`
+- `/nobo-channel-digest daily|weekly ...`
 - `/nobo-dad-joke`
 - `@NoBo skills` or `@NoBo help`
 - `@NoBo summarize-thread [focus]`
 - `@NoBo thread-todos`
+- `@NoBo channel-digest daily 09:00 [focus]`
 - `@NoBo web-search <query>`
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`

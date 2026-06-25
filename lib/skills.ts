@@ -1,4 +1,5 @@
 import { createSlackSkillReply } from "./ai.js";
+import { handleChannelDigestCommand } from "./channel-digests.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 
@@ -22,6 +23,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo skills` or `@NoBo help`: list available skills",
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
+  "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
@@ -96,6 +98,13 @@ export async function maybeHandleSlackSkillCommand({
 - If there are no clear action items, say that plainly.`,
         onTextDelta
       });
+    case "channel-digest":
+      return handleChannelDigestCommand({
+        text: command.args,
+        channelId,
+        ownerUserId: currentUserId,
+        commandName: "@NoBo channel-digest"
+      });
     case "web-search":
       if (!command.args) {
         return "Usage: `@NoBo web-search <query>`";
@@ -157,7 +166,16 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "thread-todos", args };
   }
 
-  if (name === "summarize-thread" || name === "thread-todos" || name === "web-search") {
+  if (name === "digest") {
+    return { name: "channel-digest", args };
+  }
+
+  if (
+    name === "summarize-thread" ||
+    name === "thread-todos" ||
+    name === "channel-digest" ||
+    name === "web-search"
+  ) {
     return { name, args };
   }
 

@@ -3,11 +3,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { handleArtifactRequest } from "./lib/artifacts.js";
 import { createScheduledSlackMessage } from "./lib/ai.js";
 import {
+  postGeneratedSlackMessage,
   postSlackMessage,
   verifySlackRequest
 } from "./lib/slack.js";
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "./lib/slack-events.js";
 import { startScheduleRunner } from "./lib/schedules.js";
+import { startChannelDigestSubscriptionRunner } from "./lib/channel-digests.js";
 
 loadEnv({ path: ".env.local" });
 loadEnv();
@@ -78,6 +80,9 @@ server.listen(port, () => {
 startScheduleRunner({
   postSlackMessage,
   runScheduledTask: createScheduledSlackMessage
+});
+startChannelDigestSubscriptionRunner({
+  postGeneratedSlackMessage
 });
 
 function readBody(request: NodeJS.ReadableStream) {

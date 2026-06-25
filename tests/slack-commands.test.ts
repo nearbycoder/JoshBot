@@ -33,6 +33,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
+  assert.match(response.text, /`\/nobo-channel-digest daily\|weekly/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo web-search/);
 });
@@ -217,4 +218,40 @@ test("returns an in-channel dad joke for /nobo-dad-joke", async () => {
   assert.equal(result.response.mrkdwn, true);
   assert.match(result.response.text, /^\*Dad joke:\* .+/);
   assert.equal(result.task, undefined);
+});
+
+test("returns usage help for /nobo-channel-digest help", async () => {
+  const result = await handleSlackSlashCommandPayload({
+    command: "/nobo-channel-digest",
+    text: "help",
+    channel_id: "C123",
+    user_id: "U123"
+  });
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.match(result.response.text, /`\/nobo-channel-digest daily 09:00 \[focus\]`/);
+  assert.match(result.response.text, /`\/nobo-channel-digest cancel <id>`/);
+});
+
+test("reports Redis requirement for /nobo-channel-digest subscription without Redis", async () => {
+  const originalRedisUrl = process.env.REDIS_URL;
+  delete process.env.REDIS_URL;
+
+  try {
+    const result = await handleSlackSlashCommandPayload({
+      command: "/nobo-channel-digest",
+      text: "daily 09:00 launch blockers",
+      channel_id: "C123",
+      user_id: "U123"
+    });
+
+    assert.equal(result.response.response_type, "ephemeral");
+    assert.match(result.response.text, /Channel digest subscriptions require REDIS_URL/);
+  } finally {
+    if (originalRedisUrl === undefined) {
+      delete process.env.REDIS_URL;
+    } else {
+      process.env.REDIS_URL = originalRedisUrl;
+    }
+  }
 });

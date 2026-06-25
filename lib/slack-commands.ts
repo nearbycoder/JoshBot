@@ -3,6 +3,7 @@ import {
   setChannelActiveListening,
   toggleChannelActiveListening
 } from "./memory.js";
+import { handleChannelDigestCommand } from "./channel-digests.js";
 import { handleChannelMemorySlashCommandText } from "./channel-memory-controls.js";
 import { formatNoboOpsStatus } from "./ops-status.js";
 import { summarizeOpsError } from "./ops-errors.js";
@@ -88,6 +89,10 @@ export async function handleSlackSlashCommandPayload(
     return handleNoboAiNewsSlashCommand(payload);
   }
 
+  if (command === "/nobo-channel-digest") {
+    return handleNoboChannelDigestSlashCommand(payload);
+  }
+
   if (command === "/nobo-listen") {
     return handleListenSlashCommand(payload);
   }
@@ -106,7 +111,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-memory`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -132,6 +137,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
+    "`/nobo-channel-digest daily|weekly ...`: subscribe this channel to digests",
     "`/nobo-dad-joke`: post a dad joke",
     "",
     formatSlackSkillHelp()
@@ -200,6 +206,20 @@ function formatListenStatus(activeListening: boolean) {
   return activeListening
     ? "Active listening is on for this channel. NoBo may reply without an @mention when it thinks it should."
     : "Active listening is off for this channel. Use `@NoBo` or `/nobo-listen` to wake it up.";
+}
+
+async function handleNoboChannelDigestSlashCommand(
+  payload: SlackSlashCommandPayload
+): Promise<SlackSlashCommandResult> {
+  return immediate(
+    ephemeral(
+      await handleChannelDigestCommand({
+        text: payload.text,
+        channelId: payload.channel_id,
+        ownerUserId: payload.user_id
+      })
+    )
+  );
 }
 
 function handleNoboAiNewsSlashCommand(

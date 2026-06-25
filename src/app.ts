@@ -6,6 +6,7 @@ import {
   createWeeklyAiNewsSlackDigest,
   createWeeklyNewsSlackDigest
 } from "../lib/ai.js";
+import { startChannelDigestSubscriptionRunner } from "../lib/channel-digests.js";
 import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
 import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import { recordOpsError } from "../lib/ops-errors.js";
@@ -103,6 +104,9 @@ app.route("/", flueApp);
 startScheduleRunner({
   postSlackMessage,
   runScheduledTask: createScheduledSlackMessage
+});
+startChannelDigestSubscriptionRunner({
+  postGeneratedSlackMessage
 });
 startHackerNewsSchedule();
 
