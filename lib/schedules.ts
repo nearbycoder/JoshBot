@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { requireEnv } from "./env.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "./memory.js";
+import { recordOpsError } from "./ops-errors.js";
 import { getRedisClient } from "./redis.js";
 
 type SlackMessageEvent = {
@@ -192,14 +193,25 @@ export function startScheduleRunner({
   const intervalMs = getSchedulerIntervalMs();
 
   void runDueSchedules({ postSlackMessage, runScheduledTask }).catch((error) => {
+    recordOpsError("schedule runner", error);
     console.error(`Schedule runner failed: ${summarizeError(error)}`);
   });
 
   setInterval(() => {
     void runDueSchedules({ postSlackMessage, runScheduledTask }).catch((error) => {
+      recordOpsError("schedule runner", error);
       console.error(`Schedule runner failed: ${summarizeError(error)}`);
     });
   }, intervalMs).unref();
+}
+
+export function getScheduleRunnerStatus() {
+  return {
+    started: schedulerStarted,
+    running: schedulerRunning,
+    intervalMs: getSchedulerIntervalMs(),
+    redisConfigured: Boolean(process.env.REDIS_URL?.trim())
+  };
 }
 
 export async function createScheduleFromTool(
@@ -602,6 +614,7 @@ async function runDueSchedules({
           await deleteSchedule(schedule.id, schedule.ownerUserId);
         }
       } catch (error) {
+        recordOpsError("schedule job", error);
         console.error(`Schedule ${schedule.id} failed: ${summarizeError(error)}`);
         const retryAt = new Date(Date.now() + 5 * 60 * 1000);
         await redis.zAdd(SCHEDULE_DUE_KEY, {

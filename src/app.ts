@@ -8,6 +8,7 @@ import {
 } from "../lib/ai.js";
 import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
 import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
+import { recordOpsError } from "../lib/ops-errors.js";
 import {
   handleSlackSlashCommandPayload,
   parseSlackSlashCommandPayload,
@@ -63,6 +64,7 @@ app.post("/api/slack/events", async (c) => {
 
   if (!c.req.header("x-slack-retry-num")) {
     void handleSlackEventCallbackPayload(payload).catch((error) => {
+      recordOpsError("slack event", error);
       console.error(`Slack event handling failed: ${summarizeError(error)}`);
     });
   }
@@ -83,6 +85,7 @@ app.post("/api/slack/commands", async (c) => {
 
     if (result.task) {
       void runSlackSlashCommandTask(result.task, formatSlackSlashCommandMemory(payload)).catch((error) => {
+        recordOpsError("slack slash command task", error);
         console.error(`Slack slash command task failed: ${summarizeError(error)}`);
       });
     } else if (payload.channel_id && result.response.response_type === "in_channel") {

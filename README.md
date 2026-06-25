@@ -80,7 +80,7 @@ Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
   - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
-- Slash Commands: create `/nobo-listen`, `/nobo-help`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo-listen`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
@@ -117,6 +117,10 @@ Build and run:
 npm run build
 npm start
 ```
+
+## Ops status
+
+Use `/nobo-status` in Slack for a private health snapshot covering Redis, the reminder scheduler, scheduled Hacker News, Slack config presence, model/search config, and recent recorded async errors. It reports only presence and non-secret config such as model names; tokens, signing secrets, API keys, and Redis URLs are never printed.
 
 ## CI and deployments
 
@@ -224,6 +228,7 @@ NoBo supports explicit Slack skills triggered with `@NoBo <skill> ...`.
 Current skills:
 
 - `/nobo-help`
+- `/nobo-status`
 - `/nobo-listen [on|off|status]`
 - `/nobo-news [focus]`
 - `/nobo-hacker-news [focus]`

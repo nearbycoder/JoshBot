@@ -1,4 +1,5 @@
 import { createClient } from "redis";
+import { recordOpsError } from "./ops-errors.js";
 
 type RedisClient = ReturnType<typeof createClient>;
 
@@ -15,10 +16,15 @@ export async function getRedisClient() {
     const client = createClient({ url });
 
     client.on("error", (error) => {
+      recordOpsError("redis client", error);
       console.error("Redis client error:", error);
     });
 
-    redisClientPromise = client.connect().then(() => client);
+    redisClientPromise = client.connect().then(() => client).catch((error) => {
+      redisClientPromise = null;
+      recordOpsError("redis connect", error);
+      throw error;
+    });
   }
 
   return redisClientPromise;

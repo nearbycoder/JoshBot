@@ -3,6 +3,8 @@ import {
   setChannelActiveListening,
   toggleChannelActiveListening
 } from "./memory.js";
+import { formatNoboOpsStatus } from "./ops-status.js";
+import { summarizeOpsError } from "./ops-errors.js";
 import { formatSlackSkillHelp } from "./skills.js";
 
 const DAD_JOKES = [
@@ -44,6 +46,10 @@ export type SlackSlashCommandResult = {
   task?: SlackSlashCommandTask;
 };
 
+export type SlackSlashCommandOptions = {
+  formatOpsStatus?: () => Promise<string>;
+};
+
 export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashCommandPayload {
   const params = new URLSearchParams(rawBody);
 
@@ -59,7 +65,8 @@ export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashComman
 }
 
 export async function handleSlackSlashCommandPayload(
-  payload: SlackSlashCommandPayload
+  payload: SlackSlashCommandPayload,
+  options: SlackSlashCommandOptions = {}
 ): Promise<SlackSlashCommandResult> {
   const command = payload.command.trim().toLowerCase();
   const text = payload.text.trim().toLowerCase();
@@ -84,10 +91,14 @@ export async function handleSlackSlashCommandPayload(
     return handleListenSlashCommand(payload);
   }
 
+  if (command === "/nobo-status") {
+    return handleStatusSlashCommand(options);
+  }
+
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-listen`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-listen`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -107,6 +118,7 @@ export function formatNoboSlashCommandHelp() {
   return [
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
+    "`/nobo-status`: show ops health",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
@@ -115,6 +127,16 @@ export function formatNoboSlashCommandHelp() {
     "",
     formatSlackSkillHelp()
   ].join("\n");
+}
+
+async function handleStatusSlashCommand(
+  options: SlackSlashCommandOptions
+): Promise<SlackSlashCommandResult> {
+  try {
+    return immediate(ephemeral(await (options.formatOpsStatus ?? formatNoboOpsStatus)()));
+  } catch (error) {
+    return immediate(ephemeral(`NoBo status check failed: ${summarizeOpsError(error)}`));
+  }
 }
 
 async function handleListenSlashCommand(

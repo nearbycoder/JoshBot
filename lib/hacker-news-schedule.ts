@@ -1,6 +1,7 @@
 import { Cron } from "croner";
 import { createHackerNewsSlackDigest } from "./hacker-news.js";
 import { requireEnv } from "./env.js";
+import { recordOpsError } from "./ops-errors.js";
 import { postGeneratedSlackMessage, resolveSlackChannelIdByName } from "./slack.js";
 
 const DEFAULT_HACKER_NEWS_CHANNEL_NAME = "hacker-news";
@@ -30,6 +31,7 @@ export function startHackerNewsSchedule() {
         protect: true,
         timezone: HACKER_NEWS_SCHEDULE_TIMEZONE,
         catch: (error) => {
+          recordOpsError("hacker news schedule", error);
           console.error(`Scheduled Hacker News post failed: ${summarizeError(error)}`);
         }
       },
@@ -38,6 +40,18 @@ export function startHackerNewsSchedule() {
       }
     );
   }
+}
+
+export function getHackerNewsScheduleStatus() {
+  const times = getHackerNewsScheduleTimes();
+
+  return {
+    started: hackerNewsScheduleStarted,
+    disabled: isHackerNewsScheduleDisabled(),
+    times,
+    channelIdConfigured: Boolean(normalizeSlackChannelId(process.env.NOBO_HACKER_NEWS_CHANNEL_ID)),
+    channelName: getHackerNewsChannelName()
+  };
 }
 
 async function postScheduledHackerNewsDigest() {

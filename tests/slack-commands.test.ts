@@ -27,12 +27,31 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.equal(response.response_type, "ephemeral");
   assert.equal(response.mrkdwn, true);
   assert.match(response.text, /`\/nobo-help`/);
+  assert.match(response.text, /`\/nobo-status`/);
   assert.match(response.text, /`\/nobo-listen \[on\|off\|status\]`/);
   assert.match(response.text, /`\/nobo-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-hacker-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
   assert.match(response.text, /@NoBo web-search/);
+});
+
+test("returns ephemeral ops status for /nobo-status", async () => {
+  const result = await handleSlackSlashCommandPayload(
+    {
+      command: "/nobo-status",
+      text: ""
+    },
+    {
+      formatOpsStatus: async () => "*NoBo status*\nRedis: ok"
+    }
+  );
+
+  assert.equal(result.response.response_type, "ephemeral");
+  assert.equal(result.response.mrkdwn, true);
+  assert.match(result.response.text, /NoBo status/);
+  assert.match(result.response.text, /Redis: ok/);
+  assert.equal(result.task, undefined);
 });
 
 test("points unknown /nobo-help slash command text at help", async () => {
