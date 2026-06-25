@@ -471,6 +471,35 @@ test("reports Redis requirement when channel model interaction saves without Red
   assert.match(result.text, /Redis is not configured/);
 });
 
+test("channel model interaction replaces selector with updated current model", async () => {
+  await withMockOpenCodeModels(async () => {
+    const result = await handleSlackInteractionPayload(
+      {
+        type: "block_actions",
+        channel: { id: "C123" },
+        actions: [
+          {
+            action_id: "nobo_channel_model_select",
+            selected_option: { value: "deepseek-v4-pro" }
+          }
+        ]
+      },
+      {
+        setChannelModelPreference: async () => ({
+          ok: true as const,
+          preferences: { modelId: "deepseek-v4-pro" }
+        })
+      }
+    );
+
+    assert.equal(result.replace_original, true);
+    assert.match(result.text, /deepseek-v4-pro/);
+    assert.match(JSON.stringify(result.blocks), /Current text model: `deepseek-v4-pro`/);
+    assert.match(JSON.stringify(result.blocks), /"initial_option"/);
+    assert.match(JSON.stringify(result.blocks), /"value":"deepseek-v4-pro"/);
+  });
+});
+
 async function withTempArtifactDir(run: () => Promise<void>) {
   const previousDir = process.env.ARTIFACT_DIR;
   const previousBaseUrl = process.env.ARTIFACT_BASE_URL;

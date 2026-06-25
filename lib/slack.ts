@@ -29,10 +29,16 @@ import {
 import { getRedisClient } from "./redis.js";
 import {
   DEFAULT_USER_PREFERENCES,
+  listChannelPreferenceStatuses,
   getUserPreferences,
   maybeHandleUserPreferencesCommand,
+  type ChannelPreferenceStatus,
   type UserPreferences
 } from "./preferences.js";
+import {
+  formatOpenCodeGoModelName,
+  getDefaultSlackTextModel
+} from "./nobo-models.js";
 import {
   getUserScheduleDashboardItems,
   maybeHandleScheduleCommand,
@@ -111,9 +117,15 @@ type SlackHomeDashboardData = {
   memories: string[];
   schedules: ScheduleDashboardItem[];
   artifacts: RecentArtifact[];
-  channelStatuses: ChannelMemoryStatus[];
+  channelStatuses: SlackHomeChannelStatus[];
   preferences: UserPreferences;
   updatedAt: Date;
+};
+
+type SlackHomeChannelStatus = ChannelMemoryStatus & {
+  modelId?: string;
+  modelName?: string;
+  modelSource?: "default" | "channel";
 };
 
 type SlackMessageEvent = {
@@ -1091,11 +1103,19 @@ async function createSlackAppHomeView(userId: string) {
 }
 
 async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDashboardData> {
-  const [memories, schedules, artifacts, channelStatuses, preferences] = await Promise.all([
+  const [
+    memories,
+    schedules,
+    artifacts,
+    channelMemoryStatuses,
+    channelPreferenceStatuses,
+    preferences
+  ] = await Promise.all([
     loadSlackHomeSection("memories", () => getUserMemories(userId), []),
     loadSlackHomeSection("schedules", () => getUserScheduleDashboardItems(userId, 5), []),
     loadSlackHomeSection("artifacts", () => listRecentArtifacts(5, { ownerUserId: userId }), []),
     loadSlackHomeSection("channel status", () => listChannelMemoryStatuses(12), []),
+    loadSlackHomeSection("channel models", () => listChannelPreferenceStatuses(12), []),
     loadSlackHomeSection("preferences", () => getUserPreferences(userId), {
       ...DEFAULT_USER_PREFERENCES
     })
@@ -1106,7 +1126,10 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
     memories,
     schedules,
     artifacts,
-    channelStatuses,
+    channelStatuses: mergeSlackHomeChannelStatuses(
+      channelMemoryStatuses,
+      channelPreferenceStatuses
+    ),
     preferences,
     updatedAt: new Date()
   };
@@ -1151,12 +1174,56 @@ function buildSlackAppHomeView(data: SlackHomeDashboardData) {
       { type: "divider" },
       createSlackHomeSection("Next Up", formatHomeSchedules(data.schedules)),
       createSlackHomeSection("Memory", formatHomeMemories(data.memories)),
-      createSlackHomeSection("Listening Channels", formatHomeChannelStatuses(data.channelStatuses)),
+      createSlackHomeSection("Channels", formatHomeChannelStatuses(data.channelStatuses)),
       createSlackHomeSection("Recent Artifacts", formatHomeArtifacts(data.artifacts)),
       { type: "divider" },
       createSlackHomePreferencesBlock(data.preferences),
       createSlackHomeShortcutsBlock()
     ]
+  };
+}
+
+function mergeSlackHomeChannelStatuses(
+  memoryStatuses: ChannelMemoryStatus[],
+  preferenceStatuses: ChannelPreferenceStatus[]
+): SlackHomeChannelStatus[] {
+  const statuses = new Map<string, SlackHomeChannelStatus>();
+
+  for (const status of memoryStatuses) {
+    statuses.set(status.channelId, withHomeChannelModel(status));
+  }
+
+  for (const status of preferenceStatuses) {
+    const existing = statuses.get(status.channelId) ?? {
+      channelId: status.channelId,
+      activeListening: false,
+      memoryCount: 0
+    };
+    statuses.set(status.channelId, withHomeChannelModel(existing, status.modelId));
+  }
+
+  return [...statuses.values()]
+    .sort(
+      (left, right) =>
+        Number(right.activeListening) - Number(left.activeListening) ||
+        Number(right.modelSource === "channel") - Number(left.modelSource === "channel") ||
+        right.memoryCount - left.memoryCount ||
+        left.channelId.localeCompare(right.channelId)
+    )
+    .slice(0, 12);
+}
+
+function withHomeChannelModel(
+  status: ChannelMemoryStatus,
+  modelIdOverride?: string | null
+): SlackHomeChannelStatus {
+  const modelId = modelIdOverride ?? getDefaultSlackTextModel();
+
+  return {
+    ...status,
+    modelId,
+    modelName: formatOpenCodeGoModelName(modelId),
+    modelSource: modelIdOverride ? "channel" : "default"
   };
 }
 
@@ -1260,17 +1327,17 @@ function formatHomeMemories(memories: string[]) {
     .join("\n");
 }
 
-function formatHomeChannelStatuses(statuses: ChannelMemoryStatus[]) {
+function formatHomeChannelStatuses(statuses: SlackHomeChannelStatus[]) {
   const active = statuses.filter((status) => status.activeListening);
-  const recent = statuses.filter((status) => !status.activeListening && status.memoryCount > 0);
+  const known = statuses.filter((status) => !status.activeListening);
   const lines = [
     active.length > 0
-      ? `On: ${active.map(formatHomeChannelStatus).join(", ")}`
+      ? `Listening on:\n${active.map(formatHomeChannelStatus).join("\n")}`
       : "On: none. Use `/nobo-listen on` in a channel."
   ];
 
-  if (recent.length > 0) {
-    lines.push(`Recent memory: ${recent.slice(0, 5).map(formatHomeChannelStatus).join(", ")}`);
+  if (known.length > 0) {
+    lines.push(`Known:\n${known.slice(0, 6).map(formatHomeChannelStatus).join("\n")}`);
   }
 
   return lines.join("\n");
@@ -1289,12 +1356,21 @@ function formatHomeArtifacts(artifacts: RecentArtifact[]) {
     .join("\n");
 }
 
-function formatHomeChannelStatus(status: ChannelMemoryStatus) {
+function formatHomeChannelStatus(status: SlackHomeChannelStatus) {
   const label = /^[CDG][A-Z0-9]+$/.test(status.channelId)
     ? `<#${status.channelId}>`
     : escapeSlackMrkdwn(status.channelId);
+  const model = getHomeChannelModelLabel(status);
 
-  return `${label} (${status.memoryCount})`;
+  return `- ${label} (${status.memoryCount}) - ${model}`;
+}
+
+function getHomeChannelModelLabel(status: SlackHomeChannelStatus) {
+  const modelId = status.modelId ?? getDefaultSlackTextModel();
+  const modelName = status.modelName ?? formatOpenCodeGoModelName(modelId);
+  const source = status.modelSource === "channel" ? "override" : "default";
+
+  return `${escapeSlackMrkdwn(modelName)} \`${escapeSlackMrkdwn(modelId)}\` (${source})`;
 }
 
 function formatSlackHomeLink(url: string, label: string) {

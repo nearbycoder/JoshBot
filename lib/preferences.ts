@@ -15,6 +15,11 @@ export type ChannelPreferences = {
   modelId: string | null;
 };
 
+export type ChannelPreferenceStatus = {
+  channelId: string;
+  modelId: string | null;
+};
+
 const USER_PREFERENCES_PREFIX = "slack-preferences:user:";
 const CHANNEL_PREFERENCES_PREFIX = "slack-preferences:channel:";
 const DEFAULT_TIME_ZONE = "America/Chicago";
@@ -78,6 +83,56 @@ export async function getChannelPreferences(channelId: string | undefined) {
 
   const payload = await redis.get(getChannelPreferencesKey(channelId));
   return normalizeChannelPreferencesPayload(payload);
+}
+
+export async function listChannelPreferenceStatuses(limit = 20) {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return [];
+  }
+
+  const statuses: ChannelPreferenceStatus[] = [];
+  let cursor = "0";
+
+  do {
+    const reply = await redis.sendCommand([
+      "SCAN",
+      cursor,
+      "MATCH",
+      `${CHANNEL_PREFERENCES_PREFIX}*`,
+      "COUNT",
+      "100"
+    ]);
+    const scan = parseScanReply(reply);
+    cursor = scan.cursor;
+
+    const batch = await Promise.all(
+      scan.keys.map(async (key) => {
+        const payload = await redis.get(key);
+        const channelId = key.slice(CHANNEL_PREFERENCES_PREFIX.length);
+
+        if (!payload || !channelId) {
+          return null;
+        }
+
+        return {
+          channelId,
+          modelId: normalizeChannelPreferencesPayload(payload).modelId
+        };
+      })
+    );
+
+    statuses.push(...batch.filter((status): status is ChannelPreferenceStatus => status !== null));
+  } while (cursor !== "0");
+
+  return statuses
+    .sort(
+      (left, right) =>
+        Number(Boolean(right.modelId)) - Number(Boolean(left.modelId)) ||
+        left.channelId.localeCompare(right.channelId)
+    )
+    .slice(0, normalizeLimit(limit, 20, 100));
 }
 
 export async function updateUserPreferences(
@@ -569,10 +624,47 @@ function normalizeForCompare(input: string) {
   return input.trim().toLowerCase();
 }
 
+function commandReplyToString(input: unknown) {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (Buffer.isBuffer(input)) {
+    return input.toString("utf8");
+  }
+
+  return "";
+}
+
+function parseScanReply(input: unknown) {
+  if (!Array.isArray(input) || input.length < 2) {
+    return { cursor: "0", keys: [] as string[] };
+  }
+
+  const keysInput = input[1];
+  const keys = Array.isArray(keysInput)
+    ? keysInput.map(commandReplyToString).filter(Boolean)
+    : [];
+
+  return {
+    cursor: commandReplyToString(input[0]) || "0",
+    keys
+  };
+}
+
+function normalizeLimit(input: number, fallback: number, max: number) {
+  if (!Number.isInteger(input) || input < 1) {
+    return fallback;
+  }
+
+  return Math.min(input, max);
+}
+
 export const __testing = {
   getChannelPreferencesKey,
   getUserPreferencesKey,
   normalizeChannelPreferences,
+  parseScanReply,
   normalizeTimeZone,
   normalizeUserPreferences,
   parseNewsInterestList,

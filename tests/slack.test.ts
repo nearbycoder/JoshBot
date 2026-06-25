@@ -120,7 +120,10 @@ test("builds Slack App Home dashboard sections", () => {
       {
         channelId: "C123",
         activeListening: true,
-        memoryCount: 4
+        memoryCount: 4,
+        modelId: "qwen3.7-max",
+        modelName: "Qwen3.7 Max",
+        modelSource: "channel"
       }
     ],
     preferences: {
@@ -137,6 +140,8 @@ test("builds Slack App Home dashboard sections", () => {
   assert.match(rendered, /Reminders/);
   assert.match(rendered, /prefers concise updates/);
   assert.match(rendered, /<#C123> \(4\)/);
+  assert.match(rendered, /Qwen3\.7 Max/);
+  assert.match(rendered, /qwen3\.7-max/);
   assert.match(rendered, /launch plan/);
   assert.match(rendered, /Quick Actions/);
   assert.match(rendered, /\/nobo-channel-digest/);

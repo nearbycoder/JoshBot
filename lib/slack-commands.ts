@@ -99,6 +99,10 @@ export type SlackSlashCommandOptions = {
   formatOpsStatus?: () => Promise<string>;
 };
 
+export type SlackInteractionOptions = {
+  setChannelModelPreference?: typeof setChannelModelPreference;
+};
+
 export function parseSlackSlashCommandPayload(rawBody: string): SlackSlashCommandPayload {
   const params = new URLSearchParams(rawBody);
 
@@ -372,7 +376,8 @@ async function handleNoboChannelDigestSlashCommand(
 }
 
 export async function handleSlackInteractionPayload(
-  payload: SlackInteractionPayload
+  payload: SlackInteractionPayload,
+  options: SlackInteractionOptions = {}
 ): Promise<SlackSlashCommandResponse> {
   if (payload.type !== "block_actions") {
     return ephemeral("Unsupported Slack interaction.");
@@ -396,14 +401,21 @@ export async function handleSlackInteractionPayload(
     return ephemeral("Slack did not send a valid model selection.");
   }
 
-  const result = await setChannelModelPreference(channelId, modelId);
+  const setModelPreference = options.setChannelModelPreference ?? setChannelModelPreference;
+  const result = await setModelPreference(channelId, modelId);
   if (!result.ok) {
     return ephemeral(`Couldn't update channel model: ${result.reason}`);
   }
 
+  const response = await buildChannelModelSelectorResponse(
+    channelId,
+    result.preferences.modelId ?? modelId
+  );
+
   return {
-    ...ephemeral(formatChannelModelUpdated(modelId)),
-    replace_original: false
+    ...response,
+    text: formatChannelModelUpdated(modelId),
+    replace_original: true
   };
 }
 
@@ -455,12 +467,16 @@ async function handleNoboChannelModelSlashCommand(
   return immediate(await buildChannelModelSelectorResponse(payload.channel_id));
 }
 
-async function buildChannelModelSelectorResponse(channelId: string): Promise<SlackSlashCommandResponse> {
+async function buildChannelModelSelectorResponse(
+  channelId: string,
+  selectedModelIdOverride?: string
+): Promise<SlackSlashCommandResponse> {
   const [models, channelPreferences] = await Promise.all([
     listOpenCodeGoModels(),
-    getChannelPreferences(channelId)
+    selectedModelIdOverride ? Promise.resolve(null) : getChannelPreferences(channelId)
   ]);
-  const selectedModelId = channelPreferences.modelId ?? getDefaultSlackTextModel();
+  const selectedModelId =
+    selectedModelIdOverride ?? channelPreferences?.modelId ?? getDefaultSlackTextModel();
   const options = models.slice(0, SLACK_SELECT_MAX_OPTIONS).map(createModelSelectOption);
   const selectedOption =
     options.find((option) => option.value === selectedModelId) ??
