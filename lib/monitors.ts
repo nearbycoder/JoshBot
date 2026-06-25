@@ -137,6 +137,12 @@ type CreatedMonitorResult = {
   nextRunAt: string | null;
 };
 
+export type MonitorDashboardItem = {
+  id: string;
+  summary: string;
+  nextRunAt: string;
+};
+
 const MONITOR_DUE_KEY = "monitors:due";
 const MONITOR_JOB_PREFIX = "monitors:job:";
 const MONITOR_USER_PREFIX = "monitors:user:";
@@ -290,6 +296,34 @@ export async function createMonitorFromTool(
 
 export async function listMonitorsFromTool(context: SlackScheduleContext) {
   return listUserMonitors(context.ownerUserId);
+}
+
+export async function getUserMonitorDashboardItems(
+  userId: string,
+  limit = 5
+): Promise<MonitorDashboardItem[]> {
+  const redis = await getRedisClient();
+
+  if (!redis) {
+    return [];
+  }
+
+  const ids = await redis.sMembers(getMonitorUserKey(userId));
+  const monitors = (
+    await Promise.all(ids.map((id) => loadMonitor(id)))
+  ).filter((monitor): monitor is MonitorRecord => monitor !== null);
+
+  return monitors
+    .sort(
+      (left, right) =>
+        new Date(left.nextRunAt).getTime() - new Date(right.nextRunAt).getTime()
+    )
+    .slice(0, normalizeDashboardLimit(limit, 5, 20))
+    .map((monitor) => ({
+      id: monitor.id,
+      summary: formatMonitorSummary(monitor),
+      nextRunAt: monitor.nextRunAt
+    }));
 }
 
 export async function cancelMonitorFromTool(context: SlackScheduleContext, idPrefix: string) {
@@ -1149,6 +1183,10 @@ function getMonitorRunnerIntervalMs() {
   }
 
   return DEFAULT_MONITOR_INTERVAL_MS;
+}
+
+function normalizeDashboardLimit(limit: number, fallback: number, max: number) {
+  return Number.isInteger(limit) && limit > 0 ? Math.min(limit, max) : fallback;
 }
 
 function getMonitorJobKey(id: string) {

@@ -134,7 +134,8 @@ Create a Slack app and configure:
   - `commands`
   - `app_mentions:read`
   - `chat:write`
-  - `channels:read` if scheduled Hacker News posts should resolve `#hacker-news` by name instead of `NOBO_HACKER_NEWS_CHANNEL_ID`
+  - `channels:read` if scheduled Hacker News posts should resolve public `#hacker-news` by name instead of `NOBO_HACKER_NEWS_CHANNEL_ID`
+  - `groups:read` if scheduled posts should resolve a private channel by name
   - `reactions:read` so Slack sends `reaction_added` shortcut events
   - `reactions:write` so NoBo can react to messages it is handling
   - `im:history` for direct messages
@@ -143,6 +144,8 @@ Create a Slack app and configure:
   - `files:read` so uploaded attachment metadata, PDF/DOCX/XLSX/text contents, previews, and image bytes can be passed into the model
 
 Semantic search over channel history uses `conversations.history`, so public channels need `channels:history`; private channels need `groups:history`. Artifact results are scoped to the Slack user who ran the command.
+
+After adding scopes, events, slash commands, shortcuts, or interactivity, reinstall the Slack app to the workspace so the bot token receives the updated grants.
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
 
@@ -155,12 +158,13 @@ Enable the Slack App Home surface if you want NoBo to show a dashboard with remi
 NoBo publishes a Slack App Home dashboard on `app_home_opened`. It includes:
 
 - Upcoming reminders and crons for the current user
+- Active conditional monitors for the current user
 - Saved personal memories
 - Active-listening channel status and shared-memory counts
 - Channel model overrides
 - Recent generated artifacts
 - Current user preferences
-- Quick command examples for threads, channel settings, digests, and preferences
+- Quick command examples for threads, triage, search, polls, monitors, digests, channel settings, and preferences
 
 For local development, expose the app with a tunnel:
 
@@ -294,7 +298,7 @@ Supported examples:
 - `@NoBo poll create Ship Friday? | Yes | No`
 - `@NoBo poll vote 1`
 
-Votes can be changed by voting again. In threads, users can also react to the poll thread/root message with option emoji such as `:one:`, `:two:`, `:three:`, or `:regional_indicator_a:`, `:regional_indicator_b:`, `:regional_indicator_c:`. Closing with `decision` records the current winner, tie, or no-consensus outcome in the channel decision log.
+Votes can be changed by voting again. In threads, users can also react to the poll thread/root message with option emoji such as `:one:`, `:two:`, `:three:`, or `:regional_indicator_a:`, `:regional_indicator_b:`, `:regional_indicator_c:`. Reaction votes only count on the message that anchors that poll; slash-created polls still support command votes. Closing with `decision` records the current winner, tie, or no-consensus outcome in the channel decision log.
 
 ## Thread context
 
@@ -519,7 +523,7 @@ Memory commands also remain available:
 
 NoBo passes Slack attachment metadata into the model. For image uploads it attempts to download the image and attach the bytes to the current user message. For small text-like uploads such as `.txt`, Markdown, JSON, logs, code, CSV, TSV, VTT, and SRT, it downloads the private Slack file and includes extracted text in context.
 
-For meeting notes, use `@NoBo meeting-notes` in a thread with transcript-like text or an attached transcript. Add `artifact`, `markdown`, `doc`, `save`, or `export` to have NoBo create a Markdown artifact and link it back. Slack huddle/transcript metadata is included when Slack provides it; otherwise NoBo uses the uploaded text/Markdown transcript and surrounding thread.
+For meeting notes, use `@NoBo meeting-notes` in a thread with transcript-like text or an attached transcript. Add `artifact`, `markdown`, `doc`, `save`, or `export` to have NoBo create a Markdown artifact and link it back. Slack huddle/transcript metadata is included when Slack provides it; otherwise NoBo uses extracted upload text and surrounding thread.
 
 This requires the Slack app to have `files:read`.
 
@@ -527,7 +531,7 @@ Attachment limits:
 
 - Images are capped at 5 MB.
 - Text-like files are capped by `SLACK_TEXT_ATTACHMENT_MAX_BYTES` and `SLACK_ATTACHMENT_TEXT_MAX_CHARS`.
-- PDFs, Word docs, and binary spreadsheets use Slack-provided preview text when available; otherwise NoBo includes metadata and notes the current extraction limit. CSV/TSV spreadsheet exports and VTT/SRT transcripts are extracted as text.
+- PDFs, Word docs, and XLSX spreadsheets are downloaded and text-extracted within the configured file-size and text limits. If extraction fails, NoBo falls back to Slack-provided preview text when available, then metadata. CSV/TSV spreadsheet exports and VTT/SRT transcripts are extracted as text.
 
 NoBo uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k2.6`. If the configured vision model fails, NoBo retries the image request once with `kimi-k2.6` before falling back to text-only attachment context.
 

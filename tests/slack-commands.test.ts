@@ -647,6 +647,30 @@ test("opens reminder modal from a Slack shortcut", async () => {
   assert.deepEqual(result.response, {});
 });
 
+test("blocks denied Slack shortcut interactions", async () => {
+  const result = await handleSlackInteractionRequest(
+    {
+      type: "shortcut",
+      callback_id: "nobo_reminder",
+      trigger_id: "trigger-123",
+      user: { id: "U999" },
+      channel: { id: "C123" }
+    },
+    {
+      evaluateAccess: async (subject) => ({
+        allowed: false,
+        reason: `User ${subject.userId} denied.`
+      })
+    }
+  );
+
+  assert.equal(result.modal, undefined);
+  const response = asSlashResponse(result.response);
+  assert.equal(response.response_type, "ephemeral");
+  assert.match(response.text, /NoBo access denied/);
+  assert.match(response.text, /U999/);
+});
+
 test("handles reminder modal submissions with existing Redis errors", async () => {
   const result = await handleSlackInteractionPayload(createViewSubmission("nobo_reminder_modal", {
     reminder_task: {
@@ -673,6 +697,26 @@ test("handles reminder modal submissions with existing Redis errors", async () =
   }));
 
   assert.match(JSON.stringify(result), /Scheduling requires REDIS_URL/);
+});
+
+test("blocks denied Slack modal submissions using modal metadata", async () => {
+  const result = await handleSlackInteractionPayload(
+    createViewSubmission("nobo_artifact_modal", {
+      artifact_action: {
+        artifact_action_select: { selected_option: { value: "list" } }
+      }
+    }),
+    {
+      evaluateAccess: async (subject) => ({
+        allowed: false,
+        reason: `Channel ${subject.channelId} denied.`
+      })
+    }
+  );
+
+  assert.equal("response_action" in result ? result.response_action : undefined, "update");
+  assert.match(JSON.stringify(result), /NoBo access denied/);
+  assert.match(JSON.stringify(result), /C123/);
 });
 
 test("returns Block Kit selector for /nobo-channel-model", async () => {

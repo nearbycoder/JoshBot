@@ -94,6 +94,17 @@ test("reaction names map to poll choices", () => {
   assert.equal(__testing.getReactionPollChoice("summary"), null);
 });
 
+test("reaction votes only resolve polls anchored to that message", () => {
+  assert.deepEqual(__testing.resolvePollForReaction([basePoll], "1000.000"), {
+    ok: true,
+    poll: basePoll
+  });
+  assert.deepEqual(__testing.resolvePollForReaction([basePoll], "9999.000"), {
+    ok: false,
+    reason: "No poll found for that message."
+  });
+});
+
 test("poll decision text summarizes consensus", () => {
   assert.equal(__testing.formatPollDecisionText({
     ...basePoll,

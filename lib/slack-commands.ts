@@ -696,6 +696,11 @@ export async function handleSlackInteractionRequest(
   payload: SlackInteractionPayload,
   options: SlackInteractionOptions = {}
 ): Promise<SlackInteractionResult> {
+  const deniedResponse = await evaluateSlackInteractionAccess(payload, options);
+  if (deniedResponse) {
+    return { response: deniedResponse };
+  }
+
   if (payload.type === "shortcut" || payload.type === "message_action") {
     return handleSlackShortcutPayload(payload);
   }
@@ -731,16 +736,6 @@ export async function handleSlackInteractionRequest(
     return { response: ephemeral("Slack did not send a channel for this selection.") };
   }
 
-  const access = await (options.evaluateAccess ?? evaluateNoboAccess)({
-    userId: payload.user?.id,
-    channelId,
-    action: "slack-interaction",
-    surface: "slack-interaction"
-  });
-  if (!access.allowed) {
-    return ephemeral(formatNoboAccessDenied(access));
-  }
-
   const modelId = normalizeOpenCodeGoOaCompatibleModelId(action.selected_option?.value);
   if (!modelId) {
     return { response: ephemeral("Slack did not send a valid model selection.") };
@@ -771,6 +766,27 @@ export async function handleSlackInteractionPayload(
   options: SlackInteractionOptions = {}
 ): Promise<SlackInteractionResponse> {
   return (await handleSlackInteractionRequest(payload, options)).response;
+}
+
+async function evaluateSlackInteractionAccess(
+  payload: SlackInteractionPayload,
+  options: SlackInteractionOptions
+) {
+  const metadata = parseModalMetadata(payload.view?.private_metadata);
+  const action = payload.view?.callback_id ?? payload.callback_id ?? payload.actions?.[0]?.action_id;
+  const access = await (options.evaluateAccess ?? evaluateNoboAccess)({
+    userId: payload.user?.id ?? metadata.userId,
+    channelId: payload.channel?.id ?? metadata.channelId,
+    action: action ?? payload.type ?? "slack-interaction",
+    surface: "slack-interaction"
+  });
+
+  if (access.allowed) {
+    return null;
+  }
+
+  const message = formatNoboAccessDenied(access);
+  return payload.type === "view_submission" ? updateModal(message) : ephemeral(message);
 }
 
 async function handleSlackShortcutPayload(

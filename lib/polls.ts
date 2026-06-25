@@ -332,13 +332,40 @@ export async function recordSlackPollReactionVote(event: {
     return { ok: false as const, reason: "Reaction is not a poll option." };
   }
 
-  return recordSlackPollVote({
-    channelId: event.channelId,
-    threadTs: event.threadTs,
-    userId: event.userId,
-    choice,
-    source: "reaction"
-  });
+  const state = await loadPollState(event.channelId);
+
+  if (!state.ok) {
+    return state;
+  }
+
+  const resolved = resolvePollForReaction(state.polls, event.threadTs);
+
+  if (!resolved.ok) {
+    return resolved;
+  }
+
+  const option = resolvePollOption(resolved.poll, choice);
+
+  if (!option) {
+    return { ok: false as const, reason: `Unknown option. Use ${formatPollOptionChoices(resolved.poll)}.` };
+  }
+
+  const poll = {
+    ...resolved.poll,
+    votes: {
+      ...resolved.poll.votes,
+      [event.userId]: {
+        userId: event.userId,
+        optionId: option.id,
+        source: "reaction" as const,
+        createdAt: new Date().toISOString()
+      }
+    }
+  };
+
+  await replacePoll(event.channelId, state.polls, poll);
+
+  return { ok: true as const, poll, option };
 }
 
 export async function closeSlackPoll({
@@ -699,6 +726,26 @@ function resolvePoll(polls: SlackPoll[], pollId?: string, threadTs?: string) {
   return { ok: true as const, poll: latest };
 }
 
+function resolvePollForReaction(polls: SlackPoll[], messageTs: string) {
+  const matches = polls.filter((poll) => poll.threadTs === messageTs || poll.messageTs === messageTs);
+
+  if (matches.some((poll) => poll.status === "closed")) {
+    return { ok: false as const, reason: "Poll is closed." };
+  }
+
+  const openMatches = matches.filter((poll) => poll.status === "open");
+
+  if (openMatches.length === 1) {
+    return { ok: true as const, poll: openMatches[0] };
+  }
+
+  if (openMatches.length > 1) {
+    return { ok: false as const, reason: "Poll reaction target is ambiguous." };
+  }
+
+  return { ok: false as const, reason: "No poll found for that message." };
+}
+
 function resolvePollOption(poll: SlackPoll, choice: string) {
   const normalized = normalizePollText(choice).toLowerCase();
   const letterIndex = /^[a-z]$/i.test(normalized) ? normalized.charCodeAt(0) - 97 : -1;
@@ -913,5 +960,6 @@ export const __testing = {
   getPollLogKey,
   getReactionPollChoice,
   normalizePollText,
-  parsePollLogPayload
+  parsePollLogPayload,
+  resolvePollForReaction
 };

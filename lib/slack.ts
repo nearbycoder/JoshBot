@@ -46,7 +46,11 @@ import {
   maybeHandleScheduleCommand,
   type ScheduleDashboardItem
 } from "./schedules.js";
-import { maybeHandleMonitorCommand } from "./monitors.js";
+import {
+  getUserMonitorDashboardItems,
+  maybeHandleMonitorCommand,
+  type MonitorDashboardItem
+} from "./monitors.js";
 import { maybeHandleSlackSkillCommand } from "./skills.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 
@@ -123,6 +127,7 @@ type SlackHomeDashboardData = {
   userId: string;
   memories: string[];
   schedules: ScheduleDashboardItem[];
+  monitors: MonitorDashboardItem[];
   artifacts: RecentArtifact[];
   channelStatuses: SlackHomeChannelStatus[];
   preferences: UserPreferences;
@@ -1146,6 +1151,7 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
   const [
     memories,
     schedules,
+    monitors,
     artifacts,
     channelMemoryStatuses,
     channelPreferenceStatuses,
@@ -1153,6 +1159,7 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
   ] = await Promise.all([
     loadSlackHomeSection("memories", () => getUserMemories(userId), []),
     loadSlackHomeSection("schedules", () => getUserScheduleDashboardItems(userId, 5), []),
+    loadSlackHomeSection("monitors", () => getUserMonitorDashboardItems(userId, 5), []),
     loadSlackHomeSection("artifacts", () => listRecentArtifacts(5, { ownerUserId: userId }), []),
     loadSlackHomeSection("channel status", () => listChannelMemoryStatuses(12), []),
     loadSlackHomeSection("channel models", () => listChannelPreferenceStatuses(12), []),
@@ -1165,6 +1172,7 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
     userId,
     memories,
     schedules,
+    monitors,
     artifacts,
     channelStatuses: mergeSlackHomeChannelStatuses(
       channelMemoryStatuses,
@@ -1213,6 +1221,7 @@ function buildSlackAppHomeView(data: SlackHomeDashboardData) {
       createSlackHomeOverviewBlock(data),
       { type: "divider" },
       createSlackHomeSection("Next Up", formatHomeSchedules(data.schedules)),
+      createSlackHomeSection("Monitors", formatHomeMonitors(data.monitors)),
       createSlackHomeSection("Memory", formatHomeMemories(data.memories)),
       createSlackHomeSection("Channels", formatHomeChannelStatuses(data.channelStatuses)),
       createSlackHomeSection("Recent Artifacts", formatHomeArtifacts(data.artifacts)),
@@ -1281,6 +1290,7 @@ function createSlackHomeOverviewBlock(data: SlackHomeDashboardData): SlackBlock 
     },
     fields: [
       createSlackHomeField("Reminders", `${data.schedules.length} upcoming`),
+      createSlackHomeField("Monitors", `${data.monitors.length} active`),
       createSlackHomeField("Memory", `${data.memories.length} saved`),
       createSlackHomeField("Listening", `${activeListeningCount} channels on`),
       createSlackHomeField("Artifacts", `${data.artifacts.length} recent`),
@@ -1329,9 +1339,13 @@ function createSlackHomeShortcutsBlock(): SlackBlock {
       text: "*Quick Actions*"
     },
     fields: [
-      createSlackHomeField("Threads", "`@NoBo summarize-thread`\n`@NoBo follow-ups`"),
+      createSlackHomeField("Threads", "`@NoBo summarize-thread`\n`@NoBo meeting-notes artifact`\n`@NoBo follow-ups`"),
+      createSlackHomeField("Triage", "`@NoBo what needs my attention?`\n`@NoBo issues`"),
       createSlackHomeField("Channel", "`/nobo-listen on`\n`/nobo-memory`"),
-      createSlackHomeField("Digests", "`/nobo-channel-digest daily 09:00`\n`@NoBo web-search ...`"),
+      createSlackHomeField("Search", "`/nobo-search <query>`\n`@NoBo web-search ...`"),
+      createSlackHomeField("Polls", "`/nobo-polls create Q? | A | B`\n`/nobo-polls results`"),
+      createSlackHomeField("Monitors", "`@NoBo monitor every 10 minutes alert if ... appears`\n`@NoBo monitors`"),
+      createSlackHomeField("Digests", "`/nobo-channel-digest daily 09:00`\n`/nobo-news [focus]`"),
       createSlackHomeField("Settings", "`/nobo-prefs`\n`/nobo-channel-model`")
     ]
   };
@@ -1377,6 +1391,19 @@ function formatHomeSchedules(schedules: ScheduleDashboardItem[]) {
     .map((schedule) => {
       const nextRun = formatHomeTimestamp(new Date(schedule.nextRunAt));
       return `- \`${schedule.id.slice(0, 8)}\` ${escapeSlackMrkdwn(schedule.summary)}\n  Next: ${nextRun}`;
+    })
+    .join("\n");
+}
+
+function formatHomeMonitors(monitors: MonitorDashboardItem[]) {
+  if (monitors.length === 0) {
+    return "No active monitors.\n`@NoBo monitor every 10 minutes alert if deploy failed appears`";
+  }
+
+  return monitors
+    .map((monitor) => {
+      const nextRun = formatHomeTimestamp(new Date(monitor.nextRunAt));
+      return `- \`${monitor.id.slice(0, 8)}\` ${escapeSlackMrkdwn(monitor.summary)}\n  Next: ${nextRun}`;
     })
     .join("\n");
 }

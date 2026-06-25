@@ -101,6 +101,13 @@ test("builds Slack App Home dashboard sections", () => {
         nextRunAt: "2026-06-25T17:00:00.000Z"
       }
     ],
+    monitors: [
+      {
+        id: "123456abcdef",
+        summary: "channel monitor appears for `deploy failed` every 10 minutes, next Jun 25, 2026, 12:10 PM",
+        nextRunAt: "2026-06-25T17:10:00.000Z"
+      }
+    ],
     artifacts: [
       {
         id: "00000000-0000-4000-8000-000000000000",
@@ -139,6 +146,8 @@ test("builds Slack App Home dashboard sections", () => {
 
   assert.equal(view.type, "home");
   assert.match(rendered, /Reminders/);
+  assert.match(rendered, /Monitors/);
+  assert.match(rendered, /deploy failed/);
   assert.match(rendered, /prefers concise updates/);
   assert.match(rendered, /<#C123> \(4\)/);
   assert.match(rendered, /DeepSeek V4 Pro/);
@@ -147,6 +156,9 @@ test("builds Slack App Home dashboard sections", () => {
   assert.match(rendered, /Quick Actions/);
   assert.match(rendered, /nobo_open_modal:prefs/);
   assert.match(rendered, /\/nobo-channel-digest/);
+  assert.match(rendered, /\/nobo-search/);
+  assert.match(rendered, /\/nobo-polls/);
+  assert.match(rendered, /meeting-notes artifact/);
   assert.match(rendered, /gentle/);
 });
 
