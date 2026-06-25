@@ -1,5 +1,9 @@
 import { createSlackSkillReply, extractSlackThreadFollowUps } from "./ai.js";
 import { handleArtifactCommandText } from "./artifact-commands.js";
+import {
+  buildAttentionTriageReport,
+  formatAttentionTriageReport
+} from "./attention-triage.js";
 import { handleChannelDigestCommand } from "./channel-digests.js";
 import {
   completeFollowUp,
@@ -42,6 +46,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo decision add <decision>` or `@NoBo decisions`: capture or list channel decisions",
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
+  "`@NoBo what needs my attention?`: prioritize mentions, follow-ups, decisions, and schedules",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
   "`@NoBo follow-ups`: track thread action items and schedule due reminders",
   "`@NoBo issues [github|linear|both] [create]`: draft or create issues from thread follow-ups",
@@ -124,6 +129,16 @@ export async function maybeHandleSlackSkillCommand({
 - If there are no clear action items, say that plainly.`,
         onTextDelta
       });
+    case "attention":
+      return formatAttentionTriageReport(
+        await buildAttentionTriageReport({
+          channelId,
+          currentUserId,
+          modelMessages,
+          channelMemories,
+          scheduleContext
+        })
+      );
     case "channel-digest":
       return handleChannelDigestCommand({
         text: command.args,
@@ -241,6 +256,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return null;
   }
 
+  if (isAttentionTriageCommand(trimmed)) {
+    return { name: "attention", args: "" };
+  }
+
   const [rawName, ...rest] = trimmed.split(/\s+/);
   const name = normalizeSkillName(rawName ?? "");
 
@@ -264,6 +283,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
 
   if (name === "todos" || name === "action-items") {
     return { name: "thread-todos", args };
+  }
+
+  if (name === "attention" || name === "triage" || name === "inbox" || name === "what-needs-attention") {
+    return { name: "attention", args };
   }
 
   if (name === "digest") {
@@ -292,6 +315,7 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "prefs" ||
     name === "summarize-thread" ||
     name === "thread-todos" ||
+    name === "attention" ||
     name === "channel-digest" ||
     name === "follow-ups" ||
     name === "issues" ||
@@ -320,4 +344,15 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
 
 function normalizeSkillName(input: string) {
   return input.toLowerCase().replace(/[^a-z0-9-]/g, "");
+}
+
+function isAttentionTriageCommand(input: string) {
+  const normalized = input
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /^(?:what\s+)?(?:needs?|requires?)\s+(?:my\s+|our\s+)?attention$/.test(normalized) ||
+    /^what\s+should\s+i\s+(?:look\s+at|reply\s+to|handle)$/.test(normalized);
 }
