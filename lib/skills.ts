@@ -14,6 +14,7 @@ import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 import { handleUserPreferencesCommand } from "./preferences.js";
 import type { SlackScheduleContext } from "./schedules.js";
+import { handleSemanticSearchCommandText } from "./semantic-search.js";
 
 type SlackSkillContext = {
   commandText: string;
@@ -39,6 +40,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
   "`@NoBo follow-ups`: track thread action items and schedule due reminders",
+  "`@NoBo semantic-search <query>`: search recent channel history and your artifacts",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your artifacts",
@@ -161,6 +163,11 @@ export async function maybeHandleSlackSkillCommand({
 
       return formatTrackThreadFollowUpsResult(await trackThreadFollowUps(scheduleContext, drafts));
     }
+    case "semantic-search":
+      return handleSemanticSearchCommandText(command.args, {
+        channelId,
+        ownerUserId: currentUserId
+      });
     case "web-search":
       if (!command.args) {
         return "Usage: `@NoBo web-search <query>`";
@@ -260,6 +267,9 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "thread-todos" ||
     name === "channel-digest" ||
     name === "follow-ups" ||
+    name === "semantic-search" ||
+    name === "history-search" ||
+    name === "search-history" ||
     name === "web-search" ||
     name === "artifacts" ||
     name === "list-artifacts" ||
@@ -275,6 +285,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
 
     if (name === "edit-artifact") {
       return { name: "update-artifact", args };
+    }
+
+    if (name === "history-search" || name === "search-history") {
+      return { name: "semantic-search", args };
     }
 
     return { name, args };

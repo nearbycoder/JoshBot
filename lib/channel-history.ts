@@ -12,6 +12,13 @@ type SlackHistoryMessage = {
   ts: string;
 };
 
+export type SlackChannelHistoryEntry = {
+  ts: string;
+  datetime: string;
+  speaker: string;
+  text: string;
+};
+
 type SlackConversationHistoryResponse =
   | SlackApiSuccess<{
       messages: SlackHistoryMessage[];
