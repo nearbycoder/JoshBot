@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import AdmZip from "adm-zip";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { listRecentArtifacts, type RecentArtifact } from "./artifacts.js";
 import {
   chooseSlackActiveListeningResponse,
@@ -290,6 +292,9 @@ const SPREADSHEET_ATTACHMENT_MIMETYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ]);
 const SPREADSHEET_ATTACHMENT_FILETYPES = new Set(["numbers", "xls", "xlsx"]);
+const PDF_ATTACHMENT_EXTENSIONS = [".pdf"];
+const WORD_ATTACHMENT_EXTENSIONS = [".doc", ".docx"];
+const SPREADSHEET_ATTACHMENT_EXTENSIONS = [".xls", ".xlsx", ".numbers"];
 const localEventLocks = new Map<string, number>();
 const activeListeningReplyCounts = new Map<string, number>();
 
@@ -2149,6 +2154,9 @@ async function formatSlackFileForModel(token: string, file: SlackFile) {
 
   if (attachmentText) {
     parts.push(`Attachment extracted text:\n${limitAttachmentText(attachmentText)}`);
+    if (!extractedText.text && extractedText.reason) {
+      parts.push(`Attachment extraction fallback: used Slack-provided preview because ${extractedText.reason}`);
+    }
   } else if (extractedText.reason) {
     parts.push(`Attachment extraction: ${extractedText.reason}`);
   }
@@ -2278,7 +2286,9 @@ async function extractSlackFileText(token: string, file: SlackFile) {
     return { text: null as string | null };
   }
 
-  if (!isTextLikeSlackFile(file)) {
+  const supportedDocumentType = getSupportedDocumentAttachmentType(file);
+
+  if (!isTextLikeSlackFile(file) && !supportedDocumentType) {
     return {
       text: null as string | null,
       reason: getUnsupportedSlackAttachmentReason(file)
@@ -2319,6 +2329,19 @@ async function extractSlackFileText(token: string, file: SlackFile) {
       };
     }
 
+    if (supportedDocumentType) {
+      const text = await extractDocumentText(bytes, supportedDocumentType);
+
+      if (!text.trim()) {
+        return {
+          text: null as string | null,
+          reason: `${supportedDocumentType.toUpperCase()} download contained no extractable text`
+        };
+      }
+
+      return { text };
+    }
+
     if (!isTextualHttpContent(contentType) && !isTextLikeSlackFile(file)) {
       return {
         text: null as string | null,
@@ -2352,6 +2375,185 @@ async function extractSlackFileText(token: string, file: SlackFile) {
   }
 }
 
+function getSupportedDocumentAttachmentType(file: SlackFile) {
+  const mimetype = file.mimetype?.toLowerCase() ?? "";
+  const filetype = file.filetype?.toLowerCase() ?? "";
+
+  if (mimetype === "application/pdf" || filetype === "pdf" || hasSlackFileExtension(file, PDF_ATTACHMENT_EXTENSIONS)) {
+    return "pdf" as const;
+  }
+
+  if (
+    mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    filetype === "docx" ||
+    hasSlackFileExtension(file, [".docx"])
+  ) {
+    return "docx" as const;
+  }
+
+  if (
+    mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    filetype === "xlsx" ||
+    hasSlackFileExtension(file, [".xlsx"])
+  ) {
+    return "xlsx" as const;
+  }
+
+  return null;
+}
+
+async function extractDocumentText(bytes: Buffer, type: "pdf" | "docx" | "xlsx") {
+  if (type === "pdf") {
+    return extractPdfText(bytes);
+  }
+
+  if (type === "docx") {
+    return extractDocxText(bytes);
+  }
+
+  return extractXlsxText(bytes);
+}
+
+async function extractPdfText(bytes: Buffer) {
+  const document = await getDocument({
+    data: new Uint8Array(bytes)
+  }).promise;
+  const pages: string[] = [];
+
+  try {
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .filter(Boolean)
+        .join(" ");
+
+      if (text.trim()) {
+        pages.push(text);
+      }
+    }
+  } finally {
+    await document.cleanup();
+  }
+
+  return pages.join("\n\n");
+}
+
+function extractDocxText(bytes: Buffer) {
+  const zip = new AdmZip(bytes);
+  const entries = zip
+    .getEntries()
+    .filter((entry) => /^word\/(?:document|header\d+|footer\d+|footnotes|endnotes)\.xml$/u.test(entry.entryName))
+    .sort((left, right) => left.entryName.localeCompare(right.entryName));
+
+  return entries.map((entry) => extractOpenXmlText(entry.getData().toString("utf8"))).filter(Boolean).join("\n\n");
+}
+
+function extractXlsxText(bytes: Buffer) {
+  const zip = new AdmZip(bytes);
+  const sharedStrings = parseXlsxSharedStrings(zip);
+  const workbookSheetNames = parseXlsxSheetNames(zip);
+  const sheets = zip
+    .getEntries()
+    .filter((entry) => /^xl\/worksheets\/sheet\d+\.xml$/u.test(entry.entryName))
+    .sort((left, right) => left.entryName.localeCompare(right.entryName));
+
+  return sheets
+    .map((entry, index) => {
+      const sheetName = workbookSheetNames[index] ?? entry.entryName.replace(/^xl\/worksheets\//u, "");
+      const rows = parseXlsxRows(entry.getData().toString("utf8"), sharedStrings);
+
+      if (rows.length === 0) {
+        return "";
+      }
+
+      return [`Sheet ${sheetName}:`, ...rows].join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function parseXlsxSharedStrings(zip: AdmZip) {
+  const entry = zip.getEntry("xl/sharedStrings.xml");
+
+  if (!entry) {
+    return [];
+  }
+
+  return Array.from(entry.getData().toString("utf8").matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/gu)).map((match) =>
+    extractOpenXmlText(match[1] ?? "")
+  );
+}
+
+function parseXlsxSheetNames(zip: AdmZip) {
+  const entry = zip.getEntry("xl/workbook.xml");
+
+  if (!entry) {
+    return [];
+  }
+
+  return Array.from(entry.getData().toString("utf8").matchAll(/<sheet\b([^>]*)\/?>/gu)).map((match) =>
+    decodeXmlEntities(getXmlAttribute(match[1] ?? "", "name") || "Sheet")
+  );
+}
+
+function parseXlsxRows(xml: string, sharedStrings: string[]) {
+  return Array.from(xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/gu))
+    .map((rowMatch) =>
+      Array.from((rowMatch[1] ?? "").matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/gu))
+        .map((cellMatch) => parseXlsxCell(cellMatch[1] ?? "", cellMatch[2] ?? "", sharedStrings))
+        .join("\t")
+        .trim()
+    )
+    .filter(Boolean);
+}
+
+function parseXlsxCell(attributes: string, xml: string, sharedStrings: string[]) {
+  const type = getXmlAttribute(attributes, "t");
+
+  if (type === "inlineStr") {
+    return extractOpenXmlText(xml);
+  }
+
+  const value = decodeXmlEntities(xml.match(/<v>([\s\S]*?)<\/v>/u)?.[1] ?? "").trim();
+
+  if (type === "s") {
+    return sharedStrings[Number(value)] ?? value;
+  }
+
+  return value;
+}
+
+function extractOpenXmlText(xml: string) {
+  return decodeXmlEntities(
+    xml
+      .replace(/<w:tab\s*\/>/gu, "\t")
+      .replace(/<a:br\s*\/>|<w:br\s*\/>/gu, "\n")
+      .replace(/<\/(?:w:p|a:p|si)>/gu, "\n")
+      .replace(/<[^>]+>/gu, "")
+  )
+    .replace(/[^\S\n\t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function getXmlAttribute(input: string, name: string) {
+  const match = input.match(new RegExp(`\\b${name}="([^"]*)"`, "u"));
+  return match?.[1];
+}
+
+function decodeXmlEntities(input: string) {
+  return input
+    .replace(/&#x([0-9a-f]+);/giu, (_, value: string) => String.fromCodePoint(Number.parseInt(value, 16)))
+    .replace(/&#(\d+);/gu, (_, value: string) => String.fromCodePoint(Number.parseInt(value, 10)))
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">");
+}
+
 function isTextLikeSlackFile(file: SlackFile) {
   const mimetype = file.mimetype?.toLowerCase() ?? "";
   const filetype = file.filetype?.toLowerCase() ?? "";
@@ -2383,24 +2585,24 @@ function getUnsupportedSlackAttachmentReason(file: SlackFile) {
   const mimetype = file.mimetype?.toLowerCase() ?? "";
   const filetype = file.filetype?.toLowerCase() ?? "";
 
-  if (mimetype === "application/pdf" || filetype === "pdf" || hasSlackFileExtension(file, [".pdf"])) {
-    return "PDF text extraction is limited to Slack-provided previews with current dependencies";
+  if (mimetype === "application/pdf" || filetype === "pdf" || hasSlackFileExtension(file, PDF_ATTACHMENT_EXTENSIONS)) {
+    return undefined;
   }
 
   if (
     WORD_ATTACHMENT_MIMETYPES.has(mimetype) ||
     WORD_ATTACHMENT_FILETYPES.has(filetype) ||
-    hasSlackFileExtension(file, [".doc", ".docx"])
+    hasSlackFileExtension(file, WORD_ATTACHMENT_EXTENSIONS)
   ) {
-    return "Word document text extraction is limited to Slack-provided previews with current dependencies";
+    return "legacy .doc extraction is not supported; upload .docx for full text extraction";
   }
 
   if (
     SPREADSHEET_ATTACHMENT_MIMETYPES.has(mimetype) ||
     SPREADSHEET_ATTACHMENT_FILETYPES.has(filetype) ||
-    hasSlackFileExtension(file, [".xls", ".xlsx", ".numbers"])
+    hasSlackFileExtension(file, SPREADSHEET_ATTACHMENT_EXTENSIONS)
   ) {
-    return "binary spreadsheet extraction is limited to Slack-provided previews; CSV/TSV files can be extracted";
+    return "legacy .xls and Numbers extraction are not supported; upload .xlsx or CSV/TSV for full text extraction";
   }
 
   return undefined;
