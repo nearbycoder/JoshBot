@@ -429,6 +429,20 @@ Supported examples:
 
 Recurring daily and weekly schedules are interpreted in the user's saved timezone, falling back to America/Chicago. Reminder-style schedules post with the user's reminder style. Prompt-style schedules, such as "post what is trending", run NoBo at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal NoBo replies.
 
+## Conditional monitors
+
+NoBo can persist user-owned conditional monitors in Redis. Monitors run on a recurring cadence and post only when the condition matches. They suppress repeated alerts for the same fingerprint.
+
+Supported examples:
+
+- `@NoBo monitor every 10 minutes alert if "deploy failed" appears`
+- `@NoBo monitor web every 30 minutes alert if "OpenAI pricing" changes`
+- `@NoBo monitor prompt every 5 minutes alert if "status.example.com" fails`
+- `@NoBo monitors`
+- `@NoBo cancel monitor abc12345`
+
+`appears` defaults to recent Slack channel history. `changes` defaults to web search. `fails` defaults to a current prompt check that can use available tools. The monitor runner requires `REDIS_URL`; without Redis, monitor commands fall through to normal NoBo replies.
+
 ## Follow-ups
 
 NoBo can extract and track action items from the current Slack thread. It stores follow-ups in Redis, keeps owner/date metadata when the thread makes them clear, and creates one-time reminder schedules for future due dates.
@@ -480,6 +494,7 @@ Current skills:
 - `@NoBo thread-todos`, `@NoBo todos`, or `@NoBo action-items`
 - `@NoBo channel-digest daily 09:00 [focus]` or `@NoBo digest daily 09:00 [focus]`
 - `@NoBo semantic-search <query>`, `history-search <query>`, or `search-history <query>`
+- `@NoBo monitor every 10 minutes alert if <thing> appears|changes|fails` or `@NoBo monitors`
 - `@NoBo web-search <query>` or `@NoBo search <query>`
 - `@NoBo show channel memory`
 - `@NoBo forget channel memory <number|text>`

@@ -36,6 +36,12 @@ test("formats ops status without exposing secrets", async () => {
         intervalMs: 30000,
         redisConfigured: true
       }),
+      getMonitors: () => ({
+        started: true,
+        running: false,
+        intervalMs: 30000,
+        redisConfigured: true
+      }),
       getHackerNewsScheduler: () => ({
         started: true,
         disabled: false,
@@ -54,6 +60,7 @@ test("formats ops status without exposing secrets", async () => {
 
     assert.match(text, /Redis: ok \(PING ok, 3ms\)/);
     assert.match(text, /Scheduler: started, idle/);
+    assert.match(text, /Monitors: started, idle/);
     assert.match(text, /Slack config: token present, signing secret present, bot user present/);
     assert.match(text, /Model\/search: API key present, text model `glm-test`, vision model `vision-test`, web search enabled/);
     assert.match(text, /test: boom/);

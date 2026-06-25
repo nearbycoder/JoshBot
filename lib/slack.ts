@@ -46,6 +46,7 @@ import {
   maybeHandleScheduleCommand,
   type ScheduleDashboardItem
 } from "./schedules.js";
+import { maybeHandleMonitorCommand } from "./monitors.js";
 import { maybeHandleSlackSkillCommand } from "./skills.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 
@@ -371,10 +372,11 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
   const commandReply =
     (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
   const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
-  const scheduleReply = commandReply || decisionReply ? null : await maybeHandleScheduleCommand(event);
+  const monitorReply = commandReply || decisionReply ? null : await maybeHandleMonitorCommand(event);
+  const scheduleReply = commandReply || decisionReply || monitorReply ? null : await maybeHandleScheduleCommand(event);
 
-  if (commandReply || decisionReply || scheduleReply) {
-    const replyText = commandReply ?? decisionReply ?? scheduleReply ?? "";
+  if (commandReply || decisionReply || monitorReply || scheduleReply) {
+    const replyText = commandReply ?? decisionReply ?? monitorReply ?? scheduleReply ?? "";
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,
@@ -539,10 +541,11 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
   const commandReply =
     (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
   const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
+  const monitorReply = commandReply || decisionReply ? null : await maybeHandleMonitorCommand(event);
   const minimalThreadMessages = [incomingMessage];
 
-  if (commandReply || decisionReply) {
-    const replyText = commandReply ?? decisionReply ?? "";
+  if (commandReply || decisionReply || monitorReply) {
+    const replyText = commandReply ?? decisionReply ?? monitorReply ?? "";
     void acknowledgeTargetedSlackEvent(token, event);
     await recordUserChannelMemory(event, incomingMessage, event.thread_ts);
     const postedReply = await postSlackMessage({
@@ -842,10 +845,11 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   const commandReply =
     (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
   const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
-  const scheduleReply = commandReply || decisionReply ? null : await maybeHandleScheduleCommand(event);
+  const monitorReply = commandReply || decisionReply ? null : await maybeHandleMonitorCommand(event);
+  const scheduleReply = commandReply || decisionReply || monitorReply ? null : await maybeHandleScheduleCommand(event);
 
-  if (commandReply || decisionReply || scheduleReply) {
-    const replyText = commandReply ?? decisionReply ?? scheduleReply ?? "";
+  if (commandReply || decisionReply || monitorReply || scheduleReply) {
+    const replyText = commandReply ?? decisionReply ?? monitorReply ?? scheduleReply ?? "";
     const postedReply = await postSlackMessage({
       token,
       channel: event.channel,

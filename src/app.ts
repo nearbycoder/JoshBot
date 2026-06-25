@@ -2,6 +2,7 @@ import { config as loadEnv } from "dotenv";
 import { Hono } from "hono";
 import { handleArtifactFetchRequest } from "../lib/artifacts.js";
 import {
+  createConditionalMonitorCheck,
   createScheduledSlackMessage,
   createWeeklyAiNewsSlackDigest,
   createWeeklyNewsSlackDigest
@@ -22,6 +23,7 @@ import {
 import { handleSlackEventCallbackPayload, parseSlackPayload } from "../lib/slack-events.js";
 import { postGeneratedSlackMessage, postSlackMessage, verifySlackRequest } from "../lib/slack.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "../lib/memory.js";
+import { startMonitorRunner } from "../lib/monitors.js";
 import { getPreferredNewsFocus, getUserPreferences } from "../lib/preferences.js";
 import { startScheduleRunner } from "../lib/schedules.js";
 import { flueApp } from "./internal-flue.js";
@@ -133,6 +135,10 @@ app.route("/", flueApp);
 startScheduleRunner({
   postSlackMessage,
   runScheduledTask: createScheduledSlackMessage
+});
+startMonitorRunner({
+  postSlackMessage,
+  runMonitorCheck: createConditionalMonitorCheck
 });
 startChannelDigestSubscriptionRunner({
   postGeneratedSlackMessage

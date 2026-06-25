@@ -20,6 +20,7 @@ import {
   parseIssueCommandIntent
 } from "./issue-drafts.js";
 import type { ChannelMemoryEntry } from "./memory.js";
+import { handleMonitorCommandText } from "./monitors.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
 import { handlePollCommandText } from "./polls.js";
 import { handleUserPreferencesCommand } from "./preferences.js";
@@ -57,6 +58,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo follow-ups`: track thread action items and schedule due reminders",
   "`@NoBo issues [github|linear|both] [create]`: draft or create issues from thread follow-ups",
   "`@NoBo semantic-search <query>`: search recent channel history and your artifacts",
+  "`@NoBo monitor every 10 minutes alert if <thing> appears|changes|fails`: conditional alerts",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`: manage your artifacts",
@@ -186,6 +188,12 @@ export async function maybeHandleSlackSkillCommand({
         messageTs,
         source: "slack-message"
       })).text;
+    case "monitor":
+    case "monitors":
+      return handleMonitorCommandText({
+        text: command.name === "monitors" && !command.args ? "list" : `monitor ${command.args}`,
+        context: scheduleContext
+      });
     case "follow-ups": {
       const followUpCommand = parseFollowUpSkillCommand(command.args);
 
@@ -357,6 +365,10 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "channel-digest", args };
   }
 
+  if (name === "monitors") {
+    return { name: "monitors", args };
+  }
+
   if (name === "artifact") {
     return { name: "artifacts", args };
   }
@@ -384,8 +396,8 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "thread-todos" ||
     name === "attention" ||
     name === "channel-digest" ||
+    name === "monitor" ||
     name === "follow-ups" ||
-    name === "issues" ||
     name === "semantic-search" ||
     name === "history-search" ||
     name === "search-history" ||
