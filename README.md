@@ -394,6 +394,7 @@ Current skills:
 - `@NoBo skills` or `@NoBo help`
 - `@NoBo decision add <decision>` or `@NoBo decisions`
 - `@NoBo summarize-thread [focus]` or `@NoBo summary [focus]`
+- `@NoBo meeting-notes [artifact]`, `meeting notes`, or `notes`: turn a Slack huddle transcript, transcript upload, or thread text into notes with summary, decisions, action items, and blockers
 - `@NoBo follow-ups`, `@NoBo follow-ups list`, `@NoBo follow-ups mine`, `@NoBo follow-ups done <id>`
 - `@NoBo thread-todos`, `@NoBo todos`, or `@NoBo action-items`
 - `@NoBo channel-digest daily 09:00 [focus]` or `@NoBo digest daily 09:00 [focus]`
@@ -414,7 +415,9 @@ Memory commands also remain available:
 
 ## Attachments
 
-NoBo passes Slack attachment metadata into the model. For image uploads it attempts to download the image and attach the bytes to the current user message. For small text-like uploads such as `.txt`, Markdown, JSON, logs, code, CSV, and TSV, it downloads the private Slack file and includes extracted text in context.
+NoBo passes Slack attachment metadata into the model. For image uploads it attempts to download the image and attach the bytes to the current user message. For small text-like uploads such as `.txt`, Markdown, JSON, logs, code, CSV, TSV, VTT, and SRT, it downloads the private Slack file and includes extracted text in context.
+
+For meeting notes, use `@NoBo meeting-notes` in a thread with transcript-like text or an attached transcript. Add `artifact`, `markdown`, `doc`, `save`, or `export` to have NoBo create a Markdown artifact and link it back. Slack huddle/transcript metadata is included when Slack provides it; otherwise NoBo uses the uploaded text/Markdown transcript and surrounding thread.
 
 This requires the Slack app to have `files:read`.
 
@@ -422,7 +425,7 @@ Attachment limits:
 
 - Images are capped at 5 MB.
 - Text-like files are capped by `SLACK_TEXT_ATTACHMENT_MAX_BYTES` and `SLACK_ATTACHMENT_TEXT_MAX_CHARS`.
-- PDFs, Word docs, and binary spreadsheets use Slack-provided preview text when available; otherwise NoBo includes metadata and notes the current extraction limit. CSV/TSV spreadsheet exports are extracted as text.
+- PDFs, Word docs, and binary spreadsheets use Slack-provided preview text when available; otherwise NoBo includes metadata and notes the current extraction limit. CSV/TSV spreadsheet exports and VTT/SRT transcripts are extracted as text.
 
 NoBo uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k2.6`. If the configured vision model fails, NoBo retries the image request once with `kimi-k2.6` before falling back to text-only attachment context.
 

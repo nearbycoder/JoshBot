@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createArtifact } from "../lib/artifacts.js";
-import { maybeHandleSlackSkillCommand } from "../lib/skills.js";
+import { __testing, maybeHandleSlackSkillCommand } from "../lib/skills.js";
 
 test("lists artifacts through Slack skill command", async () => {
   await withTempArtifactDir(async () => {
@@ -24,6 +24,35 @@ test("lists artifacts through Slack skill command", async () => {
     assert.match(reply ?? "", /\*Artifacts\*/);
     assert.match(reply ?? "", new RegExp(artifact.id.slice(0, 8)));
   });
+});
+
+test("parses meeting notes skill aliases", () => {
+  assert.deepEqual(__testing.parseSkillCommand("meeting-notes artifact"), {
+    name: "meeting-notes",
+    args: "artifact"
+  });
+  assert.deepEqual(__testing.parseSkillCommand("meeting notes as markdown"), {
+    name: "meeting-notes",
+    args: "as markdown"
+  });
+  assert.deepEqual(__testing.parseSkillCommand("notes focus on launch risks"), {
+    name: "meeting-notes",
+    args: "focus on launch risks"
+  });
+});
+
+test("builds meeting notes prompts with artifact intent", () => {
+  assert.equal(__testing.isMeetingNotesArtifactRequested("save as markdown artifact"), true);
+
+  const prompt = __testing.buildMeetingNotesUserPrompt("save as markdown artifact for launch", true);
+  const instructions = __testing.buildMeetingNotesInstructions(true);
+
+  assert.match(prompt, /meeting-notes skill/);
+  assert.match(prompt, /Create a Markdown artifact/);
+  assert.match(prompt, /Extra user guidance: for launch/);
+  assert.match(instructions, /Summary, Decisions, Action items, Blockers/);
+  assert.match(instructions, /Slack huddle\/transcript metadata/);
+  assert.match(instructions, /create_artifact/);
 });
 
 async function withTempArtifactDir(run: () => Promise<void>) {
