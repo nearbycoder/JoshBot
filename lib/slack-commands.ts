@@ -175,7 +175,9 @@ export async function handleSlackSlashCommandPayload(
   }
 
   if (command === "/nobo-artifacts") {
-    return immediate(ephemeral(await handleArtifactCommandText(payload.text)));
+    return immediate(ephemeral(await handleArtifactCommandText(payload.text, {
+      ownerUserId: payload.user_id
+    })));
   }
 
   if (command === "/nobo-decisions" || command === "/nobo-decision") {
@@ -209,7 +211,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",
     "`/nobo-memory [show|forget <number|text>|clear confirm]`: manage shared channel memory",
-    "`/nobo-artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
+    "`/nobo-artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your generated artifacts",
     "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",

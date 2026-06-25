@@ -7,6 +7,7 @@ export type NoboAgentContext = {
   nonce: string;
   modelId: string;
   toolMode: NoboAgentToolMode;
+  ownerUserId?: string;
   scheduleContext?: SlackScheduleContext;
 };
 
@@ -18,6 +19,7 @@ export function encodeNoboAgentContext(
       nonce: context.nonce ?? randomUUID(),
       modelId: context.modelId,
       toolMode: context.toolMode,
+      ...(context.ownerUserId ? { ownerUserId: context.ownerUserId } : {}),
       ...(context.scheduleContext ? { scheduleContext: context.scheduleContext } : {})
     }),
     "utf8"
@@ -40,6 +42,7 @@ export function decodeNoboAgentContext(encoded: string): NoboAgentContext {
     nonce: parsed.nonce,
     modelId: parsed.modelId,
     toolMode: parsed.toolMode,
+    ...(typeof parsed.ownerUserId === "string" ? { ownerUserId: parsed.ownerUserId } : {}),
     ...(parsed.scheduleContext ? { scheduleContext: parsed.scheduleContext } : {})
   };
 }

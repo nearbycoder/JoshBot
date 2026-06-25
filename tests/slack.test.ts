@@ -123,6 +123,12 @@ test("builds Slack App Home dashboard sections", () => {
         memoryCount: 4
       }
     ],
+    preferences: {
+      timeZone: "America/Chicago",
+      verbosity: "concise",
+      newsInterests: ["ai"],
+      reminderStyle: "gentle"
+    },
     updatedAt: new Date("2026-06-25T16:00:00.000Z")
   });
   const rendered = JSON.stringify(view);
@@ -132,6 +138,9 @@ test("builds Slack App Home dashboard sections", () => {
   assert.match(rendered, /prefers concise updates/);
   assert.match(rendered, /<#C123> \(4\)/);
   assert.match(rendered, /launch plan/);
+  assert.match(rendered, /Quick Actions/);
+  assert.match(rendered, /\/nobo-channel-digest/);
+  assert.match(rendered, /gentle/);
 });
 
 test("extracts text-like Slack uploads into message context", async (t) => {

@@ -19,6 +19,11 @@
     "redis": "^5.12.1",
     "valibot": "^1.4.1"
   },
+  "overrides": {
+    "@flue/slack": {
+      "hono": "^4.12.26"
+    }
+  },
   "devDependencies": {
     "@flue/cli": "^1.0.0-beta.1",
     "@types/node": "^24.10.0",

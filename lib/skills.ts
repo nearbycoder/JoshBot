@@ -41,7 +41,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo follow-ups`: track thread action items and schedule due reminders",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
-  "`@NoBo artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
+  "`@NoBo artifacts [list|update <id> <content>|delete <id>|cleanup]`: manage your artifacts",
   "`@NoBo prefs ...`: show or update personal preferences",
   "`@NoBo remember ...`, `show my memory`, `clear my memory`: personal memory commands"
 ];
@@ -186,15 +186,21 @@ export async function maybeHandleSlackSkillCommand({
         onTextDelta
       });
     case "artifacts":
-      return handleArtifactCommandText(command.args || "list");
+      return handleArtifactCommandText(command.args || "list", { ownerUserId: currentUserId });
     case "list-artifacts":
-      return handleArtifactCommandText(command.args ? `list ${command.args}` : "list");
+      return handleArtifactCommandText(command.args ? `list ${command.args}` : "list", {
+        ownerUserId: currentUserId
+      });
     case "delete-artifact":
       return command.args
-        ? handleArtifactCommandText(`delete ${command.args}`)
+        ? handleArtifactCommandText(`delete ${command.args}`, { ownerUserId: currentUserId })
         : "Usage: `@NoBo delete-artifact <id>`";
+    case "update-artifact":
+      return command.args
+        ? handleArtifactCommandText(`update ${command.args}`, { ownerUserId: currentUserId })
+        : "Usage: `@NoBo update-artifact <id> <content>`";
     case "cleanup-artifacts":
-      return handleArtifactCommandText(command.args || "cleanup");
+      return handleArtifactCommandText(command.args || "cleanup", { ownerUserId: currentUserId });
     default:
       return null;
   }
@@ -258,11 +264,17 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     name === "artifacts" ||
     name === "list-artifacts" ||
     name === "delete-artifact" ||
+    name === "update-artifact" ||
+    name === "edit-artifact" ||
     name === "cleanup-artifacts" ||
     name === "prune-artifacts"
   ) {
     if (name === "prune-artifacts") {
       return { name: "cleanup-artifacts", args };
+    }
+
+    if (name === "edit-artifact") {
+      return { name: "update-artifact", args };
     }
 
     return { name, args };

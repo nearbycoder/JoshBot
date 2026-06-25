@@ -10,10 +10,12 @@ export type ArtifactMetadata = {
   kind: ArtifactKind;
   filename: string;
   title: string;
+  ownerUserId?: string;
   rawUrl: string;
   previewUrl: string;
   path: string;
   createdAt: string;
+  updatedAt?: string;
   expiresAt?: string;
   bytes: number;
 };
@@ -37,7 +39,11 @@ export type ArtifactLookupResult =
 
 export type DeleteArtifactResult =
   | { ok: true; artifact: ListedArtifact }
-  | { ok: false; reason: "invalid" | "missing" | "ambiguous"; matches?: ListedArtifact[] };
+  | { ok: false; reason: "invalid" | "missing" | "ambiguous" | "forbidden"; matches?: ListedArtifact[] };
+
+export type UpdateArtifactResult =
+  | { ok: true; artifact: ListedArtifact }
+  | { ok: false; reason: "invalid" | "missing" | "ambiguous" | "forbidden"; matches?: ListedArtifact[] };
 
 export type DeleteExpiredArtifactsResult = {
   deleted: ListedArtifact[];
@@ -53,6 +59,7 @@ export async function createArtifact({
   title,
   filename,
   content,
+  ownerUserId,
   expiresAt,
   expiresInDays
 }: {
@@ -60,6 +67,7 @@ export async function createArtifact({
   title: string;
   filename?: string;
   content: string;
+  ownerUserId?: string;
   expiresAt?: string;
   expiresInDays?: number | string | null;
 }): Promise<CreatedArtifact> {
@@ -92,10 +100,12 @@ export async function createArtifact({
     kind,
     filename: safeFilename,
     title: title.trim() || safeFilename,
+    ...(ownerUserId ? { ownerUserId } : {}),
     rawUrl,
     previewUrl,
     path: targetPath,
     createdAt: createdAt.toISOString(),
+    updatedAt: createdAt.toISOString(),
     ...(resolvedExpiresAt ? { expiresAt: resolvedExpiresAt } : {}),
     bytes
   };
@@ -108,11 +118,13 @@ export async function createArtifact({
 export async function listArtifacts({
   includeExpired = false,
   limit,
-  now = new Date()
+  now = new Date(),
+  ownerUserId
 }: {
   includeExpired?: boolean;
   limit?: number;
   now?: Date;
+  ownerUserId?: string;
 } = {}): Promise<ListedArtifact[]> {
   let entries;
 
@@ -130,9 +142,12 @@ export async function listArtifacts({
     )
   ).filter((artifact): artifact is ListedArtifact => artifact !== null);
 
+  const ownedArtifacts = ownerUserId
+    ? artifacts.filter((artifact) => artifact.ownerUserId === ownerUserId)
+    : artifacts;
   const filteredArtifacts = includeExpired
-    ? artifacts
-    : artifacts.filter((artifact) => !artifact.expired);
+    ? ownedArtifacts
+    : ownedArtifacts.filter((artifact) => !artifact.expired);
   const sortedArtifacts = filteredArtifacts.sort(
     (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
   );
@@ -140,15 +155,21 @@ export async function listArtifacts({
   return typeof limit === "number" && limit > 0 ? sortedArtifacts.slice(0, limit) : sortedArtifacts;
 }
 
-export async function listRecentArtifacts(limit = 5): Promise<RecentArtifact[]> {
-  const artifacts = await listArtifacts({ limit });
+export async function listRecentArtifacts(
+  limit = 5,
+  options: { ownerUserId?: string } = {}
+): Promise<RecentArtifact[]> {
+  const artifacts = await listArtifacts({ limit, ownerUserId: options.ownerUserId });
   return artifacts.map((artifact) => ({
     ...artifact,
-    updatedAt: artifact.createdAt
+    updatedAt: artifact.updatedAt ?? artifact.createdAt
   }));
 }
 
-export async function findArtifact(idPrefix: string): Promise<ArtifactLookupResult> {
+export async function findArtifact(
+  idPrefix: string,
+  options: { ownerUserId?: string } = {}
+): Promise<ArtifactLookupResult> {
   const normalizedPrefix = idPrefix.trim().toLowerCase();
 
   if (!/^[0-9a-f-]{4,36}$/.test(normalizedPrefix)) {
@@ -157,12 +178,16 @@ export async function findArtifact(idPrefix: string): Promise<ArtifactLookupResu
 
   if (isSafeArtifactId(normalizedPrefix)) {
     const artifact = await loadArtifactMetadata(normalizedPrefix, new Date());
+    if (artifact && options.ownerUserId && artifact.ownerUserId !== options.ownerUserId) {
+      return { status: "missing" };
+    }
     return artifact ? { status: "found", artifact } : { status: "missing" };
   }
 
-  const matches = (await listArtifacts({ includeExpired: true })).filter((artifact) =>
-    artifact.id.startsWith(normalizedPrefix)
-  );
+  const matches = (await listArtifacts({
+    includeExpired: true,
+    ownerUserId: options.ownerUserId
+  })).filter((artifact) => artifact.id.startsWith(normalizedPrefix));
 
   if (matches.length === 0) {
     return { status: "missing" };
@@ -175,8 +200,15 @@ export async function findArtifact(idPrefix: string): Promise<ArtifactLookupResu
   return { status: "found", artifact: matches[0] as ListedArtifact };
 }
 
-export async function deleteArtifact(idPrefix: string): Promise<DeleteArtifactResult> {
-  const match = await findArtifact(idPrefix);
+export async function deleteArtifact(
+  idPrefix: string,
+  options: { ownerUserId?: string } = {}
+): Promise<DeleteArtifactResult> {
+  if (!options.ownerUserId) {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  const match = await findArtifact(idPrefix, options);
 
   if (match.status === "invalid") {
     return { ok: false, reason: "invalid" };
@@ -198,12 +230,101 @@ export async function deleteArtifact(idPrefix: string): Promise<DeleteArtifactRe
   };
 }
 
+export async function updateArtifact({
+  idPrefix,
+  ownerUserId,
+  kind,
+  title,
+  filename,
+  content,
+  expiresAt,
+  expiresInDays
+}: {
+  idPrefix: string;
+  ownerUserId?: string;
+  kind?: ArtifactKind;
+  title?: string;
+  filename?: string;
+  content: string;
+  expiresAt?: string;
+  expiresInDays?: number | string | null;
+}): Promise<UpdateArtifactResult> {
+  if (!ownerUserId) {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  const match = await findArtifact(idPrefix, { ownerUserId });
+
+  if (match.status === "invalid") {
+    return { ok: false, reason: "invalid" };
+  }
+
+  if (match.status === "missing") {
+    return { ok: false, reason: "missing" };
+  }
+
+  if (match.status === "ambiguous") {
+    return { ok: false, reason: "ambiguous", matches: match.matches };
+  }
+
+  const bytes = Buffer.byteLength(content, "utf8");
+
+  if (bytes > MAX_ARTIFACT_BYTES) {
+    throw new Error(`Artifact is too large (${bytes} bytes). Limit is ${MAX_ARTIFACT_BYTES} bytes.`);
+  }
+
+  const existing = match.artifact;
+  const updatedAt = new Date();
+  const nextKind = kind ?? existing.kind;
+  const extension = nextKind === "html" ? ".html" : ".md";
+  const safeFilename = filename
+    ? sanitizeFilename(filename, extension)
+    : existing.kind === nextKind
+      ? existing.filename
+      : sanitizeFilename(existing.filename, extension);
+  const artifactDir = path.join(getArtifactDirectory(), existing.id);
+  const oldPath = path.join(artifactDir, existing.filename);
+  const targetPath = path.join(artifactDir, safeFilename);
+  const resolvedExpiresAt =
+    expiresAt !== undefined || expiresInDays !== undefined
+      ? resolveArtifactExpiresAt({ expiresAt, expiresInDays }, updatedAt)
+      : existing.expiresAt;
+
+  await mkdir(artifactDir, { recursive: true });
+  await writeFile(targetPath, content, "utf8");
+
+  if (safeFilename !== existing.filename) {
+    await rm(oldPath, { force: true });
+  }
+
+  const artifact = createArtifactMetadata({
+    id: existing.id,
+    kind: nextKind,
+    filename: safeFilename,
+    title: title?.trim() || existing.title,
+    ownerUserId,
+    createdAt: existing.createdAt,
+    updatedAt: updatedAt.toISOString(),
+    expiresAt: resolvedExpiresAt,
+    bytes
+  });
+
+  await writeFile(path.join(artifactDir, ARTIFACT_METADATA_FILENAME), JSON.stringify(artifact, null, 2), "utf8");
+
+  return {
+    ok: true,
+    artifact: toListedArtifact(artifact, updatedAt)
+  };
+}
+
 export async function deleteExpiredArtifacts({
-  now = new Date()
+  now = new Date(),
+  ownerUserId
 }: {
   now?: Date;
+  ownerUserId?: string;
 } = {}): Promise<DeleteExpiredArtifactsResult> {
-  const expiredArtifacts = (await listArtifacts({ includeExpired: true, now })).filter(
+  const expiredArtifacts = (await listArtifacts({ includeExpired: true, now, ownerUserId })).filter(
     (artifact) => artifact.expired
   );
 
@@ -351,6 +472,7 @@ async function normalizeStoredArtifactMetadata(
   const filePath = path.join(getArtifactDirectory(), id, filename);
   const fileStats = await stat(filePath);
   const createdAt = normalizeIsoDate(record.createdAt) ?? fileStats.birthtime.toISOString();
+  const updatedAt = normalizeIsoDate(record.updatedAt);
   const expiresAt = normalizeIsoDate(record.expiresAt);
 
   return createArtifactMetadata({
@@ -358,7 +480,11 @@ async function normalizeStoredArtifactMetadata(
     kind,
     filename,
     title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : filename,
+    ownerUserId: typeof record.ownerUserId === "string" && record.ownerUserId.trim()
+      ? record.ownerUserId.trim()
+      : undefined,
     createdAt,
+    updatedAt,
     expiresAt,
     bytes: typeof record.bytes === "number" && record.bytes >= 0 ? record.bytes : fileStats.size
   });
@@ -395,7 +521,9 @@ function createArtifactMetadata({
   kind,
   filename,
   title,
+  ownerUserId,
   createdAt,
+  updatedAt,
   expiresAt,
   bytes
 }: {
@@ -403,7 +531,9 @@ function createArtifactMetadata({
   kind: ArtifactKind;
   filename: string;
   title: string;
+  ownerUserId?: string;
   createdAt: string;
+  updatedAt?: string;
   expiresAt?: string;
   bytes: number;
 }): ArtifactMetadata {
@@ -418,10 +548,12 @@ function createArtifactMetadata({
     kind,
     filename,
     title,
+    ...(ownerUserId ? { ownerUserId } : {}),
     rawUrl,
     previewUrl,
     path: path.join(getArtifactDirectory(), id, filename),
     createdAt,
+    ...(updatedAt ? { updatedAt } : {}),
     ...(expiresAt ? { expiresAt } : {}),
     bytes
   };

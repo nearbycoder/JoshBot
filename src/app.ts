@@ -10,6 +10,7 @@ import { startChannelDigestSubscriptionRunner } from "../lib/channel-digests.js"
 import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
 import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import { recordOpsError } from "../lib/ops-errors.js";
+import { readLimitedRequestBody, RequestBodyTooLargeError } from "../lib/request-body.js";
 import {
   handleSlackInteractionPayload,
   handleSlackSlashCommandPayload,
@@ -54,7 +55,10 @@ app.all("/artifacts/*", async (c) => {
 });
 
 app.post("/api/slack/events", async (c) => {
-  const rawBody = await c.req.text();
+  const rawBody = await readSlackRequestBody(c.req.raw);
+  if (rawBody instanceof Response) {
+    return rawBody;
+  }
 
   if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
     return c.text("Invalid Slack signature", 401);
@@ -77,7 +81,10 @@ app.post("/api/slack/events", async (c) => {
 });
 
 app.post("/api/slack/commands", async (c) => {
-  const rawBody = await c.req.text();
+  const rawBody = await readSlackRequestBody(c.req.raw);
+  if (rawBody instanceof Response) {
+    return rawBody;
+  }
 
   if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
     return c.text("Invalid Slack signature", 401);
@@ -103,7 +110,10 @@ app.post("/api/slack/commands", async (c) => {
 });
 
 app.post("/api/slack/interactions", async (c) => {
-  const rawBody = await c.req.text();
+  const rawBody = await readSlackRequestBody(c.req.raw);
+  if (rawBody instanceof Response) {
+    return rawBody;
+  }
 
   if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
     return c.text("Invalid Slack signature", 401);
@@ -214,6 +224,23 @@ function summarizeError(error: unknown) {
   }
 
   return String(error);
+}
+
+async function readSlackRequestBody(request: Request) {
+  try {
+    return await readLimitedRequestBody(request);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return new Response("Slack request body is too large.", {
+        status: 413,
+        headers: {
+          "content-type": "text/plain; charset=utf-8"
+        }
+      });
+    }
+
+    throw error;
+  }
 }
 
 export default app;

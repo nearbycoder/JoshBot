@@ -2,6 +2,7 @@ import { config as loadEnv } from "dotenv";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { handleArtifactRequest } from "./lib/artifacts.js";
 import { createScheduledSlackMessage } from "./lib/ai.js";
+import { readLimitedNodeRequestBody, RequestBodyTooLargeError } from "./lib/request-body.js";
 import {
   postGeneratedSlackMessage,
   postSlackMessage,
@@ -41,7 +42,11 @@ const server = createServer(async (request, response) => {
     method === "POST" &&
     (url.pathname === "/api/slack/events" || url.pathname === "/slack/events")
   ) {
-    const rawBody = await readBody(request);
+    const rawBody = await readBody(request, response);
+
+    if (rawBody === null) {
+      return;
+    }
 
     if (!verifySlackRequest(rawBody, request.headers)) {
       sendText(response, 401, "Invalid Slack signature");
@@ -85,18 +90,20 @@ startChannelDigestSubscriptionRunner({
   postGeneratedSlackMessage
 });
 
-function readBody(request: NodeJS.ReadableStream) {
-  return new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
+async function readBody(
+  request: IncomingMessage,
+  response: ServerResponse<IncomingMessage>
+) {
+  try {
+    return await readLimitedNodeRequestBody(request);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      sendText(response, 413, "Slack request body is too large.");
+      return null;
+    }
 
-    request.on("data", (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
-    request.on("end", () => {
-      resolve(Buffer.concat(chunks).toString("utf8"));
-    });
-    request.on("error", reject);
-  });
+    throw error;
+  }
 }
 
 function sendJson(

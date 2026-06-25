@@ -22,6 +22,6 @@ export default createAgent(({ id }) => {
   return {
     model: getNoboModelSpecifier(context.modelId),
     instructions: SYSTEM_PROMPT,
-    tools: context.toolMode === "none" ? [] : createNoboTools(context.scheduleContext)
+    tools: context.toolMode === "none" ? [] : createNoboTools(context.scheduleContext, context.ownerUserId)
   };
 });

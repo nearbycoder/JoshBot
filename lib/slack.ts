@@ -27,7 +27,12 @@ import {
   type ChannelMemoryStatus
 } from "./memory.js";
 import { getRedisClient } from "./redis.js";
-import { maybeHandleUserPreferencesCommand } from "./preferences.js";
+import {
+  DEFAULT_USER_PREFERENCES,
+  getUserPreferences,
+  maybeHandleUserPreferencesCommand,
+  type UserPreferences
+} from "./preferences.js";
 import {
   getUserScheduleDashboardItems,
   maybeHandleScheduleCommand,
@@ -107,6 +112,7 @@ type SlackHomeDashboardData = {
   schedules: ScheduleDashboardItem[];
   artifacts: RecentArtifact[];
   channelStatuses: ChannelMemoryStatus[];
+  preferences: UserPreferences;
   updatedAt: Date;
 };
 
@@ -269,6 +275,16 @@ const SPREADSHEET_ATTACHMENT_MIMETYPES = new Set([
 const SPREADSHEET_ATTACHMENT_FILETYPES = new Set(["numbers", "xls", "xlsx"]);
 const localEventLocks = new Map<string, number>();
 const activeListeningReplyCounts = new Map<string, number>();
+
+class SlackDownloadTooLargeError extends Error {
+  constructor(
+    public readonly readBytes: number,
+    public readonly maxBytes: number
+  ) {
+    super(`Slack file download is too large (${readBytes} bytes; limit ${maxBytes} bytes).`);
+    this.name = "SlackDownloadTooLargeError";
+  }
+}
 
 export function verifySlackRequest(body: string, headers: SlackHeaders) {
   const signature = getHeader(headers, "x-slack-signature");
@@ -1075,11 +1091,14 @@ async function createSlackAppHomeView(userId: string) {
 }
 
 async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDashboardData> {
-  const [memories, schedules, artifacts, channelStatuses] = await Promise.all([
+  const [memories, schedules, artifacts, channelStatuses, preferences] = await Promise.all([
     loadSlackHomeSection("memories", () => getUserMemories(userId), []),
     loadSlackHomeSection("schedules", () => getUserScheduleDashboardItems(userId, 5), []),
-    loadSlackHomeSection("artifacts", () => listRecentArtifacts(5), []),
-    loadSlackHomeSection("channel status", () => listChannelMemoryStatuses(12), [])
+    loadSlackHomeSection("artifacts", () => listRecentArtifacts(5, { ownerUserId: userId }), []),
+    loadSlackHomeSection("channel status", () => listChannelMemoryStatuses(12), []),
+    loadSlackHomeSection("preferences", () => getUserPreferences(userId), {
+      ...DEFAULT_USER_PREFERENCES
+    })
   ]);
 
   return {
@@ -1088,6 +1107,7 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
     schedules,
     artifacts,
     channelStatuses,
+    preferences,
     updatedAt: new Date()
   };
 }
@@ -1127,10 +1147,37 @@ function buildSlackAppHomeView(data: SlackHomeDashboardData) {
         ]
       },
       { type: "divider" },
-      createSlackHomeSection("Reminders", formatHomeSchedules(data.schedules)),
+      createSlackHomeOverviewBlock(data),
+      { type: "divider" },
+      createSlackHomeSection("Next Up", formatHomeSchedules(data.schedules)),
       createSlackHomeSection("Memory", formatHomeMemories(data.memories)),
-      createSlackHomeSection("Active Listening", formatHomeChannelStatuses(data.channelStatuses)),
-      createSlackHomeSection("Recent Artifacts", formatHomeArtifacts(data.artifacts))
+      createSlackHomeSection("Listening Channels", formatHomeChannelStatuses(data.channelStatuses)),
+      createSlackHomeSection("Recent Artifacts", formatHomeArtifacts(data.artifacts)),
+      { type: "divider" },
+      createSlackHomePreferencesBlock(data.preferences),
+      createSlackHomeShortcutsBlock()
+    ]
+  };
+}
+
+function createSlackHomeOverviewBlock(data: SlackHomeDashboardData): SlackBlock {
+  const activeListeningCount = data.channelStatuses.filter(
+    (status) => status.activeListening
+  ).length;
+
+  return {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: "*Dashboard*"
+    },
+    fields: [
+      createSlackHomeField("Reminders", `${data.schedules.length} upcoming`),
+      createSlackHomeField("Memory", `${data.memories.length} saved`),
+      createSlackHomeField("Listening", `${activeListeningCount} channels on`),
+      createSlackHomeField("Artifacts", `${data.artifacts.length} recent`),
+      createSlackHomeField("Timezone", data.preferences.timeZone),
+      createSlackHomeField("Verbosity", data.preferences.verbosity)
     ]
   };
 }
@@ -1145,19 +1192,66 @@ function createSlackHomeSection(title: string, body: string): SlackBlock {
   };
 }
 
+function createSlackHomePreferencesBlock(preferences: UserPreferences): SlackBlock {
+  return {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: "*Preferences*"
+    },
+    fields: [
+      createSlackHomeField("Timezone", preferences.timeZone),
+      createSlackHomeField("Verbosity", preferences.verbosity),
+      createSlackHomeField("Reminder style", preferences.reminderStyle),
+      createSlackHomeField(
+        "News",
+        preferences.newsInterests.length
+          ? preferences.newsInterests.slice(0, 5).join(", ")
+          : "none"
+      )
+    ]
+  };
+}
+
+function createSlackHomeShortcutsBlock(): SlackBlock {
+  return {
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: "*Quick Actions*"
+    },
+    fields: [
+      createSlackHomeField("Threads", "`@NoBo summarize-thread`\n`@NoBo follow-ups`"),
+      createSlackHomeField("Channel", "`/nobo-listen on`\n`/nobo-memory`"),
+      createSlackHomeField("Digests", "`/nobo-channel-digest daily 09:00`\n`@NoBo web-search ...`"),
+      createSlackHomeField("Settings", "`/nobo-prefs`\n`/nobo-channel-model`")
+    ]
+  };
+}
+
+function createSlackHomeField(label: string, value: string) {
+  return {
+    type: "mrkdwn",
+    text: truncateSlackHomeText(`*${label}*\n${escapeSlackMrkdwn(value)}`)
+  };
+}
+
 function formatHomeSchedules(schedules: ScheduleDashboardItem[]) {
   if (schedules.length === 0) {
-    return "No active reminders or crons.";
+    return "No active reminders or crons.\n`@NoBo remind me in 10 minutes to check the logs`";
   }
 
   return schedules
-    .map((schedule) => `- \`${schedule.id.slice(0, 8)}\` ${escapeSlackMrkdwn(schedule.summary)}`)
+    .map((schedule) => {
+      const nextRun = formatHomeTimestamp(new Date(schedule.nextRunAt));
+      return `- \`${schedule.id.slice(0, 8)}\` ${escapeSlackMrkdwn(schedule.summary)}\n  Next: ${nextRun}`;
+    })
     .join("\n");
 }
 
 function formatHomeMemories(memories: string[]) {
   if (memories.length === 0) {
-    return "No saved memories yet.";
+    return "No saved memories yet.\n`@NoBo remember I prefer concise updates`";
   }
 
   return memories
@@ -1172,7 +1266,7 @@ function formatHomeChannelStatuses(statuses: ChannelMemoryStatus[]) {
   const lines = [
     active.length > 0
       ? `On: ${active.map(formatHomeChannelStatus).join(", ")}`
-      : "On: none"
+      : "On: none. Use `/nobo-listen on` in a channel."
   ];
 
   if (recent.length > 0) {
@@ -1184,7 +1278,7 @@ function formatHomeChannelStatuses(statuses: ChannelMemoryStatus[]) {
 
 function formatHomeArtifacts(artifacts: RecentArtifact[]) {
   if (artifacts.length === 0) {
-    return "No recent artifacts.";
+    return "No recent artifacts.\nReact with `:memo:` on a thread or use `@NoBo artifacts list`.";
   }
 
   return artifacts
@@ -2056,24 +2150,8 @@ async function extractSlackFileText(token: string, file: SlackFile) {
     }
 
     const maxBytes = getSlackTextAttachmentMaxBytes();
-    const contentLength = Number(response.headers.get("content-length") ?? "0");
-
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-      return {
-        text: null as string | null,
-        reason: `file is too large to extract (${formatByteCount(contentLength)}; limit ${formatByteCount(maxBytes)})`
-      };
-    }
-
     const contentType = response.headers.get("content-type") ?? "";
-    const bytes = Buffer.from(await response.arrayBuffer());
-
-    if (bytes.byteLength > maxBytes) {
-      return {
-        text: null as string | null,
-        reason: `file is too large to extract after download (${formatByteCount(bytes.byteLength)}; limit ${formatByteCount(maxBytes)})`
-      };
-    }
+    const bytes = await readSlackResponseBuffer(response, maxBytes);
 
     if ((contentType.includes("text/html") || looksLikeHtml(bytes)) && !isHtmlLikeSlackFile(file)) {
       return {
@@ -2100,6 +2178,13 @@ async function extractSlackFileText(token: string, file: SlackFile) {
       text: decodeSlackTextBytes(bytes, contentType)
     };
   } catch (error) {
+    if (error instanceof SlackDownloadTooLargeError) {
+      return {
+        text: null as string | null,
+        reason: `file is too large to extract (${formatByteCount(error.readBytes)}; limit ${formatByteCount(error.maxBytes)})`
+      };
+    }
+
     console.warn(`Unable to extract Slack file ${file.id}: ${summarizeError(error)}`);
     return {
       text: null as string | null,
@@ -2639,19 +2724,8 @@ async function buildSlackImagePart(token: string, file: SlackFile) {
     throw new Error(`Slack file download failed with HTTP ${response.status}`);
   }
 
-  const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > MAX_SLACK_IMAGE_BYTES) {
-    console.warn(`Skipping Slack image ${file.id}: file too large (${contentLength} bytes)`);
-    return null;
-  }
-
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const bytes = await readSlackResponseBuffer(response, MAX_SLACK_IMAGE_BYTES);
   const contentType = response.headers.get("content-type") ?? "";
-
-  if (bytes.byteLength > MAX_SLACK_IMAGE_BYTES) {
-    console.warn(`Skipping Slack image ${file.id}: file too large after download`);
-    return null;
-  }
 
   if (contentType.includes("text/html") || looksLikeHtml(bytes)) {
     throw new Error(
@@ -2674,6 +2748,10 @@ function looksLikeHtml(bytes: Buffer) {
 function explainImageAttachmentError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
 
+  if (error instanceof SlackDownloadTooLargeError || message.includes("Slack file download is too large")) {
+    return `I can see the image attachment, but it is too large to inspect. The image limit is ${formatByteCount(MAX_SLACK_IMAGE_BYTES)}.`;
+  }
+
   if (message.includes("files:read") || message.includes("returned HTML instead of image bytes")) {
     return "I can see the image attachment, but this Slack app still can't download files. Add the `files:read` scope to the app, reinstall it to the workspace, and then try again.";
   }
@@ -2683,6 +2761,42 @@ function explainImageAttachmentError(error: unknown) {
   }
 
   return null;
+}
+
+async function readSlackResponseBuffer(response: Response, maxBytes: number) {
+  const contentLength = Number(response.headers.get("content-length") ?? "0");
+
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new SlackDownloadTooLargeError(contentLength, maxBytes);
+  }
+
+  if (!response.body) {
+    return Buffer.alloc(0);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    const chunk = Buffer.from(value);
+    totalBytes += chunk.byteLength;
+
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new SlackDownloadTooLargeError(totalBytes, maxBytes);
+    }
+
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks, totalBytes);
 }
 
 function summarizeError(error: unknown) {

@@ -366,6 +366,7 @@ async function generateSlackResponse({
       images,
       modelId,
       toolMode,
+      ownerUserId: currentUserId,
       scheduleContext:
         toolMode === "slack" && scheduleContext
           ? {
@@ -442,6 +443,7 @@ async function runNoboAgentPrompt({
   modelId,
   toolMode,
   scheduleContext,
+  ownerUserId,
   onTextDelta
 }: {
   prompt: string;
@@ -449,6 +451,7 @@ async function runNoboAgentPrompt({
   modelId: string;
   toolMode: NoboAgentToolMode;
   scheduleContext?: SlackScheduleContext;
+  ownerUserId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
 }) {
   if (!process.env.OPENCODE_GO_API_KEY) {
@@ -461,6 +464,7 @@ async function runNoboAgentPrompt({
   const agentId = encodeNoboAgentContext({
     modelId,
     toolMode,
+    ownerUserId,
     scheduleContext
   });
   const deltaObserver = onTextDelta ? await createTextDeltaObserver(agentId, onTextDelta) : null;

@@ -2,18 +2,22 @@ import {
   deleteArtifact,
   deleteExpiredArtifacts,
   listArtifacts,
+  updateArtifact,
   type ListedArtifact
 } from "./artifacts.js";
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = 10;
 
-export async function handleArtifactCommandText(commandText: string) {
+export async function handleArtifactCommandText(
+  commandText: string,
+  options: { ownerUserId?: string } = {}
+) {
   const trimmed = commandText.trim();
   const normalized = trimmed.toLowerCase();
 
   if (!trimmed || normalized === "list") {
     return formatArtifactList(
-      await listArtifacts({ limit: DEFAULT_ARTIFACT_LIST_LIMIT }),
+      await listArtifacts({ limit: DEFAULT_ARTIFACT_LIST_LIMIT, ownerUserId: options.ownerUserId }),
       "Artifacts"
     );
   }
@@ -24,20 +28,25 @@ export async function handleArtifactCommandText(commandText: string) {
 
   if (normalized === "all" || normalized === "list all") {
     return formatArtifactList(
-      await listArtifacts({ includeExpired: true, limit: DEFAULT_ARTIFACT_LIST_LIMIT }),
+      await listArtifacts({
+        includeExpired: true,
+        limit: DEFAULT_ARTIFACT_LIST_LIMIT,
+        ownerUserId: options.ownerUserId
+      }),
       "Artifacts"
     );
   }
 
   if (normalized === "expired" || normalized === "list expired") {
-    const expiredArtifacts = (await listArtifacts({ includeExpired: true })).filter(
-      (artifact) => artifact.expired
-    );
+    const expiredArtifacts = (await listArtifacts({
+      includeExpired: true,
+      ownerUserId: options.ownerUserId
+    })).filter((artifact) => artifact.expired);
     return formatArtifactList(expiredArtifacts.slice(0, DEFAULT_ARTIFACT_LIST_LIMIT), "Expired artifacts");
   }
 
   if (/^(cleanup|prune)(\s+expired)?$/.test(normalized)) {
-    const result = await deleteExpiredArtifacts();
+    const result = await deleteExpiredArtifacts({ ownerUserId: options.ownerUserId });
     return result.deleted.length === 0
       ? "No expired artifacts to delete."
       : `Deleted ${result.deleted.length} expired artifact(s): ${result.deleted
@@ -47,7 +56,9 @@ export async function handleArtifactCommandText(commandText: string) {
 
   const deleteMatch = trimmed.match(/^(?:delete|remove|rm)\s+([0-9a-f-]{4,36})$/i);
   if (deleteMatch) {
-    const result = await deleteArtifact(deleteMatch[1] ?? "");
+    const result = await deleteArtifact(deleteMatch[1] ?? "", {
+      ownerUserId: options.ownerUserId
+    });
 
     if (result.ok) {
       return `Deleted artifact \`${result.artifact.shortId}\`: ${escapeSlackText(result.artifact.title)}`;
@@ -61,7 +72,38 @@ export async function handleArtifactCommandText(commandText: string) {
       return "Artifact IDs are UUIDs or visible prefixes like `abc12345`.";
     }
 
-    return "I couldn't find that artifact.";
+    if (result.reason === "forbidden") {
+      return "Artifact changes need a Slack user context.";
+    }
+
+    return "I couldn't find one of your artifacts with that ID.";
+  }
+
+  const updateMatch = trimmed.match(/^(?:update|edit|modify)\s+([0-9a-f-]{4,36})\s+([\s\S]+)$/i);
+  if (updateMatch) {
+    const result = await updateArtifact({
+      idPrefix: updateMatch[1] ?? "",
+      ownerUserId: options.ownerUserId,
+      content: updateMatch[2] ?? ""
+    });
+
+    if (result.ok) {
+      return `Updated artifact \`${result.artifact.shortId}\`: ${escapeSlackText(result.artifact.title)}`;
+    }
+
+    if (result.reason === "ambiguous" && result.matches?.length) {
+      return `That artifact ID matched more than one artifact:\n${formatArtifactLines(result.matches)}`;
+    }
+
+    if (result.reason === "invalid") {
+      return "Artifact IDs are UUIDs or visible prefixes like `abc12345`.";
+    }
+
+    if (result.reason === "forbidden") {
+      return "Artifact changes need a Slack user context.";
+    }
+
+    return "I couldn't find one of your artifacts with that ID.";
   }
 
   return `Usage: ${formatArtifactCommandUsage()}`;
@@ -73,12 +115,13 @@ export function formatArtifactCommandHelp() {
     formatArtifactCommandUsage(),
     "`list all`: include expired artifacts",
     "`expired`: list only expired artifacts",
+    "`update <id> <content>`: replace one of your artifacts",
     "`cleanup`: delete expired artifacts"
   ].join("\n");
 }
 
 function formatArtifactCommandUsage() {
-  return "`list`, `delete <id>`, or `cleanup`";
+  return "`list`, `update <id> <content>`, `delete <id>`, or `cleanup`";
 }
 
 function formatArtifactList(artifacts: ListedArtifact[], title: string) {

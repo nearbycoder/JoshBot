@@ -4,7 +4,8 @@ import {
   createArtifact,
   deleteArtifact,
   deleteExpiredArtifacts,
-  listArtifacts
+  listArtifacts,
+  updateArtifact
 } from "./artifacts.js";
 import { fetchSlackChannelHistory } from "./channel-history.js";
 import { formatCurrentTime } from "./nobo-time.js";
@@ -19,14 +20,17 @@ import {
 
 const jsonSchema = (schema: Record<string, unknown>) => schema as never;
 
-export function createNoboTools(scheduleContext?: SlackScheduleContext) {
+export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUserId?: string) {
+  const artifactOwnerUserId = scheduleContext?.ownerUserId ?? ownerUserId;
+
   return [
     ...(process.env.EXA_API_KEY ? [createExaSearchTool()] : []),
     createCurrentTimeTool(scheduleContext?.timeZone),
-    createArtifactTool(),
-    createListArtifactsTool(),
-    createDeleteArtifactTool(),
-    createCleanupExpiredArtifactsTool(),
+    createArtifactTool(artifactOwnerUserId),
+    createListArtifactsTool(artifactOwnerUserId),
+    createUpdateArtifactTool(artifactOwnerUserId),
+    createDeleteArtifactTool(artifactOwnerUserId),
+    createCleanupExpiredArtifactsTool(artifactOwnerUserId),
     ...(scheduleContext ? createSlackContextTools(scheduleContext) : [])
   ];
 }
@@ -51,7 +55,7 @@ function createCurrentTimeTool(defaultTimeZone = "America/Chicago") {
   });
 }
 
-function createArtifactTool() {
+function createArtifactTool(ownerUserId: string | undefined) {
   return defineTool({
     name: "create_artifact",
     description:
@@ -101,13 +105,18 @@ function createArtifactTool() {
       expiresInDays?: number | string;
       expiresAt?: string;
     }) => {
-      const artifact = await createArtifact(args);
+      if (!ownerUserId) {
+        return JSON.stringify({ error: "Artifact creation needs a Slack user context." });
+      }
+
+      const artifact = await createArtifact({ ...args, ownerUserId });
 
       return JSON.stringify({
         id: artifact.id,
         title: artifact.title,
         filename: artifact.filename,
         createdAt: artifact.createdAt,
+        updatedAt: artifact.updatedAt ?? artifact.createdAt,
         expiresAt: artifact.expiresAt ?? null,
         previewUrl: artifact.previewUrl,
         rawUrl: artifact.rawUrl
@@ -116,7 +125,7 @@ function createArtifactTool() {
   });
 }
 
-function createListArtifactsTool() {
+function createListArtifactsTool(ownerUserId: string | undefined) {
   return defineTool({
     name: "list_artifacts",
     description: "List generated artifacts, including preview links and expiration metadata.",
@@ -135,10 +144,15 @@ function createListArtifactsTool() {
       additionalProperties: false
     }),
     execute: async (args: { includeExpired?: boolean; limit?: number | string }) => {
+      if (!ownerUserId) {
+        return JSON.stringify({ error: "Artifact listing needs a Slack user context." });
+      }
+
       const limit = parseOptionalPositiveInteger(args.limit, 10);
       const artifacts = await listArtifacts({
         includeExpired: args.includeExpired === true,
-        limit
+        limit,
+        ownerUserId
       });
 
       return JSON.stringify({
@@ -160,7 +174,71 @@ function createListArtifactsTool() {
   });
 }
 
-function createDeleteArtifactTool() {
+function createUpdateArtifactTool(ownerUserId: string | undefined) {
+  return defineTool({
+    name: "update_artifact",
+    description: "Update an existing generated artifact owned by the current Slack user.",
+    parameters: jsonSchema({
+      type: "object",
+      properties: {
+        idPrefix: {
+          type: "string",
+          minLength: 4,
+          description: "Artifact UUID or visible prefix, e.g. abc12345."
+        },
+        kind: {
+          enum: ["html", "markdown"],
+          description: "Optional replacement kind. Defaults to the existing artifact kind."
+        },
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          description: "Optional replacement title."
+        },
+        filename: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          description: "Optional replacement filename."
+        },
+        content: {
+          type: "string",
+          minLength: 1,
+          description: "The complete replacement file content."
+        },
+        expiresInDays: {
+          anyOf: [{ type: "number", exclusiveMinimum: 0 }, { type: "string", pattern: "^\\d+(\\.\\d+)?$" }],
+          description: "Optional replacement expiration in days."
+        },
+        expiresAt: {
+          type: "string",
+          description: "Optional replacement ISO timestamp or parseable date for expiration."
+        }
+      },
+      required: ["idPrefix", "content"],
+      additionalProperties: false
+    }),
+    execute: async (args: {
+      idPrefix: string;
+      kind?: "html" | "markdown";
+      title?: string;
+      filename?: string;
+      content: string;
+      expiresInDays?: number | string;
+      expiresAt?: string;
+    }) => {
+      const result = await updateArtifact({
+        ...args,
+        ownerUserId
+      });
+
+      return JSON.stringify(result);
+    }
+  });
+}
+
+function createDeleteArtifactTool(ownerUserId: string | undefined) {
   return defineTool({
     name: "delete_artifact",
     description: "Delete a generated artifact by UUID or visible short ID prefix.",
@@ -177,14 +255,14 @@ function createDeleteArtifactTool() {
       additionalProperties: false
     }),
     execute: async (args: { idPrefix: string }) => {
-      const result = await deleteArtifact(args.idPrefix);
+      const result = await deleteArtifact(args.idPrefix, { ownerUserId });
 
       return JSON.stringify(result);
     }
   });
 }
 
-function createCleanupExpiredArtifactsTool() {
+function createCleanupExpiredArtifactsTool(ownerUserId: string | undefined) {
   return defineTool({
     name: "cleanup_expired_artifacts",
     description: "Delete generated artifacts whose expiration timestamp is in the past.",
@@ -194,7 +272,7 @@ function createCleanupExpiredArtifactsTool() {
       additionalProperties: false
     }),
     execute: async () => {
-      const result = await deleteExpiredArtifacts();
+      const result = await deleteExpiredArtifacts({ ownerUserId });
 
       return JSON.stringify({
         deleted: result.deleted.map((artifact) => ({
