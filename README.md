@@ -266,6 +266,19 @@ Supported examples:
 
 Recurring daily and weekly schedules are interpreted in America/Chicago time. Reminder-style schedules post the saved reminder text. Prompt-style schedules, such as "post what is trending", run NoBo at delivery time so current-information tasks can use web search. The scheduler requires `REDIS_URL`; without Redis, schedule commands fall through to normal NoBo replies.
 
+## Follow-ups
+
+NoBo can extract and track action items from the current Slack thread. It stores follow-ups in Redis, keeps owner/date metadata when the thread makes them clear, and creates one-time reminder schedules for future due dates.
+
+Supported examples:
+
+- `@NoBo follow-ups`
+- `@NoBo follow-ups list`
+- `@NoBo follow-ups mine`
+- `@NoBo follow-ups done abc12345`
+
+Reminder delivery uses the same Redis scheduler as reminders and crons. If an item has a clear Slack owner, the reminder is owned by and mentions that user; otherwise it falls back to the user who ran the tracker.
+
 ## Reaction shortcuts
 
 NoBo handles a small allowlist of `reaction_added` shortcuts on Slack messages. Add the reaction to the root message of a thread for best results.
@@ -296,6 +309,7 @@ Current skills:
 - `@NoBo skills` or `@NoBo help`
 - `@NoBo decision add <decision>` or `@NoBo decisions`
 - `@NoBo summarize-thread [focus]`
+- `@NoBo follow-ups`
 - `@NoBo thread-todos`
 - `@NoBo channel-digest daily 09:00 [focus]`
 - `@NoBo web-search <query>`

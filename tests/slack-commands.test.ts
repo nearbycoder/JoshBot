@@ -41,6 +41,7 @@ test("returns ephemeral help for /nobo-help", async () => {
   assert.match(response.text, /`\/nobo-ai-news \[focus\]`/);
   assert.match(response.text, /`\/nobo-channel-digest daily\|weekly/);
   assert.match(response.text, /`\/nobo-dad-joke`/);
+  assert.match(response.text, /@NoBo follow-ups/);
   assert.match(response.text, /@NoBo web-search/);
 });
 

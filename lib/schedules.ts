@@ -50,6 +50,11 @@ type OptionalScheduleDestination = {
 
 export type ScheduleToolInput =
   | {
+      kind: "at";
+      task: string;
+      runAt: string;
+    } & OptionalScheduleDestination
+  | {
       kind: "once";
       task: string;
       amount: number | string;
@@ -97,7 +102,13 @@ type ScheduleRecord = {
 
 type ParsedSchedule =
   | {
-      kind: "once" | "interval";
+      kind: "once";
+      task: string;
+      intervalMs: number;
+      firstRunAt: Date;
+    }
+  | {
+      kind: "interval";
       task: string;
       intervalMs: number;
       firstRunAt: Date;
@@ -252,6 +263,10 @@ export async function listSchedulesFromTool(context: SlackScheduleContext) {
 
 export async function cancelScheduleFromTool(context: SlackScheduleContext, idPrefix: string) {
   return cancelUserSchedule(context.ownerUserId, idPrefix);
+}
+
+export async function cancelScheduleById(scheduleId: string, ownerUserId: string) {
+  await deleteSchedule(scheduleId, ownerUserId);
 }
 
 export async function updateScheduleFromTool(
@@ -461,6 +476,17 @@ function scheduleToolInputToParsedSchedule(input: ScheduleToolInput): ParsedSche
 
   if (!task) {
     throw new Error("Schedule task cannot be empty.");
+  }
+
+  if (input.kind === "at") {
+    const firstRunAt = parseFutureRunAt(input.runAt);
+
+    return {
+      kind: "once",
+      task,
+      intervalMs: Math.max(firstRunAt.getTime() - Date.now(), MIN_INTERVAL_MS),
+      firstRunAt
+    };
   }
 
   if (input.kind === "once" || input.kind === "interval") {
@@ -673,6 +699,20 @@ function validateTime(hour: number, minute: number) {
   ) {
     throw new Error("Schedule time must use hour 0-23 and minute 0-59.");
   }
+}
+
+function parseFutureRunAt(input: string) {
+  const runAt = new Date(input);
+
+  if (!input.trim() || Number.isNaN(runAt.getTime())) {
+    throw new Error("Schedule runAt must be an ISO date/time.");
+  }
+
+  if (runAt.getTime() <= Date.now()) {
+    throw new Error("Schedule runAt must be in the future.");
+  }
+
+  return runAt;
 }
 
 function nextDailyRun(hour: number, minute: number) {

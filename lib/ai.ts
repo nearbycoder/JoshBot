@@ -5,6 +5,10 @@ import { SYSTEM_PROMPT } from "./nobo-prompt.js";
 import { formatCurrentTime, formatCurrentTimePrompt } from "./nobo-time.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { SlackScheduleContext } from "./schedules.js";
+import {
+  parseFollowUpExtraction,
+  type ThreadFollowUpDraft
+} from "./follow-ups.js";
 
 const DEFAULT_SLACK_TEXT_MODEL = "glm-5.2";
 const DEFAULT_SLACK_VISION_MODEL = "kimi-k2.6";
@@ -62,6 +66,51 @@ export async function createSlackSkillReply({
 ${instructions}`,
     onTextDelta
   });
+}
+
+export async function extractSlackThreadFollowUps({
+  messages,
+  memories,
+  currentUserId,
+  channelMemories = [],
+  channelId
+}: {
+  messages: NoboModelMessage[];
+  memories: string[];
+  currentUserId: string | undefined;
+  channelMemories?: ChannelMemoryEntry[];
+  channelId?: string;
+}): Promise<ThreadFollowUpDraft[]> {
+  const prompt = buildPrompt({
+    messages: [
+      ...messages,
+      {
+        role: "user",
+        content:
+          "Extract clear, trackable follow-ups from this Slack thread. Return JSON only."
+      }
+    ],
+    memories,
+    currentUserId,
+    channelMemories,
+    channelId,
+    extraSystem: `You are extracting follow-ups for NoBo to track.
+- Return exactly JSON with this shape: {"followUps":[{"task":"...","assigneeUserId":"U123","assigneeName":"Name","dueAt":"ISO date/time","source":"short evidence"}]}.
+- Include only concrete action items, asks, commitments, or next steps.
+- Prefer Slack user IDs from speaker labels or mentions for assigneeUserId. Use assigneeName only when no user ID is clear.
+- Set dueAt only when the thread gives a clear date or deadline. Convert relative dates using the current America/Chicago time context.
+- Omit vague wishes, FYIs, and completed work.
+- If none are clear, return {"followUps":[]}.`
+  });
+  const promptMessages = modelMessagesToPrompt(messages);
+  const text = await runNoboAgentPrompt({
+    prompt,
+    images: promptMessages.images,
+    modelId: selectSlackModel(messages),
+    toolMode: "none"
+  });
+
+  return parseFollowUpExtraction(text);
 }
 
 export async function createWeeklyAiNewsSlackDigest({

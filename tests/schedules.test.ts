@@ -35,6 +35,18 @@ test("schedule input accepts numeric strings for daily time", () => {
   assert.equal(parsed.minute, 5);
 });
 
+test("schedule input accepts future ISO run times", () => {
+  const runAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const parsed = __testing.scheduleToolInputToParsedSchedule({
+    kind: "at",
+    task: "follow up",
+    runAt
+  });
+
+  assert.equal(parsed.kind, "once");
+  assert.equal(parsed.firstRunAt.toISOString(), runAt);
+});
+
 test("schedule destination falls back to the only mentioned channel", () => {
   const destination = __testing.getScheduleDestination(
     {

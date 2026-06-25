@@ -373,6 +373,7 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
       currentUserId: event.user,
       channelMemories,
       channelId: event.channel,
+      scheduleContext: getScheduleContext(event),
       onTextDelta: skillStream?.append,
       beforeModelReply: skillStream.start
     });

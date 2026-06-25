@@ -1,8 +1,18 @@
-import { createSlackSkillReply } from "./ai.js";
+import { createSlackSkillReply, extractSlackThreadFollowUps } from "./ai.js";
 import { handleArtifactCommandText } from "./artifact-commands.js";
 import { handleChannelDigestCommand } from "./channel-digests.js";
+import {
+  completeFollowUp,
+  formatFollowUpHelp,
+  formatTrackThreadFollowUpsResult,
+  listThreadFollowUps,
+  listUserFollowUps,
+  parseFollowUpSkillCommand,
+  trackThreadFollowUps
+} from "./follow-ups.js";
 import type { ChannelMemoryEntry } from "./memory.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
+import type { SlackScheduleContext } from "./schedules.js";
 
 type SlackSkillContext = {
   commandText: string;
@@ -11,6 +21,7 @@ type SlackSkillContext = {
   currentUserId: string | undefined;
   channelMemories?: ChannelMemoryEntry[];
   channelId?: string;
+  scheduleContext?: SlackScheduleContext;
   onTextDelta?: (delta: string) => void | Promise<void>;
   beforeModelReply?: () => void | Promise<void>;
 };
@@ -26,6 +37,7 @@ const SKILL_HELP_LINES = [
   "`@NoBo summarize-thread [focus]`: summarize the current thread",
   "`@NoBo thread-todos`: extract action items and owners from the thread",
   "`@NoBo channel-digest daily 09:00 [focus]`: subscribe this channel to digests",
+  "`@NoBo follow-ups`: track thread action items and schedule due reminders",
   "`@NoBo web-search <query>`: run an explicit web search",
   "`@NoBo show channel memory`, `forget channel memory ...`, `clear channel memory confirm`: shared channel memory controls",
   "`@NoBo artifacts [list|delete <id>|cleanup]`: manage generated artifacts",
@@ -43,6 +55,7 @@ export async function maybeHandleSlackSkillCommand({
   currentUserId,
   channelMemories,
   channelId,
+  scheduleContext,
   onTextDelta,
   beforeModelReply
 }: SlackSkillContext) {
@@ -108,6 +121,42 @@ export async function maybeHandleSlackSkillCommand({
         ownerUserId: currentUserId,
         commandName: "@NoBo channel-digest"
       });
+    case "follow-ups": {
+      const followUpCommand = parseFollowUpSkillCommand(command.args);
+
+      if (followUpCommand.action === "help") {
+        return formatFollowUpHelp();
+      }
+
+      if (!scheduleContext) {
+        return "Follow-up tracking needs a Slack thread context.";
+      }
+
+      if (followUpCommand.action === "list") {
+        return followUpCommand.scope === "mine"
+          ? listUserFollowUps(scheduleContext.ownerUserId)
+          : listThreadFollowUps(scheduleContext);
+      }
+
+      if (followUpCommand.action === "done") {
+        return completeFollowUp(scheduleContext, followUpCommand.idPrefix);
+      }
+
+      if (followUpCommand.action === "usage") {
+        return formatFollowUpHelp();
+      }
+
+      await beforeModelReply?.();
+      const drafts = await extractSlackThreadFollowUps({
+        messages: modelMessages,
+        memories,
+        currentUserId,
+        channelMemories,
+        channelId
+      });
+
+      return formatTrackThreadFollowUpsResult(await trackThreadFollowUps(scheduleContext, drafts));
+    }
     case "web-search":
       if (!command.args) {
         return "Usage: `@NoBo web-search <query>`";
@@ -187,10 +236,15 @@ function parseSkillCommand(commandText: string): ParsedSkillCommand | null {
     return { name: "artifacts", args };
   }
 
+  if (name === "followups" || name === "follow-up" || name === "follow-ups") {
+    return { name: "follow-ups", args };
+  }
+
   if (
     name === "summarize-thread" ||
     name === "thread-todos" ||
     name === "channel-digest" ||
+    name === "follow-ups" ||
     name === "web-search" ||
     name === "artifacts" ||
     name === "list-artifacts" ||

@@ -470,6 +470,20 @@ function scheduleInputSchema() {
       {
         type: "object",
         properties: {
+          kind: { const: "at", description: "A one-time reminder at a specific future ISO date/time." },
+          ...baseProperties,
+          runAt: {
+            type: "string",
+            minLength: 1,
+            description: "Future ISO date/time for the reminder, e.g. 2026-06-25T18:00:00-05:00."
+          }
+        },
+        required: ["kind", "task", "runAt"],
+        additionalProperties: false
+      },
+      {
+        type: "object",
+        properties: {
           kind: { const: "once", description: "A one-time reminder after a delay." },
           ...baseProperties,
           amount: wholeNumber,
