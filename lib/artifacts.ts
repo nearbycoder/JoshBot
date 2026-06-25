@@ -31,6 +31,25 @@ export type RecentArtifact = ListedArtifact & {
   updatedAt: string;
 };
 
+export type ArtifactVersion = {
+  artifactId: string;
+  versionId: string;
+  kind: ArtifactKind;
+  filename: string;
+  title: string;
+  ownerUserId?: string;
+  createdAt: string;
+  updatedAt?: string;
+  expiresAt?: string;
+  bytes: number;
+  savedAt: string;
+  content: string;
+};
+
+export type ListedArtifactVersion = Omit<ArtifactVersion, "content"> & {
+  shortId: string;
+};
+
 export type ArtifactLookupResult =
   | { status: "found"; artifact: ListedArtifact }
   | { status: "missing" }
@@ -45,6 +64,24 @@ export type UpdateArtifactResult =
   | { ok: true; artifact: ListedArtifact }
   | { ok: false; reason: "invalid" | "missing" | "ambiguous" | "forbidden"; matches?: ListedArtifact[] };
 
+export type ArtifactOperationFailure = {
+  ok: false;
+  reason: "invalid" | "missing" | "ambiguous" | "forbidden" | "version_missing";
+  matches?: ListedArtifact[];
+};
+
+export type ArtifactVersionsResult =
+  | { ok: true; artifact: ListedArtifact; versions: ListedArtifactVersion[] }
+  | ArtifactOperationFailure;
+
+export type ArtifactDiffResult =
+  | { ok: true; artifact: ListedArtifact; version: ListedArtifactVersion; diff: string }
+  | ArtifactOperationFailure;
+
+export type RollbackArtifactResult =
+  | { ok: true; artifact: ListedArtifact; rolledBackTo: ListedArtifactVersion }
+  | ArtifactOperationFailure;
+
 export type DeleteExpiredArtifactsResult = {
   deleted: ListedArtifact[];
 };
@@ -52,6 +89,9 @@ export type DeleteExpiredArtifactsResult = {
 const DEFAULT_ARTIFACT_DIR = "artifacts";
 const MAX_ARTIFACT_BYTES = 1024 * 1024 * 2;
 const ARTIFACT_METADATA_FILENAME = ".artifact.json";
+const ARTIFACT_VERSIONS_DIRNAME = ".versions";
+const DEFAULT_MAX_ARTIFACT_VERSIONS = 10;
+const MAX_DIFF_LINES = 160;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export async function createArtifact({
@@ -291,6 +331,7 @@ export async function updateArtifact({
       : existing.expiresAt;
 
   await mkdir(artifactDir, { recursive: true });
+  await savePreviousArtifactVersion(existing, updatedAt);
   await writeFile(targetPath, content, "utf8");
 
   if (safeFilename !== existing.filename) {
@@ -314,6 +355,111 @@ export async function updateArtifact({
   return {
     ok: true,
     artifact: toListedArtifact(artifact, updatedAt)
+  };
+}
+
+export async function listArtifactVersions(
+  idPrefix: string,
+  options: { ownerUserId?: string } = {}
+): Promise<ArtifactVersionsResult> {
+  if (!options.ownerUserId) {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  const match = await findArtifact(idPrefix, options);
+
+  if (match.status !== "found") {
+    return artifactLookupFailure(match);
+  }
+
+  return {
+    ok: true,
+    artifact: match.artifact,
+    versions: await readArtifactVersions(match.artifact.id)
+  };
+}
+
+export async function diffArtifactVersion(
+  idPrefix: string,
+  versionId: string | undefined,
+  options: { ownerUserId?: string } = {}
+): Promise<ArtifactDiffResult> {
+  if (!options.ownerUserId) {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  const match = await findArtifact(idPrefix, options);
+
+  if (match.status !== "found") {
+    return artifactLookupFailure(match);
+  }
+
+  const version = await findArtifactVersion(match.artifact.id, versionId);
+
+  if (!version) {
+    return { ok: false, reason: "version_missing" };
+  }
+
+  const currentContent = await readFile(match.artifact.path, "utf8");
+
+  return {
+    ok: true,
+    artifact: match.artifact,
+    version: toListedArtifactVersion(version),
+    diff: formatUnifiedLineDiff(version.content, currentContent)
+  };
+}
+
+export async function rollbackArtifact(
+  idPrefix: string,
+  versionId: string | undefined,
+  options: { ownerUserId?: string } = {}
+): Promise<RollbackArtifactResult> {
+  if (!options.ownerUserId) {
+    return { ok: false, reason: "forbidden" };
+  }
+
+  const match = await findArtifact(idPrefix, options);
+
+  if (match.status !== "found") {
+    return artifactLookupFailure(match);
+  }
+
+  const version = await findArtifactVersion(match.artifact.id, versionId);
+
+  if (!version) {
+    return { ok: false, reason: "version_missing" };
+  }
+
+  const now = new Date();
+  const artifactDir = path.join(getArtifactDirectory(), match.artifact.id);
+  const restoredPath = path.join(artifactDir, version.filename);
+
+  await savePreviousArtifactVersion(match.artifact, now);
+  await writeFile(restoredPath, version.content, "utf8");
+
+  if (version.filename !== match.artifact.filename) {
+    await rm(match.artifact.path, { force: true });
+  }
+
+  const artifact = createArtifactMetadata({
+    id: match.artifact.id,
+    kind: version.kind,
+    filename: version.filename,
+    title: version.title,
+    ownerUserId: options.ownerUserId,
+    createdAt: match.artifact.createdAt,
+    updatedAt: now.toISOString(),
+    expiresAt: version.expiresAt,
+    bytes: Buffer.byteLength(version.content, "utf8")
+  });
+
+  await writeFile(path.join(artifactDir, ARTIFACT_METADATA_FILENAME), JSON.stringify(artifact, null, 2), "utf8");
+
+  return {
+    ok: true,
+    artifact: toListedArtifact(artifact, now),
+    rolledBackTo: toListedArtifactVersion(version)
   };
 }
 
@@ -516,6 +662,210 @@ async function readLegacyArtifactMetadata(id: string): Promise<ArtifactMetadata 
   }
 }
 
+async function savePreviousArtifactVersion(artifact: ListedArtifact, savedAt: Date) {
+  const maxVersions = parseMaxArtifactVersionsFromEnv();
+
+  if (maxVersions <= 0) {
+    return;
+  }
+
+  const content = await readFile(artifact.path, "utf8");
+  const versionId = await getNextArtifactVersionId(artifact.id);
+  const version: ArtifactVersion = {
+    artifactId: artifact.id,
+    versionId,
+    kind: artifact.kind,
+    filename: artifact.filename,
+    title: artifact.title,
+    ...(artifact.ownerUserId ? { ownerUserId: artifact.ownerUserId } : {}),
+    createdAt: artifact.createdAt,
+    ...(artifact.updatedAt ? { updatedAt: artifact.updatedAt } : {}),
+    ...(artifact.expiresAt ? { expiresAt: artifact.expiresAt } : {}),
+    bytes: artifact.bytes,
+    savedAt: savedAt.toISOString(),
+    content
+  };
+  const versionsDir = getArtifactVersionsDirectory(artifact.id);
+
+  await mkdir(versionsDir, { recursive: true });
+  await writeFile(path.join(versionsDir, `${versionId}.json`), JSON.stringify(version, null, 2), "utf8");
+  await pruneArtifactVersions(artifact.id, maxVersions);
+}
+
+async function getNextArtifactVersionId(artifactId: string) {
+  const versions = await readArtifactVersions(artifactId);
+  const nextNumber =
+    versions.reduce((max, version) => Math.max(max, parseArtifactVersionNumber(version.versionId)), 0) + 1;
+
+  return `v${nextNumber}`;
+}
+
+async function readArtifactVersions(artifactId: string): Promise<ListedArtifactVersion[]> {
+  return (await readArtifactVersionRecords(artifactId)).map(toListedArtifactVersion);
+}
+
+async function readArtifactVersionRecords(artifactId: string): Promise<ArtifactVersion[]> {
+  let files;
+
+  try {
+    files = await readdir(getArtifactVersionsDirectory(artifactId));
+  } catch {
+    return [];
+  }
+
+  const versions = (
+    await Promise.all(
+      files
+        .filter((file) => /^v\d+\.json$/.test(file))
+        .map(async (file) => {
+          try {
+            const payload = await readFile(path.join(getArtifactVersionsDirectory(artifactId), file), "utf8");
+            return normalizeArtifactVersion(artifactId, JSON.parse(payload));
+          } catch {
+            return null;
+          }
+        })
+    )
+  ).filter((version): version is ArtifactVersion => version !== null);
+
+  return versions.sort(
+    (left, right) => parseArtifactVersionNumber(right.versionId) - parseArtifactVersionNumber(left.versionId)
+  );
+}
+
+async function findArtifactVersion(artifactId: string, versionId: string | undefined) {
+  const versions = await readArtifactVersionRecords(artifactId);
+  const normalizedVersionId = normalizeArtifactVersionId(versionId);
+
+  if (!normalizedVersionId) {
+    return versions[0] ?? null;
+  }
+
+  return versions.find((version) => version.versionId === normalizedVersionId) ?? null;
+}
+
+function normalizeArtifactVersion(artifactId: string, input: unknown): ArtifactVersion | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const versionId = normalizeArtifactVersionId(record.versionId);
+  const filename = typeof record.filename === "string" ? record.filename : "";
+  const content = typeof record.content === "string" ? record.content : null;
+  const savedAt = normalizeIsoDate(record.savedAt);
+
+  if (!versionId || !isSafeFilename(filename) || content === null || !savedAt) {
+    return null;
+  }
+
+  const updatedAt = normalizeIsoDate(record.updatedAt);
+  const expiresAt = normalizeIsoDate(record.expiresAt);
+
+  return {
+    artifactId,
+    versionId,
+    kind: normalizeArtifactKind(record.kind, filename),
+    filename,
+    title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : filename,
+    ownerUserId: typeof record.ownerUserId === "string" && record.ownerUserId.trim()
+      ? record.ownerUserId.trim()
+      : undefined,
+    createdAt: normalizeIsoDate(record.createdAt) ?? savedAt,
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+    bytes: typeof record.bytes === "number" && record.bytes >= 0
+      ? record.bytes
+      : Buffer.byteLength(content, "utf8"),
+    savedAt,
+    content
+  };
+}
+
+function toListedArtifactVersion(version: ArtifactVersion): ListedArtifactVersion {
+  const { content: _content, ...listedVersion } = version;
+
+  return {
+    ...listedVersion,
+    shortId: version.artifactId.slice(0, 8)
+  };
+}
+
+async function pruneArtifactVersions(artifactId: string, maxVersions: number) {
+  const versions = await readArtifactVersionRecords(artifactId);
+
+  await Promise.all(
+    versions
+      .slice(maxVersions)
+      .map((version) => rm(path.join(getArtifactVersionsDirectory(artifactId), `${version.versionId}.json`), {
+        force: true
+      }))
+  );
+}
+
+function artifactLookupFailure(
+  match: Exclude<ArtifactLookupResult, { status: "found" }>
+): ArtifactOperationFailure {
+  if (match.status === "invalid") {
+    return { ok: false, reason: "invalid" };
+  }
+
+  if (match.status === "missing") {
+    return { ok: false, reason: "missing" };
+  }
+
+  if (match.status === "ambiguous") {
+    return { ok: false, reason: "ambiguous", matches: match.matches };
+  }
+
+  return { ok: false, reason: "missing" };
+}
+
+function formatUnifiedLineDiff(before: string, after: string) {
+  const beforeLines = before.split("\n");
+  const afterLines = after.split("\n");
+  const table = Array.from({ length: beforeLines.length + 1 }, () => Array(afterLines.length + 1).fill(0));
+
+  for (let leftIndex = beforeLines.length - 1; leftIndex >= 0; leftIndex -= 1) {
+    for (let rightIndex = afterLines.length - 1; rightIndex >= 0; rightIndex -= 1) {
+      table[leftIndex][rightIndex] = beforeLines[leftIndex] === afterLines[rightIndex]
+        ? table[leftIndex + 1][rightIndex + 1] + 1
+        : Math.max(table[leftIndex + 1][rightIndex], table[leftIndex][rightIndex + 1]);
+    }
+  }
+
+  const lines: string[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+
+  while (leftIndex < beforeLines.length || rightIndex < afterLines.length) {
+    if (beforeLines[leftIndex] === afterLines[rightIndex]) {
+      lines.push(` ${beforeLines[leftIndex] ?? ""}`);
+      leftIndex += 1;
+      rightIndex += 1;
+    } else if (leftIndex >= beforeLines.length) {
+      lines.push(`+${afterLines[rightIndex] ?? ""}`);
+      rightIndex += 1;
+    } else if (rightIndex >= afterLines.length) {
+      lines.push(`-${beforeLines[leftIndex] ?? ""}`);
+      leftIndex += 1;
+    } else if (table[leftIndex + 1][rightIndex] >= table[leftIndex][rightIndex + 1]) {
+      lines.push(`-${beforeLines[leftIndex] ?? ""}`);
+      leftIndex += 1;
+    } else {
+      lines.push(`+${afterLines[rightIndex] ?? ""}`);
+      rightIndex += 1;
+    }
+
+    if (lines.length >= MAX_DIFF_LINES) {
+      lines.push("...");
+      break;
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function createArtifactMetadata({
   id,
   kind,
@@ -630,6 +980,22 @@ function parseArtifactTtlDaysFromEnv() {
   }
 
   return parsePositiveDays(rawValue, "ARTIFACT_TTL_DAYS");
+}
+
+function parseMaxArtifactVersionsFromEnv() {
+  const rawValue = process.env.ARTIFACT_MAX_VERSIONS?.trim();
+
+  if (!rawValue) {
+    return DEFAULT_MAX_ARTIFACT_VERSIONS;
+  }
+
+  const value = Number(rawValue);
+
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error("ARTIFACT_MAX_VERSIONS must be a non-negative integer.");
+  }
+
+  return value;
 }
 
 function parsePositiveDays(input: number | string, label: string) {
@@ -799,6 +1165,24 @@ function isSafeFilename(input: string) {
   return /^[a-z0-9._-]+\.(html|md)$/.test(input);
 }
 
+function normalizeArtifactVersionId(input: unknown) {
+  if (typeof input !== "string" && typeof input !== "number") {
+    return undefined;
+  }
+
+  const normalized = String(input).trim().toLowerCase();
+
+  if (/^\d+$/.test(normalized)) {
+    return `v${Number(normalized)}`;
+  }
+
+  return /^v\d+$/.test(normalized) ? normalized : undefined;
+}
+
+function parseArtifactVersionNumber(versionId: string) {
+  return Number(versionId.replace(/^v/, ""));
+}
+
 function getContentType(filename: string) {
   if (filename.endsWith(".html")) {
     return "text/html; charset=utf-8";
@@ -813,6 +1197,10 @@ function getContentType(filename: string) {
 
 function getArtifactDirectory() {
   return path.resolve(process.env.ARTIFACT_DIR ?? DEFAULT_ARTIFACT_DIR);
+}
+
+function getArtifactVersionsDirectory(artifactId: string) {
+  return path.join(getArtifactDirectory(), artifactId, ARTIFACT_VERSIONS_DIRNAME);
 }
 
 function getArtifactBaseUrl() {
