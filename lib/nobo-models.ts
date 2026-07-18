@@ -6,8 +6,8 @@ export type OpenCodeGoModel = {
 export const OPENCODE_GO_PROVIDER = "opencode-go";
 export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 export const DEFAULT_SLACK_TEXT_MODEL = "kimi-k3";
-export const DEFAULT_SLACK_VISION_MODEL = "kimi-k2.6";
-export const FALLBACK_SLACK_VISION_MODEL = "kimi-k2.6";
+export const DEFAULT_SLACK_VISION_MODEL = "kimi-k3";
+export const FALLBACK_SLACK_VISION_MODEL = "kimi-k3";
 
 const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/models`;
 const MODEL_CACHE_MS = 5 * 60 * 1000;

@@ -5,7 +5,7 @@ import { getScheduleRunnerStatus } from "./schedules.js";
 import { getMonitorRunnerStatus } from "./monitors.js";
 
 const DEFAULT_TEXT_MODEL = "kimi-k3";
-const DEFAULT_VISION_MODEL = "kimi-k2.6";
+const DEFAULT_VISION_MODEL = "kimi-k3";
 const DEFAULT_REDIS_TIMEOUT_MS = 1000;
 
 export type RedisOpsStatus = {

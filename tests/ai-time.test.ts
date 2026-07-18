@@ -81,7 +81,7 @@ test("image-bearing Slack messages default to Kimi vision model", () => {
           ]
         }
       ]),
-      "kimi-k2.6"
+      "kimi-k3"
     );
   } finally {
     if (originalVisionModel === undefined) {
@@ -149,7 +149,7 @@ test("channel text model override does not affect image model", () => {
         ],
         "deepseek-v4-pro"
       ),
-      "kimi-k2.6"
+      "kimi-k3"
     );
   } finally {
     if (originalVisionModel === undefined) {
