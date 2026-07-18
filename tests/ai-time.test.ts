@@ -175,7 +175,7 @@ test("unsupported channel text model override falls back to default", () => {
         ],
         "qwen3.7-max"
       ),
-      "glm-5.2"
+      "kimi-k3"
     );
   } finally {
     if (originalTextModel === undefined) {

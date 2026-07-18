@@ -56,7 +56,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
    - `PORT`: defaults to `3000`
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
-   - `OPENCODE_GO_MODEL`: default text model, defaults to `glm-5.2`
+   - `OPENCODE_GO_MODEL`: default text model, defaults to `kimi-k3`
    - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k2.6`
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, channel polls, channel decision logs, admin access updates, and audit entries

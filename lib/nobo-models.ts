@@ -5,7 +5,7 @@ export type OpenCodeGoModel = {
 
 export const OPENCODE_GO_PROVIDER = "opencode-go";
 export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
-export const DEFAULT_SLACK_TEXT_MODEL = "glm-5.2";
+export const DEFAULT_SLACK_TEXT_MODEL = "kimi-k3";
 export const DEFAULT_SLACK_VISION_MODEL = "kimi-k2.6";
 export const FALLBACK_SLACK_VISION_MODEL = "kimi-k2.6";
 
@@ -18,6 +18,7 @@ const MODEL_LABELS = new Map([
   ["minimax-m3", "MiniMax M3"],
   ["minimax-m2.7", "MiniMax M2.7"],
   ["minimax-m2.5", "MiniMax M2.5"],
+  ["kimi-k3", "Kimi K3"],
   ["kimi-k2.7-code", "Kimi K2.7 Code"],
   ["kimi-k2.6", "Kimi K2.6"],
   ["kimi-k2.5", "Kimi K2.5"],
@@ -34,7 +35,8 @@ const MODEL_LABELS = new Map([
   ["mimo-v2-omni", "MiMo V2 Omni"],
   ["mimo-v2.5-pro", "MiMo V2.5 Pro"],
   ["mimo-v2.5", "MiMo V2.5"],
-  ["hy3-preview", "HY3 Preview"]
+  ["hy3-preview", "HY3 Preview"],
+  ["grok-4.5", "Grok 4.5"]
 ]);
 
 const FALLBACK_OPENCODE_GO_MODELS: OpenCodeGoModel[] = Array.from(MODEL_LABELS)

@@ -729,7 +729,7 @@ test("returns Block Kit selector for /nobo-channel-model", async () => {
     });
 
     assert.equal(result.response.response_type, "ephemeral");
-    assert.match(result.response.text, /Current: `glm-5.2`/);
+    assert.match(result.response.text, /Current: `kimi-k3`/);
     assert.ok(result.response.blocks);
     assert.match(JSON.stringify(result.response.blocks), /static_select/);
     assert.match(JSON.stringify(result.response.blocks), /nobo_channel_model_select/);
