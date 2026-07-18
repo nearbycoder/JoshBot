@@ -80,6 +80,7 @@ function createArtifactTool(ownerUserId: string | undefined) {
       type: "object",
       properties: {
         kind: {
+          type: "string",
           enum: ["html", "markdown"],
           description: "Use html for complete HTML documents. Use markdown for .md documents."
         },
@@ -203,6 +204,7 @@ function createUpdateArtifactTool(ownerUserId: string | undefined) {
           description: "Artifact UUID or visible prefix, e.g. abc12345."
         },
         kind: {
+          type: "string",
           enum: ["html", "markdown"],
           description: "Optional replacement kind. Defaults to the existing artifact kind."
         },
@@ -628,6 +630,7 @@ function createExaSearchTool() {
           description: "The web search query."
         },
         type: {
+          type: "string",
           enum: ["auto", "fast", "instant", "deep-lite", "deep", "deep-reasoning"],
           description: "Exa search type. Default to auto unless latency or depth is important."
         },
@@ -684,6 +687,7 @@ function createExaSearchTool() {
 
 function scheduleInputSchema() {
   const responseMode = {
+    type: "string",
     enum: ["reminder", "prompt"],
     description:
       "Use reminder to send the task text later. Use prompt when NoBo should answer/research/do the task at run time, e.g. 'post what is trending on Hacker News'."
@@ -734,7 +738,7 @@ function scheduleInputSchema() {
           kind: { const: "once", description: "A one-time reminder after a delay." },
           ...baseProperties,
           amount: wholeNumber,
-          unit: { enum: ["minutes", "hours", "days"], description: "Delay unit." }
+          unit: { type: "string", enum: ["minutes", "hours", "days"], description: "Delay unit." }
         },
         required: ["kind", "task", "amount", "unit"],
         additionalProperties: false
@@ -745,7 +749,7 @@ function scheduleInputSchema() {
           kind: { const: "interval", description: "A recurring reminder every N minutes, hours, or days." },
           ...baseProperties,
           amount: wholeNumber,
-          unit: { enum: ["minutes", "hours", "days"], description: "Repeat interval unit." }
+          unit: { type: "string", enum: ["minutes", "hours", "days"], description: "Repeat interval unit." }
         },
         required: ["kind", "task", "amount", "unit"],
         additionalProperties: false
@@ -767,6 +771,7 @@ function scheduleInputSchema() {
           kind: { const: "weekly", description: "A recurring weekly reminder in the user's preferred timezone." },
           ...baseProperties,
           weekday: {
+            type: "string",
             enum: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
           },
           hour: { ...wholeNumber, description: "24-hour clock hour in the user's preferred timezone, 0-23." },
@@ -781,11 +786,13 @@ function scheduleInputSchema() {
 
 function monitorInputSchema() {
   const source = {
+    type: "string",
     enum: ["channel_history", "web_search", "prompt"],
     description:
       "Use channel_history for Slack channel appearances, web_search for public web changes, prompt for current checks such as status/failure conditions."
   };
   const conditionType = {
+    type: "string",
     enum: ["appears", "changes", "fails"],
     description: "The alert condition. Appears checks for a term, changes alerts after a changed baseline, fails checks failure/status conditions."
   };
@@ -822,7 +829,7 @@ function monitorInputSchema() {
           kind: { const: "interval", description: "A recurring monitor every N minutes, hours, or days." },
           ...baseProperties,
           amount: wholeNumber,
-          unit: { enum: ["minutes", "hours", "days"], description: "Repeat interval unit." }
+          unit: { type: "string", enum: ["minutes", "hours", "days"], description: "Repeat interval unit." }
         },
         required: ["kind", "query", "conditionType", "amount", "unit"],
         additionalProperties: false
@@ -844,6 +851,7 @@ function monitorInputSchema() {
           kind: { const: "weekly", description: "A recurring weekly monitor in the user's preferred timezone." },
           ...baseProperties,
           weekday: {
+            type: "string",
             enum: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
           },
           hour: { ...wholeNumber, description: "24-hour clock hour in the user's preferred timezone, 0-23." },
