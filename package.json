@@ -19,7 +19,7 @@
     "hono": "^4.12.26",
     "pdfjs-dist": "^6.0.227",
     "redis": "^5.12.1",
-    "valibot": "^1.4.1"
+    "valibot": "^1.4.2"
   },
   "overrides": {
     "@flue/slack": {
