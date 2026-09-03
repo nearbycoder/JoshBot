@@ -270,7 +270,7 @@ test("extracts supported binary documents from Slack uploads", async (t) => {
     const download = downloads.get(String(input));
     assert.ok(download, `unexpected fetch ${String(input)}`);
 
-    return new Response(download.bytes, {
+    return new Response(new Uint8Array(download.bytes), {
       headers: {
         "content-length": String(download.bytes.byteLength),
         "content-type": download.contentType

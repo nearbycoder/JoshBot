@@ -26,7 +26,7 @@ export type SlackUrlVerificationPayload = {
 export type SlackEventCallbackPayload = {
   type: "event_callback";
   team_id?: string;
-  event: object & {
+  event: Record<string, unknown> & {
     type: string;
   };
 };

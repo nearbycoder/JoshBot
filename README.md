@@ -27,13 +27,13 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 ## Stack
 
-- Flue Node.js target and generated HTTP server
+- Flue v2 Node.js target and Vite-generated HTTP server
 - TypeScript
-- `@flue/runtime` agent harness
-- OpenCode Go registered as a Flue OpenAI-compatible provider
+- `@flue/runtime` hook-based agent harness
+- OpenCode Go registered as a mixed-protocol Flue provider
 - Exa Search API via `exa-js`
 - Redis thread-state cache and shared channel memory
-- Slack Events API, with both the legacy `/api/slack/events` route and Flue's `/channels/slack/events` channel route
+- Flue-verified Slack events, slash commands, and interactions under `/api/slack/*`
 - Slack response streaming via an immediate listening message and progressive same-message block updates
 
 ## Local setup
@@ -43,6 +43,8 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    ```bash
    npm install
    ```
+
+   Flue v2 requires Node.js 22.19 or newer.
 
 2. Create env vars:
 
@@ -54,7 +56,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 3. Fill in:
 
-   - `PORT`: defaults to `3000`
+   - `PORT`: production server port, defaults to `3000`; Vite development uses `5173` unless `--port` is passed
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: default text model, defaults to `kimi-k3`
    - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k3`
@@ -107,21 +109,20 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    npm run dev
    ```
 
-   Flue dev serves on `http://localhost:3583` by default. Set `PORT=3000` if you want the previous local port.
+   Vite serves on `http://localhost:5173` by default. Use `npm run dev -- --port 3000` to choose another local port.
 
 5. Confirm the process is up:
 
-   - `GET http://localhost:3583/healthz`
-   - `POST http://localhost:3583/api/slack/events`
-   - `POST http://localhost:3583/api/slack/commands`
-   - `POST http://localhost:3583/channels/slack/events`
+   - `GET http://localhost:5173/healthz`
+   - `POST http://localhost:5173/api/slack/events`
+   - `POST http://localhost:5173/api/slack/commands`
+   - `POST http://localhost:5173/api/slack/interactions`
 
 ## Slack app configuration
 
 Create a Slack app and configure:
 
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
-  - Flue's channel route is also available at `https://your-domain/channels/slack/events` if you want to move the Slack app to the framework-owned channel URL.
 - Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-polls`, `/nobo-poll`, `/nobo-admin`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - Shortcuts: optional global/message shortcuts can use callback IDs `nobo_reminder`, `nobo_prefs`, `nobo_channel_digest`, and `nobo_artifacts`
@@ -169,7 +170,7 @@ NoBo publishes a Slack App Home dashboard on `app_home_opened`. It includes:
 For local development, expose the app with a tunnel:
 
 ```bash
-ngrok http 3583
+ngrok http 5173
 ```
 
 Then paste the public HTTPS URL into Slack Event Subscriptions.
@@ -211,11 +212,11 @@ For Railway GitHub autodeploys, enable `Wait for CI` on the NoBo service deploy 
 
 ## Files to edit first
 
-- `src/app.ts`: Flue/Hono app entrypoint, health routes, legacy Slack route, and scheduler startup
-- `src/agents/nobo.ts`: Flue agent definition and internal route guard
+- `src/app.ts`: Flue/Hono app entrypoint, verified Slack channel mount, health routes, and scheduler startup
+- `src/agents/nobo.ts`: Flue v2 hook-based agent definition
 - `lib/nobo-prompt.ts`: assistant prompt
 - `lib/flue-tools.ts`: Flue tool definitions for web search, artifacts, schedules, time, and Slack history
-- `lib/ai.ts`: internal Flue agent prompt bridge and OpenCode Go model selection
+- `lib/ai.ts`: programmatic Flue agent dispatch and OpenCode Go model selection
 - `lib/skills.ts`: Slack skill registry and command handlers
 - `lib/slack.ts`: Slack history loading, text cleanup, and reply posting
 

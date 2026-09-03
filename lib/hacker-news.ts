@@ -142,7 +142,7 @@ function normalizeHackerNewsItem(input: unknown): HackerNewsStory | null {
   };
 }
 
-function storyMatchesFocus(story: HackerNewsStory, focus: string) {
+function storyMatchesFocus(story: HackerNewsStory, focus: string): boolean {
   const phrases = focus
     .split(/[,;]+/)
     .map((phrase) => phrase.trim())

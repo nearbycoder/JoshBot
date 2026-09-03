@@ -1,15 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as v from "valibot";
 import { createNoboTools } from "../lib/flue-tools.js";
 
-test("tool schemas give string enums an explicit type", () => {
+test("tool definitions use the Flue v2 input and run contract", () => {
   const originalExaApiKey = process.env.EXA_API_KEY;
   process.env.EXA_API_KEY = "test-key";
 
   try {
-    for (const tool of createNoboTools(createScheduleContext(), "U123")) {
-      assertStringEnumsHaveType(tool.parameters, tool.name);
+    const tools = createNoboTools(createScheduleContext(), "U123");
+
+    for (const tool of tools) {
+      assert.ok(tool.input, `${tool.name} is missing its input schema`);
+      assert.equal(typeof tool.run, "function", `${tool.name} is missing run()`);
+      assert.equal("parameters" in tool, false);
+      assert.equal("execute" in tool, false);
     }
+
+    const webSearch = tools.find((tool) => tool.name === "web_search");
+    assert.ok(webSearch?.input);
+    assert.equal(
+      v.safeParse(webSearch.input, { query: "Flue v2", type: "auto" }).success,
+      true
+    );
+    assert.equal(
+      v.safeParse(webSearch.input, { query: "Flue v2", type: "slow" }).success,
+      false
+    );
   } finally {
     if (originalExaApiKey === undefined) {
       delete process.env.EXA_API_KEY;
@@ -19,25 +36,6 @@ test("tool schemas give string enums an explicit type", () => {
   }
 });
 
-function assertStringEnumsHaveType(value: unknown, path: string) {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => assertStringEnumsHaveType(item, `${path}[${index}]`));
-    return;
-  }
-
-  if (!isRecord(value)) {
-    return;
-  }
-
-  if (Array.isArray(value.enum) && value.enum.every((item) => typeof item === "string")) {
-    assert.equal(value.type, "string", `${path} has a string enum without type: string`);
-  }
-
-  for (const [key, child] of Object.entries(value)) {
-    assertStringEnumsHaveType(child, `${path}.${key}`);
-  }
-}
-
 function createScheduleContext() {
   return {
     ownerUserId: "U123",
@@ -46,8 +44,4 @@ function createScheduleContext() {
     sourceTs: "123.456",
     mentionedChannels: []
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

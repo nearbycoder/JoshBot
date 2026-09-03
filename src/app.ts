@@ -1,4 +1,5 @@
 import { config as loadEnv } from "dotenv";
+import { createSlackChannel } from "@flue/slack";
 import { Hono } from "hono";
 import { handleArtifactFetchRequest } from "../lib/artifacts.js";
 import {
@@ -12,28 +13,27 @@ import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
 import { requireEnv } from "../lib/env.js";
 import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import { recordOpsError } from "../lib/ops-errors.js";
-import { readLimitedRequestBody, RequestBodyTooLargeError } from "../lib/request-body.js";
 import {
   handleSlackInteractionRequest,
   handleSlackSlashCommandPayload,
-  parseSlackInteractionPayload,
-  parseSlackSlashCommandPayload,
+  type SlackInteractionPayload,
   type SlackSlashCommandPayload,
   type SlackSlashCommandTask
 } from "../lib/slack-commands.js";
-import { handleSlackEventCallbackPayload, parseSlackPayload } from "../lib/slack-events.js";
+import {
+  handleSlackEventCallbackPayload,
+  type SlackEventCallbackPayload
+} from "../lib/slack-events.js";
 import {
   isSlackRetryRequest,
   openSlackModal,
   postGeneratedSlackMessage,
-  postSlackMessage,
-  verifySlackRequest
+  postSlackMessage
 } from "../lib/slack.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "../lib/memory.js";
 import { startMonitorRunner } from "../lib/monitors.js";
 import { getPreferredNewsFocus, getUserPreferences } from "../lib/preferences.js";
 import { startScheduleRunner } from "../lib/schedules.js";
-import { flueApp } from "./internal-flue.js";
 import { registerNoboProvider } from "./nobo-provider.js";
 
 loadEnv({ path: ".env.local" });
@@ -63,106 +63,86 @@ app.all("/artifacts/*", async (c) => {
   return response ?? c.notFound();
 });
 
-app.post("/api/slack/events", async (c) => {
-  const rawBody = await readSlackRequestBody(c.req.raw);
-  if (rawBody instanceof Response) {
-    return rawBody;
-  }
+const slackChannel = createSlackChannel({
+  signingSecret: process.env.SLACK_SIGNING_SECRET || "nobo-disabled-slack-signing-secret",
+  async events({ c, payload }) {
+    if (!process.env.SLACK_SIGNING_SECRET) {
+      return c.text("Slack signing secret is not configured.", 503);
+    }
 
-  if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
-    return c.text("Invalid Slack signature", 401);
-  }
+    if (payload.type !== "event_callback" || isSlackRetryRequest(c.req.raw.headers)) {
+      return undefined;
+    }
 
-  const payload = parseSlackPayload(rawBody);
-
-  if (payload.type === "url_verification") {
-    return c.text(payload.challenge);
-  }
-
-  if (!isSlackRetryRequest(c.req.raw.headers)) {
-    void handleSlackEventCallbackPayload(payload).catch((error) => {
+    void handleSlackEventCallbackPayload(payload as unknown as SlackEventCallbackPayload).catch((error) => {
       recordOpsError("slack event", error);
       console.error(`Slack event handling failed: ${summarizeError(error)}`);
     });
-  }
 
-  return c.json({ ok: true });
-});
-
-app.post("/api/slack/commands", async (c) => {
-  const rawBody = await readSlackRequestBody(c.req.raw);
-  if (rawBody instanceof Response) {
-    return rawBody;
-  }
-
-  if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
-    return c.text("Invalid Slack signature", 401);
-  }
-
-  if (isSlackRetryRequest(c.req.raw.headers)) {
-    return c.text("");
-  }
-
-  try {
-    const payload = parseSlackSlashCommandPayload(rawBody);
-    const result = await handleSlackSlashCommandPayload(payload);
-
-    if (result.modal) {
-      await openSlackModal({
-        token: requireEnv("SLACK_BOT_TOKEN"),
-        triggerId: result.modal.triggerId,
-        view: result.modal.view
-      });
+    return { ok: true };
+  },
+  async commands({ c, payload }) {
+    if (!process.env.SLACK_SIGNING_SECRET) {
+      return c.text("Slack signing secret is not configured.", 503);
     }
 
-    if (result.task) {
-      void runSlackSlashCommandTask(result.task, formatSlackSlashCommandMemory(payload)).catch((error) => {
-        recordOpsError("slack slash command task", error);
-        console.error(`Slack slash command task failed: ${summarizeError(error)}`);
-      });
-    } else if (payload.channel_id && result.response.response_type === "in_channel") {
-      void recordSlackSlashCommandExchange(payload, result.response.text);
+    if (isSlackRetryRequest(c.req.raw.headers)) {
+      return c.text("");
     }
 
-    return c.json(result.response);
-  } catch (error) {
-    return c.text(summarizeError(error), 400);
-  }
-});
+    try {
+      const result = await handleSlackSlashCommandPayload(payload);
 
-app.post("/api/slack/interactions", async (c) => {
-  const rawBody = await readSlackRequestBody(c.req.raw);
-  if (rawBody instanceof Response) {
-    return rawBody;
-  }
+      if (result.modal) {
+        await openSlackModal({
+          token: requireEnv("SLACK_BOT_TOKEN"),
+          triggerId: result.modal.triggerId,
+          view: result.modal.view
+        });
+      }
 
-  if (!verifySlackRequest(rawBody, c.req.raw.headers)) {
-    return c.text("Invalid Slack signature", 401);
-  }
+      if (result.task) {
+        void runSlackSlashCommandTask(result.task, formatSlackSlashCommandMemory(payload)).catch((error) => {
+          recordOpsError("slack slash command task", error);
+          console.error(`Slack slash command task failed: ${summarizeError(error)}`);
+        });
+      } else if (payload.channel_id && result.response.response_type === "in_channel") {
+        void recordSlackSlashCommandExchange(payload, result.response.text);
+      }
 
-  if (isSlackRetryRequest(c.req.raw.headers)) {
-    return c.text("");
-  }
-
-  try {
-    const payload = parseSlackInteractionPayload(rawBody);
-    const result = await handleSlackInteractionRequest(payload);
-
-    if (result.modal) {
-      await openSlackModal({
-        token: requireEnv("SLACK_BOT_TOKEN"),
-        triggerId: result.modal.triggerId,
-        view: result.modal.view
-      });
+      return c.json(result.response);
+    } catch (error) {
+      return c.text(summarizeError(error), 400);
+    }
+  },
+  async interactions({ c, payload }) {
+    if (!process.env.SLACK_SIGNING_SECRET) {
+      return c.text("Slack signing secret is not configured.", 503);
     }
 
-    return c.json(result.response);
-  } catch (error) {
-    return c.text(summarizeError(error), 400);
+    if (isSlackRetryRequest(c.req.raw.headers)) {
+      return c.text("");
+    }
+
+    try {
+      const result = await handleSlackInteractionRequest(payload as SlackInteractionPayload);
+
+      if (result.modal) {
+        await openSlackModal({
+          token: requireEnv("SLACK_BOT_TOKEN"),
+          triggerId: result.modal.triggerId,
+          view: result.modal.view
+        });
+      }
+
+      return c.json(result.response);
+    } catch (error) {
+      return c.text(summarizeError(error), 400);
+    }
   }
 });
 
-app.route("/", flueApp);
+app.route("/api/slack", slackChannel.route());
 
 startScheduleRunner({
   postSlackMessage,
@@ -262,23 +242,6 @@ function summarizeError(error: unknown) {
   }
 
   return String(error);
-}
-
-async function readSlackRequestBody(request: Request) {
-  try {
-    return await readLimitedRequestBody(request);
-  } catch (error) {
-    if (error instanceof RequestBodyTooLargeError) {
-      return new Response("Slack request body is too large.", {
-        status: 413,
-        headers: {
-          "content-type": "text/plain; charset=utf-8"
-        }
-      });
-    }
-
-    throw error;
-  }
 }
 
 export default app;

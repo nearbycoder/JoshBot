@@ -1,5 +1,6 @@
-import { defineTool } from "@flue/runtime";
+import { defineTool as defineFlueTool } from "@flue/runtime";
 import { Exa } from "exa-js";
+import * as v from "valibot";
 import {
   createArtifact,
   deleteArtifact,
@@ -31,7 +32,137 @@ import {
   type SlackScheduleContext
 } from "./schedules.js";
 
-const jsonSchema = (schema: Record<string, unknown>) => schema as never;
+type JsonSchemaToolOptions = {
+  name: string;
+  description: string;
+  parameters: v.GenericSchema;
+  execute: (args: any) => string | Promise<string>;
+};
+
+function defineTool(options: JsonSchemaToolOptions) {
+  return defineFlueTool({
+    name: options.name,
+    description: options.description,
+    input: options.parameters as never,
+    run: ({ data }) => options.execute(data)
+  });
+}
+
+function jsonSchema(schema: Record<string, unknown>) {
+  return convertJsonSchema(schema) as never;
+}
+
+function convertJsonSchema(schema: Record<string, unknown>): v.GenericSchema {
+  let converted: v.GenericSchema;
+
+  if (Array.isArray(schema.oneOf)) {
+    converted = v.union(schema.oneOf.map(asJsonSchema).map(convertJsonSchema) as never);
+  } else if (Array.isArray(schema.anyOf)) {
+    converted = v.union(schema.anyOf.map(asJsonSchema).map(convertJsonSchema) as never);
+  } else if ("const" in schema) {
+    converted = v.literal(schema.const as string | number | boolean);
+  } else if (
+    Array.isArray(schema.enum) &&
+    schema.enum.length > 0 &&
+    schema.enum.every((value) => typeof value === "string")
+  ) {
+    converted = v.picklist(schema.enum as [string, ...string[]]);
+  } else {
+    converted = convertJsonSchemaByType(schema);
+  }
+
+  if (typeof schema.description === "string") {
+    converted = pipeSchema(converted, [v.description(schema.description)]);
+  }
+
+  return converted;
+}
+
+function convertJsonSchemaByType(schema: Record<string, unknown>): v.GenericSchema {
+  switch (schema.type) {
+    case "object": {
+      const properties = isRecord(schema.properties) ? schema.properties : {};
+      const required = new Set(
+        Array.isArray(schema.required)
+          ? schema.required.filter((value): value is string => typeof value === "string")
+          : []
+      );
+      const entries = Object.fromEntries(
+        Object.entries(properties).map(([key, value]) => {
+          const propertySchema = convertJsonSchema(asJsonSchema(value));
+          return [key, required.has(key) ? propertySchema : v.optional(propertySchema)];
+        })
+      );
+
+      return v.object(entries);
+    }
+    case "array": {
+      const items = isRecord(schema.items) ? convertJsonSchema(schema.items) : v.unknown();
+      const actions =
+        typeof schema.maxItems === "number" ? [v.maxLength(schema.maxItems)] : [];
+      return pipeSchema(v.array(items), actions);
+    }
+    case "boolean":
+      return v.boolean();
+    case "integer":
+      return pipeSchema(v.number(), [v.integer(), ...numberActions(schema)]);
+    case "number":
+      return pipeSchema(v.number(), numberActions(schema));
+    case "string":
+      return pipeSchema(v.string(), stringActions(schema));
+    default:
+      return v.unknown();
+  }
+}
+
+function stringActions(schema: Record<string, unknown>) {
+  const actions = [];
+
+  if (typeof schema.minLength === "number") {
+    actions.push(v.minLength(schema.minLength));
+  }
+  if (typeof schema.maxLength === "number") {
+    actions.push(v.maxLength(schema.maxLength));
+  }
+  if (typeof schema.pattern === "string") {
+    actions.push(v.regex(new RegExp(schema.pattern)));
+  }
+
+  return actions;
+}
+
+function numberActions(schema: Record<string, unknown>) {
+  const actions = [];
+
+  if (typeof schema.minimum === "number") {
+    actions.push(v.minValue(schema.minimum));
+  }
+  if (typeof schema.exclusiveMinimum === "number") {
+    actions.push(v.gtValue(schema.exclusiveMinimum));
+  }
+
+  return actions;
+}
+
+function pipeSchema(schema: v.GenericSchema, actions: unknown[]) {
+  if (actions.length === 0) {
+    return schema;
+  }
+
+  return (v.pipe as unknown as (...items: any[]) => v.GenericSchema)(schema, ...actions);
+}
+
+function asJsonSchema(value: unknown) {
+  if (!isRecord(value)) {
+    throw new TypeError("NoBo tool schema entries must be JSON Schema objects.");
+  }
+
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUserId?: string) {
   const artifactOwnerUserId = scheduleContext?.ownerUserId ?? ownerUserId;

@@ -3,34 +3,39 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
-    "dev": "flue dev --target node",
-    "build": "flue build --target node",
+    "dev": "vite dev",
+    "build": "vite build",
     "start": "node dist/server.mjs",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "@flue/runtime": "^1.0.0-beta.1",
-    "@flue/slack": "^1.0.0-beta.1",
-    "adm-zip": "^0.5.17",
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@flue/runtime": "^2.0.3",
+    "@flue/slack": "^2.0.3",
+    "adm-zip": "^0.6.0",
     "croner": "^10.0.1",
     "dotenv": "^16.6.1",
     "exa-js": "^2.13.0",
-    "hono": "^4.12.26",
-    "pdfjs-dist": "^6.0.227",
+    "hono": "^4.13.5",
+    "pdfjs-dist": "^6.3.289",
     "redis": "^5.12.1",
-    "valibot": "^1.4.1"
+    "valibot": "^1.4.2"
   },
   "overrides": {
     "@flue/slack": {
-      "hono": "^4.12.26"
+      "hono": "^4.13.5"
     }
   },
   "devDependencies": {
-    "@flue/cli": "^1.0.0-beta.1",
+    "@flue/vite": "^2.0.3",
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^24.10.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.1.2"
   }
 }

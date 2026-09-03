@@ -1,27 +1,25 @@
-import { createAgent, type AgentRouteHandler } from "@flue/runtime";
+'use agent';
+
+import { type AgentProps, useModel, useTool } from "@flue/runtime";
 import { createNoboTools } from "../../lib/flue-tools.js";
 import { decodeNoboAgentContext } from "../../lib/nobo-agent-context.js";
 import { SYSTEM_PROMPT } from "../../lib/nobo-prompt.js";
-import { INTERNAL_FLUE_HEADER, INTERNAL_FLUE_TOKEN } from "../internal-flue.js";
-import { getNoboModelSpecifier, registerNoboProvider } from "../nobo-provider.js";
+import { getNoboModelSpecifier } from "../nobo-provider.js";
 
-export const description = "NoBo Slack assistant model harness.";
+function Nobo({ id }: AgentProps) {
+  const context = decodeNoboAgentContext(id);
 
-export const route: AgentRouteHandler = async (c, next) => {
-  if (c.req.header(INTERNAL_FLUE_HEADER) !== INTERNAL_FLUE_TOKEN) {
-    return c.notFound();
+  useModel(getNoboModelSpecifier(context.modelId));
+
+  if (context.toolMode !== "none") {
+    for (const tool of createNoboTools(context.scheduleContext, context.ownerUserId)) {
+      useTool(tool);
+    }
   }
 
-  await next();
-};
+  return SYSTEM_PROMPT;
+}
 
-export default createAgent(({ id }) => {
-  const context = decodeNoboAgentContext(id);
-  registerNoboProvider();
+Nobo.agentName = "nobo";
 
-  return {
-    model: getNoboModelSpecifier(context.modelId),
-    instructions: SYSTEM_PROMPT,
-    tools: context.toolMode === "none" ? [] : createNoboTools(context.scheduleContext, context.ownerUserId)
-  };
-});
+export default Nobo;

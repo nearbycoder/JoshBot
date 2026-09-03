@@ -178,6 +178,8 @@ type SlackFile = {
   size?: number;
   created?: number;
   timestamp?: number;
+  duration_ms?: number;
+  huddle_room?: Record<string, unknown>;
   user?: string;
   preview?: string;
   preview_plain_text?: string;

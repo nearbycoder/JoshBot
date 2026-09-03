@@ -1,4 +1,5 @@
-import type { PromptImage } from "@flue/runtime";
+import { init, type PromptImage } from "@flue/runtime";
+import Nobo from "../src/agents/nobo.js";
 import { encodeNoboAgentContext, type NoboAgentToolMode } from "./nobo-agent-context.js";
 import { type NoboModelMessage, modelMessagesToPrompt } from "./nobo-messages.js";
 import { SYSTEM_PROMPT } from "./nobo-prompt.js";
@@ -93,6 +94,7 @@ export async function extractSlackThreadFollowUps({
   channelMemories?: ChannelMemoryEntry[];
   channelId?: string;
 }): Promise<ThreadFollowUpDraft[]> {
+  const userPreferences = await getUserPreferences(currentUserId);
   const prompt = buildPrompt({
     messages: [
       ...messages,
@@ -104,6 +106,7 @@ export async function extractSlackThreadFollowUps({
     ],
     memories,
     currentUserId,
+    userPreferences,
     channelMemories,
     channelId,
     extraSystem: `You are extracting follow-ups for NoBo to track.
@@ -499,74 +502,44 @@ async function runNoboAgentPrompt({
     throw new Error("Missing required environment variable: OPENCODE_GO_API_KEY");
   }
 
-  const { INTERNAL_FLUE_HEADER, INTERNAL_FLUE_TOKEN, flueApp } = await import(
-    "../src/internal-flue.js"
-  );
   const agentId = encodeNoboAgentContext({
     modelId,
     toolMode,
     ownerUserId,
     scheduleContext
   });
-  const deltaObserver = onTextDelta ? await createTextDeltaObserver(agentId, onTextDelta) : null;
+  const agent = init(Nobo, { id: agentId });
+  const receipt = await agent.dispatch({
+    message: {
+      kind: "user",
+      body: prompt,
+      ...(images.length > 0 ? { attachments: images } : {})
+    }
+  });
+  let pending = Promise.resolve();
 
   try {
-    const response = await flueApp.request(`/agents/nobo/${encodeURIComponent(agentId)}?wait=result`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        [INTERNAL_FLUE_HEADER]: INTERNAL_FLUE_TOKEN
-      },
-      body: JSON.stringify({
-        message: prompt,
-        ...(images.length > 0 ? { images } : {})
-      })
+    const reply = await agent.read(receipt, {
+      onEvent(chunk) {
+        if (
+          !onTextDelta ||
+          chunk.type !== "message-delta" ||
+          chunk.kind !== "text"
+        ) {
+          return;
+        }
+
+        pending = pending.then(() => onTextDelta(chunk.delta)).catch((error) => {
+          console.warn(`Unable to handle response text delta: ${summarizeDeltaError(error)}`);
+        });
+      }
     });
 
-    if (!response.ok) {
-      throw new Error(`Flue agent request to ${modelId} failed with HTTP ${response.status}: ${await response.text()}`);
-    }
-
-    const payload = (await response.json()) as {
-      result?: unknown;
-    };
-
-    if (isPromptResult(payload.result)) {
-      return payload.result.text;
-    }
-
-    if (typeof payload.result === "string") {
-      return payload.result;
-    }
-
-    throw new Error(`Flue agent response did not include text: ${JSON.stringify(payload)}`);
+    await pending;
+    return reply.text;
   } finally {
-    await deltaObserver?.close();
+    await pending;
   }
-}
-
-async function createTextDeltaObserver(
-  agentId: string,
-  onTextDelta: (delta: string) => void | Promise<void>
-) {
-  const { observe } = await import("@flue/runtime");
-  let pending = Promise.resolve();
-  const unsubscribe = observe((event) => {
-    if (event.type !== "text_delta" || event.instanceId !== agentId || typeof event.text !== "string") {
-      return;
-    }
-
-    pending = pending.then(() => onTextDelta(event.text)).catch((error) => {
-      console.warn(`Unable to handle response text delta: ${summarizeDeltaError(error)}`);
-    });
-  });
-
-  return {
-    async close() {
-      unsubscribe();
-      await pending;
-    }
-  };
 }
 
 function summarizeDeltaError(error: unknown) {
@@ -616,15 +589,6 @@ function stableMonitorFingerprint(input: string) {
   }
 
   return (hash >>> 0).toString(16);
-}
-
-function isPromptResult(input: unknown): input is { text: string } {
-  return (
-    typeof input === "object" &&
-    input !== null &&
-    "text" in input &&
-    typeof (input as { text?: unknown }).text === "string"
-  );
 }
 
 async function selectSlackModel(messages: NoboModelMessage[], channelId?: string) {

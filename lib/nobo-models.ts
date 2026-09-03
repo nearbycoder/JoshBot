@@ -123,6 +123,13 @@ export function getOpenCodeGoModelApi(modelId: string) {
   return normalized ? MODEL_DEFINITIONS.get(normalized)?.api ?? null : null;
 }
 
+export function listOpenCodeGoModelDefinitions() {
+  return Array.from(MODEL_DEFINITIONS, ([id, definition]) => ({
+    id,
+    ...definition
+  }));
+}
+
 export function getDefaultSlackTextModel() {
   return normalizeOpenCodeGoSupportedModelId(process.env.OPENCODE_GO_MODEL) ?? DEFAULT_SLACK_TEXT_MODEL;
 }
