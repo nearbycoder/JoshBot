@@ -12,11 +12,26 @@ export const OPENCODE_GO_PROVIDER = "opencode-go";
 export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 export const DEFAULT_SLACK_TEXT_MODEL = "kimi-k3";
 export const DEFAULT_SLACK_VISION_MODEL = "kimi-k3";
+export const FALLBACK_SLACK_TEXT_MODEL = "kimi-k3";
 export const FALLBACK_SLACK_VISION_MODEL = "kimi-k3";
 
 const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/models`;
 const MODEL_CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,74}$/;
+const IMAGE_INPUT_MODEL_IDS = new Set([
+  "deepseek-v4-flash-vision-exp",
+  "kimi-k2.6",
+  "kimi-k2.7-code",
+  "kimi-k3",
+  "minimax-m3",
+  "mimo-v2.5",
+  "qwen3.6-plus",
+  "qwen3.7-plus"
+]);
+const DATA_TRAINING_OPT_IN_MODEL_IDS = new Set([
+  "muse-spark-1.3-contributor",
+  "muse-spark-1.2-contributor"
+]);
 
 const MODEL_DEFINITIONS = new Map<
   string,
@@ -123,6 +138,18 @@ export function getOpenCodeGoModelApi(modelId: string) {
   return normalized ? MODEL_DEFINITIONS.get(normalized)?.api ?? null : null;
 }
 
+export function supportsOpenCodeGoImageInput(modelId: string | undefined | null) {
+  const normalized = normalizeOpenCodeGoSupportedModelId(modelId);
+  return normalized ? IMAGE_INPUT_MODEL_IDS.has(normalized) : false;
+}
+
+export function requiresOpenCodeGoDataTrainingOptIn(
+  modelId: string | undefined | null
+) {
+  const normalized = normalizeOpenCodeGoSupportedModelId(modelId);
+  return normalized ? DATA_TRAINING_OPT_IN_MODEL_IDS.has(normalized) : false;
+}
+
 export function listOpenCodeGoModelDefinitions() {
   return Array.from(MODEL_DEFINITIONS, ([id, definition]) => ({
     id,
@@ -135,7 +162,43 @@ export function getDefaultSlackTextModel() {
 }
 
 export function getDefaultSlackVisionModel() {
-  return normalizeOpenCodeGoSupportedModelId(process.env.OPENCODE_GO_VISION_MODEL) ?? DEFAULT_SLACK_VISION_MODEL;
+  const configured = normalizeOpenCodeGoSupportedModelId(
+    process.env.OPENCODE_GO_VISION_MODEL
+  );
+
+  return configured && supportsOpenCodeGoImageInput(configured)
+    ? configured
+    : DEFAULT_SLACK_VISION_MODEL;
+}
+
+export function getSlackImageModel(preferredModelId: string | undefined | null) {
+  const preferred = normalizeOpenCodeGoSupportedModelId(preferredModelId);
+  return preferred && supportsOpenCodeGoImageInput(preferred)
+    ? preferred
+    : getDefaultSlackVisionModel();
+}
+
+export function formatOpenCodeGoRuntimeContext(activeModelId: string) {
+  const active = normalizeOpenCodeGoSupportedModelId(activeModelId) ?? activeModelId;
+  const defaultText = getDefaultSlackTextModel();
+  const imageFallback = getDefaultSlackVisionModel();
+  const registeredModels = listOpenCodeGoModelDefinitions()
+    .map(({ id }) => {
+      const capabilities = [
+        supportsOpenCodeGoImageInput(id) ? "image" : null,
+        requiresOpenCodeGoDataTrainingOptIn(id) ? "training opt-in" : null
+      ].filter(Boolean);
+
+      return `${id}${capabilities.length > 0 ? ` [${capabilities.join(", ")}]` : ""}`;
+    })
+    .join(", ");
+
+  return `Runtime model configuration (authoritative):
+- Active model for this request: ${formatRuntimeModel(active)}
+- Default text model: ${formatRuntimeModel(defaultText)}
+- Image fallback model: ${formatRuntimeModel(imageFallback)}
+- Registered OpenCode Go models ([image] means image input is enabled; [training opt-in] means the OpenCode workspace must explicitly allow model-training data use): ${registeredModels}
+- When asked which model is configured or currently in use, answer from this runtime configuration rather than guessing.`;
 }
 
 export function formatOpenCodeGoModelName(modelId: string) {
@@ -193,6 +256,18 @@ function titleizeModelId(modelId: string) {
     .split(/[-_]+/)
     .map((part) => (part ? `${part[0]?.toUpperCase()}${part.slice(1)}` : part))
     .join(" ");
+}
+
+function formatRuntimeModel(modelId: string) {
+  const api = getOpenCodeGoModelApi(modelId) ?? "unknown API";
+  const imageSupport = supportsOpenCodeGoImageInput(modelId)
+    ? "image input enabled"
+    : "text input only";
+  const dataPolicy = requiresOpenCodeGoDataTrainingOptIn(modelId)
+    ? ", training data opt-in required"
+    : "";
+
+  return `\`${modelId}\` (${api}, ${imageSupport}${dataPolicy})`;
 }
 
 function getString(input: unknown) {

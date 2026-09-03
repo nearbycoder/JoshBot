@@ -76,6 +76,194 @@ test("does not classify normal channel messages as direct messages", () => {
   );
 });
 
+test("builds native Slack agent session targets from thread events", () => {
+  assert.deepEqual(
+    __testing.createSlackNativeAiTarget(
+      {
+        channel: "C123",
+        text: "<@UBOT> **Summarize** this launch plan",
+        ts: "1001.000",
+        team_id: "T123",
+        user: "U123"
+      },
+      "1000.000"
+    ),
+    {
+      threadTs: "1000.000",
+      teamId: "T123",
+      userId: "U123",
+      title: "Summarize this launch plan"
+    }
+  );
+  assert.equal(
+    __testing.createSlackNativeAiTarget(
+      {
+        channel: "C123",
+        text: "hello",
+        ts: "1001.000",
+        user: "U123"
+      },
+      "1000.000"
+    ),
+    undefined
+  );
+  assert.equal(__testing.getSlackAgentSessionTitle(" "), "NoBo conversation");
+});
+
+test("streams generated replies through Slack native agent sessions", async (t) => {
+  const originalNativeAi = process.env.SLACK_NATIVE_AI;
+  const statusCalls: Array<Record<string, unknown>> = [];
+  const streamCalls: Array<Record<string, unknown>> = [];
+  const appended: string[] = [];
+  const stopped: Array<Record<string, unknown> | undefined> = [];
+  let streamTs: string | undefined;
+
+  delete process.env.SLACK_NATIVE_AI;
+  __testing.setSlackNativeAiClientFactory(() => ({
+    agents: {
+      sessions: {
+        async setStatus(input) {
+          statusCalls.push(input);
+        }
+      }
+    },
+    chatStream(input) {
+      streamCalls.push(input);
+      return {
+        get ts() {
+          return streamTs;
+        },
+        async append({ markdown_text }) {
+          appended.push(markdown_text);
+          streamTs = "2000.000";
+        },
+        async stop(input) {
+          stopped.push(input);
+          return { ts: streamTs };
+        }
+      };
+    }
+  }));
+
+  t.after(() => {
+    __testing.resetSlackNativeAiState();
+
+    if (originalNativeAi === undefined) {
+      delete process.env.SLACK_NATIVE_AI;
+    } else {
+      process.env.SLACK_NATIVE_AI = originalNativeAi;
+    }
+  });
+
+  const stream = __testing.createSlackReplyStreamer({
+    token: "xoxb-test",
+    channel: "C123",
+    threadTs: "1000.000",
+    nativeAi: {
+      threadTs: "1000.000",
+      teamId: "T123",
+      userId: "U123",
+      title: "Summarize this launch plan"
+    }
+  });
+
+  await stream.start();
+  await stream.append("Hello ");
+  await stream.append("world");
+  const result = await stream.finish("Hello world");
+
+  assert.equal(result.ts, "2000.000");
+  assert.deepEqual(statusCalls, [
+    {
+      channel_id: "C123",
+      thread_ts: "1000.000",
+      status: "processing",
+      title: "Summarize this launch plan",
+      initiator_user_id: "U123"
+    }
+  ]);
+  assert.deepEqual(streamCalls, [
+    {
+      channel: "C123",
+      thread_ts: "1000.000",
+      recipient_team_id: "T123",
+      recipient_user_id: "U123",
+      buffer_size: 128
+    }
+  ]);
+  assert.deepEqual(appended, ["Hello ", "world"]);
+  assert.deepEqual(stopped, [{ session_status: "active" }]);
+});
+
+test("falls back to legacy Slack streaming when Agents are unavailable", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const originalNativeAi = process.env.SLACK_NATIVE_AI;
+  const paths: string[] = [];
+
+  delete process.env.SLACK_NATIVE_AI;
+  console.warn = () => {};
+  __testing.setSlackNativeAiClientFactory(() => ({
+    agents: {
+      sessions: {
+        async setStatus() {
+          const error = new Error("Slack Agents are disabled") as Error & {
+            data?: { error: string };
+          };
+          error.data = { error: "feature_disabled" };
+          throw error;
+        }
+      }
+    },
+    chatStream() {
+      throw new Error("chatStream should not be created");
+    }
+  }));
+  globalThis.fetch = (async (input) => {
+    const path = String(input).replace("https://slack.com/api/", "");
+    paths.push(path);
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        channel: "C123",
+        ts: "2000.000"
+      }),
+      { headers: { "content-type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+    __testing.resetSlackNativeAiState();
+
+    if (originalNativeAi === undefined) {
+      delete process.env.SLACK_NATIVE_AI;
+    } else {
+      process.env.SLACK_NATIVE_AI = originalNativeAi;
+    }
+  });
+
+  const stream = __testing.createSlackReplyStreamer({
+    token: "xoxb-test",
+    channel: "C123",
+    threadTs: "1000.000",
+    nativeAi: {
+      threadTs: "1000.000",
+      teamId: "T123",
+      userId: "U123",
+      title: "Fallback test"
+    }
+  });
+
+  await stream.start();
+  await stream.append("Hello");
+  const result = await stream.finish("Hello");
+
+  assert.equal(result.ts, "2000.000");
+  assert.deepEqual(paths, ["chat.postMessage", "chat.update", "chat.update"]);
+});
+
 test("uses one idempotency lock key for the same Slack message across handlers", () => {
   const event = {
     channel: "C123",

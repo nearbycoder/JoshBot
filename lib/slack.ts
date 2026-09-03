@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import AdmZip from "adm-zip";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { WebClient } from "@slack/web-api";
 import { listRecentArtifacts, type RecentArtifact } from "./artifacts.js";
 import {
   chooseSlackActiveListeningResponse,
@@ -120,6 +121,42 @@ type SlackReplyStreamer = {
   finish: (finalText: string) => Promise<SlackReplyPost>;
   fail: (notice?: string) => Promise<void>;
 };
+
+type SlackNativeAiTarget = {
+  threadTs: string;
+  teamId: string;
+  userId: string;
+  title: string;
+};
+
+type SlackNativeChatStream = {
+  readonly ts: string | undefined;
+  append: (input: { markdown_text: string }) => Promise<unknown>;
+  stop: (input?: { session_status?: string }) => Promise<{ ts?: string }>;
+};
+
+type SlackNativeAiClient = {
+  agents: {
+    sessions: {
+      setStatus: (input: {
+        channel_id: string;
+        thread_ts: string;
+        status: "active" | "processing";
+        title?: string;
+        initiator_user_id?: string;
+      }) => Promise<unknown>;
+    };
+  };
+  chatStream: (input: {
+    channel: string;
+    thread_ts: string;
+    recipient_team_id: string;
+    recipient_user_id: string;
+    buffer_size: number;
+  }) => SlackNativeChatStream;
+};
+
+type SlackNativeAiClientFactory = (token: string) => SlackNativeAiClient;
 
 type SlackBlock = Record<string, unknown>;
 type SlackAcknowledgement = {
@@ -315,6 +352,9 @@ const WORD_ATTACHMENT_EXTENSIONS = [".doc", ".docx"];
 const SPREADSHEET_ATTACHMENT_EXTENSIONS = [".xls", ".xlsx", ".numbers"];
 const localEventLocks = new Map<string, number>();
 const activeListeningReplyCounts = new Map<string, number>();
+let slackNativeAiUnavailableReason: string | null = null;
+let slackNativeAiClientFactory: SlackNativeAiClientFactory = (token) =>
+  new WebClient(token) as unknown as SlackNativeAiClient;
 
 class SlackDownloadTooLargeError extends Error {
   constructor(
@@ -445,7 +485,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
     const skillStream = createSlackReplyStreamer({
       token,
       channel: event.channel,
-      threadTs
+      threadTs,
+      nativeAi: createSlackNativeAiTarget(event, threadTs)
     });
     let skillReply: string | null;
 
@@ -498,7 +539,8 @@ export async function respondToSlackMention(event: SlackMessageEvent) {
     const replyStream = createSlackReplyStreamer({
       token,
       channel: event.channel,
-      threadTs
+      threadTs,
+      nativeAi: createSlackNativeAiTarget(event, threadTs)
     });
     let reply: string | null;
 
@@ -670,7 +712,8 @@ export async function respondToSlackThreadReply(event: SlackMessageEvent) {
     const replyStream = createSlackReplyStreamer({
       token,
       channel: event.channel,
-      threadTs: event.thread_ts
+      threadTs: event.thread_ts,
+      nativeAi: createSlackNativeAiTarget(event, event.thread_ts)
     });
     let reply: string | null;
 
@@ -817,7 +860,8 @@ export async function respondToSlackActiveListeningMessage(event: SlackMessageEv
       const replyStream = createSlackReplyStreamer({
         token,
         channel: event.channel,
-        threadTs: replyThreadTs
+        threadTs: replyThreadTs,
+        nativeAi: createSlackNativeAiTarget(event, replyThreadTs)
       });
       let reply: string | null;
 
@@ -885,9 +929,26 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
   const acknowledgement = acknowledgeTargetedSlackEvent(token, event);
   try {
     const incomingMessage = await createCachedUserMessage(token, event);
-    const threadMessages: CachedThreadMessage[] = [incomingMessage];
+    const conversationThreadTs = event.thread_ts ?? event.ts;
+    let threadMessages: CachedThreadMessage[] = [incomingMessage];
+
+    if (event.thread_ts) {
+      try {
+        threadMessages = await loadThreadMessagesForIncomingEvent({
+          token,
+          channel: event.channel,
+          threadTs: conversationThreadTs,
+          incomingMessage
+        });
+      } catch (error) {
+        console.warn(
+          `Falling back to current Slack direct message text: ${summarizeError(error)}`
+        );
+      }
+    }
+
     const channelMemories = await loadChannelMemories(event.channel);
-    await recordUserChannelMemory(event, incomingMessage, event.ts);
+    await recordUserChannelMemory(event, incomingMessage, conversationThreadTs);
     const commandReply =
       (await maybeHandlePreferenceCommand(event)) ?? (await maybeHandleMemoryCommand(event));
     const decisionReply = commandReply ? null : await maybeHandleDecisionCommand(event, token);
@@ -899,18 +960,19 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
       const postedReply = await postSlackMessage({
         token,
         channel: event.channel,
+        threadTs: event.thread_ts,
         text: replyText
       });
       await recordAssistantChannelMemory({
         channel: event.channel,
-        threadTs: event.ts,
+        threadTs: conversationThreadTs,
         text: replyText,
         ts: postedReply.ts
       });
 
       await saveCachedThreadMessages(
         event.channel,
-        event.ts,
+        conversationThreadTs,
         appendCachedThreadMessage(threadMessages, {
           role: "assistant",
           content: replyText,
@@ -922,7 +984,9 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
 
     const replyStream = createSlackReplyStreamer({
       token,
-      channel: event.channel
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      nativeAi: createSlackNativeAiTarget(event, conversationThreadTs)
     });
     let replyText: string | null;
 
@@ -949,19 +1013,20 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
     const postedReply = await finishSlackReply({
       token,
       channel: event.channel,
+      threadTs: event.thread_ts,
       text: replyText,
       stream: replyStream
     });
     await recordAssistantChannelMemory({
       channel: event.channel,
-      threadTs: event.ts,
+      threadTs: conversationThreadTs,
       text: replyText,
       ts: postedReply.ts
     });
 
     await saveCachedThreadMessages(
       event.channel,
-      event.ts,
+      conversationThreadTs,
       appendCachedThreadMessage(threadMessages, {
         role: "assistant",
         content: replyText,
@@ -1743,6 +1808,311 @@ async function removeSlackReaction({
 }
 
 function createSlackReplyStreamer({
+  token,
+  channel,
+  threadTs,
+  nativeAi
+}: {
+  token: string;
+  channel: string;
+  threadTs?: string;
+  nativeAi?: SlackNativeAiTarget;
+}): SlackReplyStreamer {
+  const legacy = createLegacySlackReplyStreamer({ token, channel, threadTs });
+  let implementationPromise: Promise<SlackReplyStreamer> | null = null;
+  const getImplementation = () => {
+    implementationPromise ??= createNativeSlackReplyStreamer({
+      token,
+      channel,
+      nativeAi,
+      legacy
+    }).then((stream) => stream ?? legacy);
+    return implementationPromise;
+  };
+
+  return {
+    async start() {
+      await (await getImplementation()).start();
+    },
+    async append(delta: string) {
+      await (await getImplementation()).append(delta);
+    },
+    async finish(finalText: string) {
+      return (await getImplementation()).finish(finalText);
+    },
+    async fail(notice?: string) {
+      await (await getImplementation()).fail(notice);
+    }
+  };
+}
+
+async function createNativeSlackReplyStreamer({
+  token,
+  channel,
+  nativeAi,
+  legacy
+}: {
+  token: string;
+  channel: string;
+  nativeAi?: SlackNativeAiTarget;
+  legacy: SlackReplyStreamer;
+}): Promise<SlackReplyStreamer | null> {
+  if (!nativeAi || !isSlackNativeAiEnabled() || slackNativeAiUnavailableReason) {
+    return null;
+  }
+
+  const client = slackNativeAiClientFactory(token);
+  const setSessionStatus = async (status: "active" | "processing") => {
+    await client.agents.sessions.setStatus({
+      channel_id: channel,
+      thread_ts: nativeAi.threadTs,
+      status,
+      ...(status === "processing"
+        ? {
+            title: nativeAi.title,
+            initiator_user_id: nativeAi.userId
+          }
+        : {})
+    });
+  };
+
+  try {
+    await setSessionStatus("processing");
+  } catch (error) {
+    markSlackNativeAiUnavailable(error);
+    console.warn(
+      `Slack native AI status unavailable; using legacy reply streaming: ${summarizeError(error)}`
+    );
+    return null;
+  }
+
+  let stream: SlackNativeChatStream;
+
+  try {
+    stream = client.chatStream({
+      channel,
+      thread_ts: nativeAi.threadTs,
+      recipient_team_id: nativeAi.teamId,
+      recipient_user_id: nativeAi.userId,
+      buffer_size: getSlackStreamBufferSize()
+    });
+  } catch (error) {
+    await safelySetSlackAgentSessionActive(setSessionStatus);
+    console.warn(
+      `Unable to initialize Slack native reply stream; using legacy streaming: ${summarizeError(error)}`
+    );
+    return null;
+  }
+
+  let streamedText = "";
+  let usingLegacy = false;
+  let nativeStreamBroken = false;
+
+  const fallBackBeforeNativeStart = async (error: unknown) => {
+    console.warn(
+      `Slack native reply stream failed before posting; using legacy streaming: ${summarizeError(error)}`
+    );
+    await safelySetSlackAgentSessionActive(setSessionStatus);
+    usingLegacy = true;
+    await legacy.start();
+
+    if (streamedText) {
+      await legacy.append(streamedText);
+    }
+  };
+
+  const finishBrokenNativeStream = async (finalText: string, ts: string) => {
+    try {
+      await updateSlackMessage({
+        token,
+        channel,
+        ts,
+        text: finalText,
+        blocks: createSlackTextBlocks(finalText)
+      });
+    } catch (error) {
+      console.warn(
+        `Unable to finalize Slack native reply with chat.update: ${summarizeError(error)}`
+      );
+    } finally {
+      await safelySetSlackAgentSessionActive(setSessionStatus);
+    }
+
+    return { ts };
+  };
+
+  return {
+    async start() {
+      // agents.sessions.setStatus provides Slack's native working indicator.
+    },
+    async append(delta: string) {
+      if (!delta) {
+        return;
+      }
+
+      if (usingLegacy) {
+        await legacy.append(delta);
+        return;
+      }
+
+      streamedText += delta;
+
+      if (nativeStreamBroken) {
+        return;
+      }
+
+      try {
+        await stream.append({ markdown_text: delta });
+      } catch (error) {
+        if (!stream.ts) {
+          await fallBackBeforeNativeStart(error);
+          return;
+        }
+
+        nativeStreamBroken = true;
+        console.warn(
+          `Slack native reply stream interrupted; final response will use chat.update: ${summarizeError(error)}`
+        );
+      }
+    },
+    async finish(finalText: string) {
+      if (usingLegacy) {
+        return legacy.finish(finalText);
+      }
+
+      if (nativeStreamBroken && stream.ts) {
+        return finishBrokenNativeStream(finalText, stream.ts);
+      }
+
+      try {
+        if (!streamedText) {
+          await stream.append({ markdown_text: finalText });
+        }
+
+        const response = await stream.stop({ session_status: "active" });
+        const ts = response.ts ?? stream.ts;
+
+        if (!ts) {
+          throw new Error("Slack native reply stream finished without a message timestamp.");
+        }
+
+        return { ts };
+      } catch (error) {
+        if (stream.ts) {
+          console.warn(
+            `Unable to stop Slack native reply stream; finalizing with chat.update: ${summarizeError(error)}`
+          );
+          return finishBrokenNativeStream(finalText, stream.ts);
+        }
+
+        console.warn(
+          `Slack native reply stream failed before posting; sending a legacy reply: ${summarizeError(error)}`
+        );
+        await safelySetSlackAgentSessionActive(setSessionStatus);
+        return legacy.finish(finalText);
+      }
+    },
+    async fail(notice = STREAM_FAILURE_NOTICE) {
+      if (usingLegacy) {
+        await legacy.fail(notice);
+        return;
+      }
+
+      const ts = stream.ts;
+
+      if (!ts) {
+        await safelySetSlackAgentSessionActive(setSessionStatus);
+        await legacy.start();
+        await legacy.fail(notice);
+        return;
+      }
+
+      try {
+        await stream.stop({ session_status: "active" });
+      } catch (error) {
+        console.warn(`Unable to stop failed Slack native reply stream: ${summarizeError(error)}`);
+      }
+
+      await finishBrokenNativeStream(notice, ts);
+    }
+  };
+}
+
+function createSlackNativeAiTarget(
+  event: SlackMessageEvent,
+  threadTs: string | undefined
+): SlackNativeAiTarget | undefined {
+  if (!threadTs || !event.team_id || !event.user) {
+    return undefined;
+  }
+
+  return {
+    threadTs,
+    teamId: event.team_id,
+    userId: event.user,
+    title: getSlackAgentSessionTitle(event.text)
+  };
+}
+
+function getSlackAgentSessionTitle(text: string) {
+  return (
+    stripSlackFormatting(text)
+      .replace(/[*_~`]+/gu, "")
+      .trim()
+      .slice(0, 200) || "NoBo conversation"
+  );
+}
+
+function isSlackNativeAiEnabled() {
+  const configured = process.env.SLACK_NATIVE_AI?.trim().toLowerCase();
+  return !configured || !["0", "false", "off", "legacy"].includes(configured);
+}
+
+function markSlackNativeAiUnavailable(error: unknown) {
+  const errorCode = getSlackPlatformErrorCode(error);
+
+  if (
+    errorCode &&
+    [
+      "feature_disabled",
+      "feature_not_enabled",
+      "messages_tab_disabled",
+      "method_deprecated",
+      "missing_scope",
+      "not_allowed_token_type",
+      "unknown_method"
+    ].includes(errorCode)
+  ) {
+    slackNativeAiUnavailableReason = errorCode;
+  }
+}
+
+function getSlackPlatformErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const data = (error as { data?: unknown }).data;
+
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+
+  const code = (data as { error?: unknown }).error;
+  return typeof code === "string" ? code : null;
+}
+
+async function safelySetSlackAgentSessionActive(
+  setSessionStatus: (status: "active" | "processing") => Promise<void>
+) {
+  try {
+    await setSessionStatus("active");
+  } catch (error) {
+    console.warn(`Unable to clear Slack agent session status: ${summarizeError(error)}`);
+  }
+}
+
+function createLegacySlackReplyStreamer({
   token,
   channel,
   threadTs
@@ -3348,11 +3718,23 @@ export const __testing = {
   buildLiveUserContent,
   buildSlackAppHomeView,
   buildSlackMessageContent,
+  createSlackNativeAiTarget,
+  createSlackReplyStreamer,
   getActiveListeningMaxConcurrentReplies,
+  getSlackAgentSessionTitle,
   getSlackAttachmentTextMaxChars,
   getSlackTextAttachmentMaxBytes,
   getSlackEventLockKey,
-  removeSlackAcknowledgement
+  removeSlackAcknowledgement,
+  resetSlackNativeAiState() {
+    slackNativeAiUnavailableReason = null;
+    slackNativeAiClientFactory = (token) =>
+      new WebClient(token) as unknown as SlackNativeAiClient;
+  },
+  setSlackNativeAiClientFactory(factory: SlackNativeAiClientFactory) {
+    slackNativeAiUnavailableReason = null;
+    slackNativeAiClientFactory = factory;
+  }
 };
 
 function getSlackContextMessageLimit() {

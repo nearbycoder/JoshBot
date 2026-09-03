@@ -737,6 +737,7 @@ test("returns Block Kit selector for /nobo-channel-model", async () => {
     assert.match(JSON.stringify(result.response.blocks), /glm-5\.3-flash/);
     assert.match(JSON.stringify(result.response.blocks), /gpt-5\.6-luna/);
     assert.match(JSON.stringify(result.response.blocks), /qwen3\.8-max/);
+    assert.match(JSON.stringify(result.response.blocks), /training opt-in/);
     assert.doesNotMatch(JSON.stringify(result.response.blocks), /qwen3\.5-plus/);
   });
 });
@@ -801,7 +802,8 @@ test("channel model interaction replaces selector with updated current model", a
     const response = asSlashResponse(result);
     assert.equal(response.replace_original, true);
     assert.match(response.text, /deepseek-v4-pro/);
-    assert.match(JSON.stringify(response.blocks), /Current text model: `deepseek-v4-pro`/);
+    assert.match(JSON.stringify(response.blocks), /Current model: `deepseek-v4-pro`/);
+    assert.match(JSON.stringify(response.blocks), /fall back to `kimi-k3`/);
     assert.match(JSON.stringify(response.blocks), /"initial_option"/);
     assert.match(JSON.stringify(response.blocks), /"value":"deepseek-v4-pro"/);
   });
@@ -876,6 +878,7 @@ async function withMockOpenCodeModels(run: () => Promise<void>) {
           { id: "gpt-5.6-luna", object: "model" },
           { id: "deepseek-v4-pro", object: "model" },
           { id: "qwen3.8-max", object: "model" },
+          { id: "muse-spark-1.3-contributor", object: "model" },
           { id: "qwen3.5-plus", object: "model" }
         ]
       }),

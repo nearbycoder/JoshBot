@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AgentRunError } from "@flue/runtime";
 import { __testing } from "../lib/ai.js";
 
 test("current time uses requested timezone", () => {
@@ -67,7 +68,9 @@ test("channel memory prompt is shared channel context", () => {
 });
 
 test("image-bearing Slack messages default to Kimi vision model", () => {
+  const originalTextModel = process.env.OPENCODE_GO_MODEL;
   const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  delete process.env.OPENCODE_GO_MODEL;
   delete process.env.OPENCODE_GO_VISION_MODEL;
 
   try {
@@ -84,6 +87,11 @@ test("image-bearing Slack messages default to Kimi vision model", () => {
       "kimi-k3"
     );
   } finally {
+    if (originalTextModel === undefined) {
+      delete process.env.OPENCODE_GO_MODEL;
+    } else {
+      process.env.OPENCODE_GO_MODEL = originalTextModel;
+    }
     if (originalVisionModel === undefined) {
       delete process.env.OPENCODE_GO_VISION_MODEL;
     } else {
@@ -93,7 +101,9 @@ test("image-bearing Slack messages default to Kimi vision model", () => {
 });
 
 test("image-bearing Slack messages respect configured vision model", () => {
+  const originalTextModel = process.env.OPENCODE_GO_MODEL;
   const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  process.env.OPENCODE_GO_MODEL = "deepseek-v4-pro";
   process.env.OPENCODE_GO_VISION_MODEL = "kimi-k2.7-code";
 
   try {
@@ -110,6 +120,11 @@ test("image-bearing Slack messages respect configured vision model", () => {
       "kimi-k2.7-code"
     );
   } finally {
+    if (originalTextModel === undefined) {
+      delete process.env.OPENCODE_GO_MODEL;
+    } else {
+      process.env.OPENCODE_GO_MODEL = originalTextModel;
+    }
     if (originalVisionModel === undefined) {
       delete process.env.OPENCODE_GO_VISION_MODEL;
     } else {
@@ -118,7 +133,7 @@ test("image-bearing Slack messages respect configured vision model", () => {
   }
 });
 
-test("channel text model override does not affect image model", () => {
+test("text-only channel model falls back to the configured image model", () => {
   const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
   delete process.env.OPENCODE_GO_VISION_MODEL;
 
@@ -158,6 +173,103 @@ test("channel text model override does not affect image model", () => {
       process.env.OPENCODE_GO_VISION_MODEL = originalVisionModel;
     }
   }
+});
+
+test("image-capable channel model handles image messages itself", () => {
+  const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  process.env.OPENCODE_GO_VISION_MODEL = "kimi-k3";
+
+  try {
+    assert.equal(
+      __testing.selectSlackModel(
+        [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "What is this?" },
+              { type: "image", image: Buffer.from("image"), mediaType: "image/jpeg" }
+            ]
+          }
+        ],
+        "kimi-k2.7-code"
+      ),
+      "kimi-k2.7-code"
+    );
+  } finally {
+    if (originalVisionModel === undefined) {
+      delete process.env.OPENCODE_GO_VISION_MODEL;
+    } else {
+      process.env.OPENCODE_GO_VISION_MODEL = originalVisionModel;
+    }
+  }
+});
+
+test("image-capable default model handles image messages itself", () => {
+  const originalTextModel = process.env.OPENCODE_GO_MODEL;
+  const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
+  process.env.OPENCODE_GO_MODEL = "kimi-k2.6";
+  process.env.OPENCODE_GO_VISION_MODEL = "kimi-k3";
+
+  try {
+    assert.equal(
+      __testing.selectSlackModel([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            { type: "image", image: Buffer.from("image"), mediaType: "image/jpeg" }
+          ]
+        }
+      ]),
+      "kimi-k2.6"
+    );
+  } finally {
+    if (originalTextModel === undefined) {
+      delete process.env.OPENCODE_GO_MODEL;
+    } else {
+      process.env.OPENCODE_GO_MODEL = originalTextModel;
+    }
+    if (originalVisionModel === undefined) {
+      delete process.env.OPENCODE_GO_VISION_MODEL;
+    } else {
+      process.env.OPENCODE_GO_VISION_MODEL = originalVisionModel;
+    }
+  }
+});
+
+test("data-policy failures fall back to Kimi without changing normal text failures", () => {
+  const policyError = new AgentRunError({
+    outcome: "failed",
+    submissionId: "sub_test",
+    cause: {
+      type: "operation_failed",
+      meta: {
+        reason:
+          'OpenAI API error (403): {"type":"DataPolicyError","message":"This model requires explicit opt in"}'
+      }
+    }
+  });
+
+  assert.deepEqual(
+    __testing.selectSlackModelFailureFallback(
+      policyError,
+      "muse-spark-1.3-contributor",
+      false
+    ),
+    { modelId: "kimi-k3", reason: "data-policy" }
+  );
+  assert.equal(
+    __testing.selectSlackModelFailureFallback(
+      new Error("Temporary provider error"),
+      "muse-spark-1.3-contributor",
+      false
+    ),
+    null
+  );
+  assert.equal(
+    __testing.selectSlackModelFailureFallback(policyError, "kimi-k3", false),
+    null
+  );
 });
 
 test("channel text model accepts current non-chat OpenCode models", () => {

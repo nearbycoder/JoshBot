@@ -3,9 +3,11 @@ import { getRecentOpsErrors, summarizeOpsError, type OpsErrorRecord } from "./op
 import { getRedisClient } from "./redis.js";
 import { getScheduleRunnerStatus } from "./schedules.js";
 import { getMonitorRunnerStatus } from "./monitors.js";
+import {
+  getDefaultSlackTextModel,
+  getDefaultSlackVisionModel
+} from "./nobo-models.js";
 
-const DEFAULT_TEXT_MODEL = "kimi-k3";
-const DEFAULT_VISION_MODEL = "kimi-k3";
 const DEFAULT_REDIS_TIMEOUT_MS = 1000;
 
 export type RedisOpsStatus = {
@@ -57,9 +59,9 @@ export async function collectOpsStatus(options: CollectOpsStatusOptions = {}): P
       botUserId: hasEnv("SLACK_BOT_USER_ID")
     },
     modelSearch: {
-      apiKey: hasEnv("OPENCODE_GO_API_KEY"),
-      textModel: process.env.OPENCODE_GO_MODEL?.trim() || DEFAULT_TEXT_MODEL,
-      visionModel: process.env.OPENCODE_GO_VISION_MODEL?.trim() || DEFAULT_VISION_MODEL,
+      apiKey: hasEnv("OPENCODE_GO_API_KEY") || hasEnv("OPENCODE_API_KEY"),
+      textModel: getDefaultSlackTextModel(),
+      visionModel: getDefaultSlackVisionModel(),
       searchEnabled: hasEnv("EXA_API_KEY")
     },
     recentErrors: (options.getRecentErrors ?? (() => getRecentOpsErrors(5)))()
@@ -85,7 +87,7 @@ export function formatOpsStatus(status: OpsStatus) {
     `Slack config: token ${present(status.slack.botToken)}, signing secret ${present(
       status.slack.signingSecret
     )}, bot user ${present(status.slack.botUserId)}`,
-    `Model/search: API key ${present(status.modelSearch.apiKey)}, text model \`${status.modelSearch.textModel}\`, vision model \`${status.modelSearch.visionModel}\`, web search ${
+    `Model/search: API key ${present(status.modelSearch.apiKey)}, default model \`${status.modelSearch.textModel}\`, image fallback \`${status.modelSearch.visionModel}\`, web search ${
       status.modelSearch.searchEnabled ? "enabled" : "disabled"
     }`,
     "*Recent errors*",

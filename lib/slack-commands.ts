@@ -43,9 +43,11 @@ import { formatSlackSkillHelp } from "./skills.js";
 import {
   formatOpenCodeGoModelName,
   getDefaultSlackTextModel,
-  getDefaultSlackVisionModel,
+  getSlackImageModel,
   listOpenCodeGoModels,
-  normalizeOpenCodeGoSupportedModelId
+  normalizeOpenCodeGoSupportedModelId,
+  requiresOpenCodeGoDataTrainingOptIn,
+  supportsOpenCodeGoImageInput
 } from "./nobo-models.js";
 import {
   handleSemanticSearchCommandText,
@@ -1368,7 +1370,7 @@ async function handleNoboChannelModelSlashCommand(
     return immediate(
       ephemeral(
         result.ok
-          ? `Reset this channel to the default text model: \`${getDefaultSlackTextModel()}\`.`
+          ? `Reset this channel to the default model: \`${getDefaultSlackTextModel()}\`.`
           : `Couldn't reset channel model: ${result.reason}`
       )
     );
@@ -1420,13 +1422,20 @@ async function buildChannelModelSelectorResponse(
   }
 
   return {
-    ...ephemeral(`Choose this channel's NoBo text model. Current: \`${selectedModelId}\`.`),
+    ...ephemeral(`Choose this channel's NoBo model. Current: \`${selectedModelId}\`.`),
     blocks: [
       {
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `*Channel model*\nCurrent text model: \`${selectedModelId}\`\nImage messages still use \`${getDefaultSlackVisionModel()}\`.`
+          text: [
+            "*Channel model*",
+            `Current model: \`${selectedModelId}\``,
+            formatImageRouting(selectedModelId),
+            formatModelDataPolicy(selectedModelId)
+          ]
+            .filter(Boolean)
+            .join("\n")
         }
       },
       {
@@ -1455,9 +1464,12 @@ async function formatChannelModelStatus(channelId: string) {
 
   return [
     "*NoBo channel model*",
-    `Text model: \`${modelId}\` (${source})`,
-    `Image model: \`${getDefaultSlackVisionModel()}\``
-  ].join("\n");
+    `Current model: \`${modelId}\` (${source})`,
+    formatImageRouting(modelId),
+    formatModelDataPolicy(modelId)
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function formatChannelModelHelp() {
@@ -1466,12 +1478,32 @@ function formatChannelModelHelp() {
     "`/nobo-channel-model`: pick with a selector",
     "`/nobo-channel-model status`: show current model",
     "`/nobo-channel-model <model-id>`: set directly",
-    "`/nobo-channel-model reset`: use the default text model"
+    "`/nobo-channel-model reset`: use the default model"
   ].join("\n");
 }
 
 function formatChannelModelUpdated(modelId: string) {
-  return `Updated this channel's text model to \`${modelId}\`. Image messages still use \`${getDefaultSlackVisionModel()}\`.`;
+  return [
+    `Updated this channel's model to \`${modelId}\`.`,
+    formatImageRouting(modelId),
+    formatModelDataPolicy(modelId)
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function formatImageRouting(modelId: string) {
+  const imageModel = getSlackImageModel(modelId);
+
+  return supportsOpenCodeGoImageInput(modelId)
+    ? `Image messages use the same model: \`${imageModel}\`.`
+    : `Image messages fall back to \`${imageModel}\` because \`${modelId}\` is text-only.`;
+}
+
+function formatModelDataPolicy(modelId: string) {
+  return requiresOpenCodeGoDataTrainingOptIn(modelId)
+    ? "This Contributor model requires explicit OpenCode workspace opt-in for model-training data use; policy rejections retry with `kimi-k3`."
+    : "";
 }
 
 async function resolveOpenCodeGoModelId(input: string) {
@@ -1486,6 +1518,11 @@ async function resolveOpenCodeGoModelId(input: string) {
 }
 
 function createModelSelectOption(model: { id: string; name: string }) {
+  const capabilities = [
+    supportsOpenCodeGoImageInput(model.id) ? "image" : "text-only",
+    requiresOpenCodeGoDataTrainingOptIn(model.id) ? "training opt-in" : null
+  ].filter(Boolean);
+
   return {
     text: {
       type: "plain_text",
@@ -1494,7 +1531,10 @@ function createModelSelectOption(model: { id: string; name: string }) {
     value: model.id,
     description: {
       type: "plain_text",
-      text: truncateSlackPlainText(model.id, 75)
+      text: truncateSlackPlainText(
+        `${model.id} · ${capabilities.join(" · ")}`,
+        75
+      )
     }
   };
 }

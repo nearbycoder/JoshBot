@@ -5,20 +5,11 @@ import {
   OPENCODE_GO_BASE_URL,
   OPENCODE_GO_PROVIDER,
   listOpenCodeGoModelDefinitions,
+  supportsOpenCodeGoImageInput,
   type OpenCodeGoApi
 } from "../lib/nobo-models.js";
 
 const ANTHROPIC_BASE_URL = OPENCODE_GO_BASE_URL.replace(/\/v1$/, "");
-const VISION_MODELS = new Set([
-  "deepseek-v4-flash-vision-exp",
-  "kimi-k2.6",
-  "kimi-k2.7-code",
-  "kimi-k3",
-  "minimax-m3",
-  "mimo-v2.5",
-  "qwen3.6-plus",
-  "qwen3.7-plus"
-]);
 
 export function registerNoboProvider() {
   const builtInProvider = opencodeGoProvider();
@@ -56,7 +47,10 @@ function createOpenCodeGoModel(
     return {
       ...builtIn,
       ...definition,
-      baseUrl
+      baseUrl,
+      input: supportsOpenCodeGoImageInput(definition.id)
+        ? ["text", "image"]
+        : ["text"]
     };
   }
 
@@ -65,7 +59,7 @@ function createOpenCodeGoModel(
     provider: OPENCODE_GO_PROVIDER,
     baseUrl,
     reasoning: true,
-    input: VISION_MODELS.has(definition.id) ? ["text", "image"] : ["text"],
+    input: supportsOpenCodeGoImageInput(definition.id) ? ["text", "image"] : ["text"],
     cost: {
       input: 0,
       output: 0,

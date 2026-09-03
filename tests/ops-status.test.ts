@@ -18,8 +18,8 @@ test("formats ops status without exposing secrets", async () => {
   process.env.SLACK_SIGNING_SECRET = "signing-secret";
   process.env.SLACK_BOT_USER_ID = "U123";
   process.env.OPENCODE_GO_API_KEY = "opencode-secret-key";
-  process.env.OPENCODE_GO_MODEL = "glm-test";
-  process.env.OPENCODE_GO_VISION_MODEL = "vision-test";
+  process.env.OPENCODE_GO_MODEL = "deepseek-v4-pro";
+  process.env.OPENCODE_GO_VISION_MODEL = "kimi-k2.7-code";
   process.env.EXA_API_KEY = "exa-secret-key";
 
   try {
@@ -62,7 +62,7 @@ test("formats ops status without exposing secrets", async () => {
     assert.match(text, /Scheduler: started, idle/);
     assert.match(text, /Monitors: started, idle/);
     assert.match(text, /Slack config: token present, signing secret present, bot user present/);
-    assert.match(text, /Model\/search: API key present, text model `glm-test`, vision model `vision-test`, web search enabled/);
+    assert.match(text, /Model\/search: API key present, default model `deepseek-v4-pro`, image fallback `kimi-k2.7-code`, web search enabled/);
     assert.match(text, /test: boom/);
     assert.doesNotMatch(text, /xoxb-secret-token|signing-secret|opencode-secret-key|exa-secret-key/);
   } finally {

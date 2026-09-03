@@ -10,6 +10,8 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 - Web and time tools: Exa search, exact current-time tool, UTC plus user-timezone context, and timezone-aware relative scheduling.
 - User memory and preferences: per-user memories, timezone, verbosity, news interests, and reminder style in Redis.
 - Channel memory and settings: shared channel memory, active-listening state, and per-channel model overrides in Redis.
+- Model awareness and routing: NoBo receives the active/default/registered model configuration in its runtime instructions and keeps image requests on the selected model when it supports image input.
+- Native Slack AI responses: generated thread replies use Slack Agent Sessions and native text streaming when the workspace enables Agents, with automatic fallback to the legacy message updater.
 - Active listening: records channel messages and can stay silent, reply in-thread, or reply inline, with concurrency limits.
 - Scheduling: one-time reminders, interval crons, daily/weekly jobs, prompt-style scheduled tasks, cross-channel posting, idempotency, listing, cancellation, and updates.
 - Follow-ups: extracts thread action items, tracks open items, lists thread or user follow-ups, marks items done, and schedules due reminders.
@@ -59,7 +61,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `PORT`: production server port, defaults to `3000`; Vite development uses `5173` unless `--port` is passed
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: default text model, defaults to `kimi-k3`
-   - `OPENCODE_GO_VISION_MODEL`: optional override for image-bearing messages; defaults to `kimi-k3`
+   - `OPENCODE_GO_VISION_MODEL`: fallback for image-bearing messages when the selected model is text-only; defaults to `kimi-k3` and must be image-capable
    - `EXA_API_KEY`: enables Exa-backed web search for current or uncertain facts
    - `REDIS_URL`: optional Redis connection string for caching Slack thread state, shared channel memory, channel polls, channel decision logs, admin access updates, and audit entries
    - `REDIS_TTL_SECONDS`: defaults to `604800` (7 days)
@@ -69,12 +71,13 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    - `SLACK_BOT_TOKEN`: Bot User OAuth Token from your Slack app
    - `SLACK_SIGNING_SECRET`: Signing secret from the Slack app settings
    - `SLACK_BOT_USER_ID`: the bot user ID, used to strip mentions and classify assistant replies in thread history
+   - `SLACK_NATIVE_AI`: defaults to `auto`; attempts Slack Agent Sessions and native `chat.*Stream` replies when available, or set `false`/`off` to force the legacy message updater
    - `SLACK_ACK_REACTION`: defaults to `eyes`; emoji reaction NoBo adds while handling targeted messages and removes after completion, or `off` to disable
    - `SLACK_CONTEXT_MESSAGES`: defaults to `12`; keeps the thread root plus only the most recent turns when building model context
-   - `SLACK_LISTENING_MESSAGE`: defaults to `Thinking...`; used as the base text for the animated placeholder before model text starts streaming back
-   - `SLACK_LISTENING_ANIMATION_INTERVAL_MS`: defaults to `1000`; controls the placeholder dot animation cadence
-   - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls how many new characters accumulate before updating a streamed Slack reply
-   - `SLACK_STREAM_UPDATE_INTERVAL_MS`: defaults to `750`; maximum update cadence for streamed Slack reply updates
+   - `SLACK_LISTENING_MESSAGE`: defaults to `Thinking...`; used by the legacy-streaming fallback as its animated placeholder
+   - `SLACK_LISTENING_ANIMATION_INTERVAL_MS`: defaults to `1000`; controls the legacy placeholder animation cadence
+   - `SLACK_STREAM_BUFFER_SIZE`: defaults to `128`; controls both Slack SDK native-stream buffering and legacy update batching
+   - `SLACK_STREAM_UPDATE_INTERVAL_MS`: defaults to `750`; maximum update cadence for the legacy-streaming fallback
    - `NOBO_ACTIVE_LISTENING_MAX_CONCURRENT_REPLIES`: defaults to `3`; caps simultaneous active-listening replies per channel in this process
    - `SLACK_TEXT_ATTACHMENT_MAX_BYTES`: defaults to `262144`; max private Slack file download size for text/CSV/PDF/DOCX/XLSX extraction, capped at 2 MB
    - `NOBO_ADMIN_USER_IDS`: comma-separated Slack user IDs allowed to run `/nobo-admin`
@@ -122,6 +125,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 Create a Slack app and configure:
 
+- Agents: enable the Agent messaging experience (`agent_view`), add an agent description, and optionally configure up to four suggested prompts. Slack adds the required `assistant:write` scope when this feature is enabled; reinstall the app when prompted. NoBo falls back automatically until this is enabled.
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
 - Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-polls`, `/nobo-poll`, `/nobo-admin`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
@@ -147,6 +151,8 @@ Create a Slack app and configure:
 Semantic search over channel history uses `conversations.history`, so public channels need `channels:history`; private channels need `groups:history`. Artifact results are scoped to the Slack user who ran the command.
 
 After adding scopes, events, slash commands, shortcuts, or interactivity, reinstall the Slack app to the workspace so the bot token receives the updated grants.
+
+Native AI replies require the existing `chat:write` scope plus the `assistant:write` scope Slack adds when Agents are enabled. NoBo marks each generated thread session `processing`, streams through Slack's `chat.startStream`/`chat.appendStream`/`chat.stopStream` APIs, and returns the session to `active`. If Agent Sessions or native streaming is unavailable, NoBo keeps working through its existing `chat.postMessage`/`chat.update` fallback. Flue continues to own verified ingress and agent execution; Slack's official Web API client owns the outbound native AI surface.
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
 
@@ -379,12 +385,14 @@ Preferences are injected into model prompts. Timezone is used for current-time c
 
 NoBo also persists per-channel preferences in Redis at `slack-preferences:channel:<channelId>`.
 
-- `/nobo-channel-model`: choose this channel's text model with a Slack Block Kit selector
+- `/nobo-channel-model`: choose this channel's model with a Slack Block Kit selector; options show whether image input is enabled
 - `/nobo-channel-model status`
 - `/nobo-channel-model <model-id>`
 - `/nobo-channel-model reset`
 
-The selector loads the current supported OpenCode Go catalog from `https://opencode.ai/zen/go/v1/models` and falls back to the built-in model list if discovery fails. Models are routed through their documented Chat Completions, Anthropic Messages, or OpenAI Responses endpoint. Channel model choices only affect text requests; image-bearing messages continue using `OPENCODE_GO_VISION_MODEL`.
+The selector loads the current supported OpenCode Go catalog from `https://opencode.ai/zen/go/v1/models` and falls back to the built-in model list if discovery fails. Models are routed through their documented Chat Completions, Anthropic Messages, or OpenAI Responses endpoint. Image-bearing messages use the selected channel/default model when it supports image input; otherwise they use `OPENCODE_GO_VISION_MODEL`.
+
+Muse Spark Contributor models require explicit OpenCode workspace opt-in because prompts and completions may be used for model training. The Slack selector and NoBo runtime context label these models with `training opt-in`. If OpenCode rejects a selected model with `DataPolicyError`, NoBo retries that request once with `kimi-k3`; the channel's selected model remains unchanged for use after opt-in is enabled.
 
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
@@ -534,6 +542,6 @@ Attachment limits:
 - Text-like files are capped by `SLACK_TEXT_ATTACHMENT_MAX_BYTES` and `SLACK_ATTACHMENT_TEXT_MAX_CHARS`.
 - PDFs, Word docs, and XLSX spreadsheets are downloaded and text-extracted within the configured file-size and text limits. If extraction fails, NoBo falls back to Slack-provided preview text when available, then metadata. CSV/TSV spreadsheet exports and VTT/SRT transcripts are extracted as text.
 
-NoBo uses `OPENCODE_GO_VISION_MODEL` for image-bearing messages. If unset, it defaults to `kimi-k3`. If the configured vision model fails, NoBo retries the image request once with `kimi-k3` before falling back to text-only attachment context.
+NoBo first uses the selected channel/default model for image-bearing messages when that model is marked image-capable. Otherwise it uses `OPENCODE_GO_VISION_MODEL`, which defaults to `kimi-k3`; a text-only value is ignored in favor of `kimi-k3`. If the chosen image model fails, NoBo retries the request once with `kimi-k3` before falling back to text-only attachment context.
 
 OpenCode lists `kimi-k3` as supporting image input. In direct testing here on May 21, 2026, `minimax-m2.7` behaved as if no image was attached, while `kimi-k2.6` successfully described the same image. If your normal text model is not vision-capable, keep it in `OPENCODE_GO_MODEL` and set `OPENCODE_GO_VISION_MODEL` to a model that actually handles image input.

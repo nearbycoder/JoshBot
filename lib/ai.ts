@@ -21,9 +21,10 @@ import {
   type ThreadFollowUpDraft
 } from "./follow-ups.js";
 import {
+  FALLBACK_SLACK_TEXT_MODEL,
   FALLBACK_SLACK_VISION_MODEL,
   getDefaultSlackTextModel,
-  getDefaultSlackVisionModel,
+  getSlackImageModel,
   normalizeOpenCodeGoSupportedModelId
 } from "./nobo-models.js";
 
@@ -402,40 +403,47 @@ async function generateSlackResponse({
   const images = modelMessagesToPrompt(messages).images;
   const modelId = await selectSlackModel(messages, channelId);
   const toolMode: NoboAgentToolMode = images.length > 0 ? "none" : "slack";
+  const resolvedScheduleContext =
+    toolMode === "slack" && scheduleContext
+      ? {
+          ...scheduleContext,
+          timeZone: userPreferences.timeZone,
+          reminderStyle: userPreferences.reminderStyle
+        }
+      : undefined;
+  const runWithModel = (candidateModelId: string) =>
+    runNoboAgentPrompt({
+      prompt,
+      images,
+      modelId: candidateModelId,
+      toolMode,
+      ownerUserId: currentUserId,
+      scheduleContext: resolvedScheduleContext,
+      onTextDelta
+    });
   let text: string;
 
   try {
-    text = await runNoboAgentPrompt({
-      prompt,
-      images,
-      modelId,
-      toolMode,
-      ownerUserId: currentUserId,
-      scheduleContext:
-        toolMode === "slack" && scheduleContext
-          ? {
-              ...scheduleContext,
-              timeZone: userPreferences.timeZone,
-              reminderStyle: userPreferences.reminderStyle
-            }
-          : undefined,
-      onTextDelta
-    });
+    text = await runWithModel(modelId);
   } catch (error) {
-    if (images.length === 0) {
+    const fallback = selectSlackModelFailureFallback(
+      error,
+      modelId,
+      images.length > 0
+    );
+
+    if (!fallback) {
       throw error;
     }
 
+    const reason =
+      fallback.reason === "data-policy"
+        ? `Model ${modelId} requires OpenCode data-training opt-in`
+        : `Vision request with ${modelId} failed`;
     console.warn(
-      `Vision request with ${modelId} failed; retrying with ${FALLBACK_SLACK_VISION_MODEL}: ${summarizeDeltaError(error)}`
+      `${reason}; retrying with ${fallback.modelId}: ${summarizeDeltaError(error)}`
     );
-    text = await runNoboAgentPrompt({
-      prompt,
-      images,
-      modelId: FALLBACK_SLACK_VISION_MODEL,
-      toolMode: "none",
-      onTextDelta
-    });
+    text = await runWithModel(fallback.modelId);
   }
 
   return normalizeSlackMrkdwn(text.trim());
@@ -546,6 +554,64 @@ function summarizeDeltaError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function selectSlackModelFailureFallback(
+  error: unknown,
+  modelId: string,
+  hasImages: boolean
+) {
+  const fallbackModelId = hasImages
+    ? FALLBACK_SLACK_VISION_MODEL
+    : FALLBACK_SLACK_TEXT_MODEL;
+
+  if (modelId === fallbackModelId) {
+    return null;
+  }
+
+  if (isOpenCodeGoDataPolicyError(error)) {
+    return { modelId: fallbackModelId, reason: "data-policy" as const };
+  }
+
+  return hasImages
+    ? { modelId: fallbackModelId, reason: "vision-failure" as const }
+    : null;
+}
+
+function isOpenCodeGoDataPolicyError(error: unknown) {
+  return /\bDataPolicyError\b|requires explicit opt[ -]?in/i.test(
+    collectErrorSearchText(error)
+  );
+}
+
+function collectErrorSearchText(
+  input: unknown,
+  seen = new Set<object>(),
+  depth = 0
+): string {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    depth > 4 ||
+    seen.has(input)
+  ) {
+    return "";
+  }
+
+  seen.add(input);
+  const record = input as Record<string, unknown>;
+  const fields = ["name", "type", "message", "details", "reason"]
+    .map((key) => record[key])
+    .filter((value): value is string => typeof value === "string");
+  const nested = [record.cause, record.meta]
+    .map((value) => collectErrorSearchText(value, seen, depth + 1))
+    .filter(Boolean);
+
+  return [...fields, ...nested].join("\n");
+}
+
 function parseMonitorCheckJson(text: string): ConditionalMonitorCheckResult {
   const jsonText = text.match(/\{[\s\S]*\}/)?.[0] ?? text;
 
@@ -592,10 +658,6 @@ function stableMonitorFingerprint(input: string) {
 }
 
 async function selectSlackModel(messages: NoboModelMessage[], channelId?: string) {
-  if (containsImageInput(messages)) {
-    return selectSlackModelForMessages(messages);
-  }
-
   const channelPreferences = channelId
     ? await getChannelPreferences(channelId)
     : { modelId: null };
@@ -604,11 +666,14 @@ async function selectSlackModel(messages: NoboModelMessage[], channelId?: string
 }
 
 function selectSlackModelForMessages(messages: NoboModelMessage[], channelModelId?: string) {
+  const selectedTextModel =
+    normalizeOpenCodeGoSupportedModelId(channelModelId) ?? getDefaultSlackTextModel();
+
   if (containsImageInput(messages)) {
-    return getDefaultSlackVisionModel();
+    return getSlackImageModel(selectedTextModel);
   }
 
-  return normalizeOpenCodeGoSupportedModelId(channelModelId) ?? getDefaultSlackTextModel();
+  return selectedTextModel;
 }
 
 function containsImageInput(messages: NoboModelMessage[]) {
@@ -697,7 +762,8 @@ export const __testing = {
   formatCurrentTimePrompt,
   formatChannelMemoryPrompt,
   normalizeSlackMrkdwn,
-  selectSlackModel: selectSlackModelForMessages
+  selectSlackModel: selectSlackModelForMessages,
+  selectSlackModelFailureFallback
 };
 
 export type NoboResponseOptions = {

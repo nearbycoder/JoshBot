@@ -3,6 +3,7 @@
 import { type AgentProps, useModel, useTool } from "@flue/runtime";
 import { createNoboTools } from "../../lib/flue-tools.js";
 import { decodeNoboAgentContext } from "../../lib/nobo-agent-context.js";
+import { formatOpenCodeGoRuntimeContext } from "../../lib/nobo-models.js";
 import { SYSTEM_PROMPT } from "../../lib/nobo-prompt.js";
 import { getNoboModelSpecifier } from "../nobo-provider.js";
 
@@ -17,7 +18,9 @@ function Nobo({ id }: AgentProps) {
     }
   }
 
-  return SYSTEM_PROMPT;
+  return `${SYSTEM_PROMPT}
+
+${formatOpenCodeGoRuntimeContext(context.modelId)}`;
 }
 
 Nobo.agentName = "nobo";
