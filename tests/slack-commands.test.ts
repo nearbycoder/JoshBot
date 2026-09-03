@@ -734,7 +734,10 @@ test("returns Block Kit selector for /nobo-channel-model", async () => {
     assert.match(JSON.stringify(result.response.blocks), /static_select/);
     assert.match(JSON.stringify(result.response.blocks), /nobo_channel_model_select/);
     assert.match(JSON.stringify(result.response.blocks), /deepseek-v4-pro/);
-    assert.doesNotMatch(JSON.stringify(result.response.blocks), /qwen3\.7-max/);
+    assert.match(JSON.stringify(result.response.blocks), /glm-5\.3-flash/);
+    assert.match(JSON.stringify(result.response.blocks), /gpt-5\.6-luna/);
+    assert.match(JSON.stringify(result.response.blocks), /qwen3\.8-max/);
+    assert.doesNotMatch(JSON.stringify(result.response.blocks), /qwen3\.5-plus/);
   });
 });
 
@@ -869,9 +872,11 @@ async function withMockOpenCodeModels(run: () => Promise<void>) {
       JSON.stringify({
         object: "list",
         data: [
-          { id: "glm-5.2", object: "model" },
+          { id: "glm-5.3-flash", object: "model" },
+          { id: "gpt-5.6-luna", object: "model" },
           { id: "deepseek-v4-pro", object: "model" },
-          { id: "qwen3.7-max", object: "model" }
+          { id: "qwen3.8-max", object: "model" },
+          { id: "qwen3.5-plus", object: "model" }
         ]
       }),
       {

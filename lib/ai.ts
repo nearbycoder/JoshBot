@@ -23,7 +23,7 @@ import {
   FALLBACK_SLACK_VISION_MODEL,
   getDefaultSlackTextModel,
   getDefaultSlackVisionModel,
-  normalizeOpenCodeGoOaCompatibleModelId
+  normalizeOpenCodeGoSupportedModelId
 } from "./nobo-models.js";
 
 export async function createSlackReply(messages: NoboModelMessage[]) {
@@ -644,7 +644,7 @@ function selectSlackModelForMessages(messages: NoboModelMessage[], channelModelI
     return getDefaultSlackVisionModel();
   }
 
-  return normalizeOpenCodeGoOaCompatibleModelId(channelModelId) ?? getDefaultSlackTextModel();
+  return normalizeOpenCodeGoSupportedModelId(channelModelId) ?? getDefaultSlackTextModel();
 }
 
 function containsImageInput(messages: NoboModelMessage[]) {

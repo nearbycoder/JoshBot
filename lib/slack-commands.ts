@@ -45,7 +45,7 @@ import {
   getDefaultSlackTextModel,
   getDefaultSlackVisionModel,
   listOpenCodeGoModels,
-  normalizeOpenCodeGoOaCompatibleModelId
+  normalizeOpenCodeGoSupportedModelId
 } from "./nobo-models.js";
 import {
   handleSemanticSearchCommandText,
@@ -736,7 +736,7 @@ export async function handleSlackInteractionRequest(
     return { response: ephemeral("Slack did not send a channel for this selection.") };
   }
 
-  const modelId = normalizeOpenCodeGoOaCompatibleModelId(action.selected_option?.value);
+  const modelId = normalizeOpenCodeGoSupportedModelId(action.selected_option?.value);
   if (!modelId) {
     return { response: ephemeral("Slack did not send a valid model selection.") };
   }
@@ -1475,7 +1475,7 @@ function formatChannelModelUpdated(modelId: string) {
 }
 
 async function resolveOpenCodeGoModelId(input: string) {
-  const requested = normalizeOpenCodeGoOaCompatibleModelId(input);
+  const requested = normalizeOpenCodeGoSupportedModelId(input);
 
   if (!requested) {
     return null;

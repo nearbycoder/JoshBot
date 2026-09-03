@@ -160,7 +160,7 @@ test("channel text model override does not affect image model", () => {
   }
 });
 
-test("unsupported channel text model override falls back to default", () => {
+test("channel text model accepts current non-chat OpenCode models", () => {
   const originalTextModel = process.env.OPENCODE_GO_MODEL;
   delete process.env.OPENCODE_GO_MODEL;
 
@@ -174,6 +174,19 @@ test("unsupported channel text model override falls back to default", () => {
           }
         ],
         "qwen3.7-max"
+      ),
+      "qwen3.7-max"
+    );
+
+    assert.equal(
+      __testing.selectSlackModel(
+        [
+          {
+            role: "user",
+            content: "Ignore a retired model"
+          }
+        ],
+        "qwen3.5-plus"
       ),
       "kimi-k3"
     );

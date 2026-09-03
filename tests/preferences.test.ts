@@ -35,7 +35,14 @@ test("channel preferences normalize model ids", () => {
 
   assert.deepEqual(
     __testing.normalizeChannelPreferences({
-      modelId: "qwen3.7-max"
+      modelId: "opencode-go/Qwen3.8-Max"
+    }),
+    { modelId: "qwen3.8-max" }
+  );
+
+  assert.deepEqual(
+    __testing.normalizeChannelPreferences({
+      modelId: "qwen3.5-plus"
     }),
     { modelId: null }
   );

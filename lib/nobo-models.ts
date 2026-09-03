@@ -3,6 +3,11 @@ export type OpenCodeGoModel = {
   name: string;
 };
 
+export type OpenCodeGoApi =
+  | "anthropic-messages"
+  | "openai-completions"
+  | "openai-responses";
+
 export const OPENCODE_GO_PROVIDER = "opencode-go";
 export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
 export const DEFAULT_SLACK_TEXT_MODEL = "kimi-k3";
@@ -12,36 +17,52 @@ export const FALLBACK_SLACK_VISION_MODEL = "kimi-k3";
 const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/models`;
 const MODEL_CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,74}$/;
-const OPENAI_COMPAT_UNSUPPORTED_MODEL_IDS = new Set(["qwen3.7-max"]);
 
-const MODEL_LABELS = new Map([
-  ["minimax-m3", "MiniMax M3"],
-  ["minimax-m2.7", "MiniMax M2.7"],
-  ["minimax-m2.5", "MiniMax M2.5"],
-  ["kimi-k3", "Kimi K3"],
-  ["kimi-k2.7-code", "Kimi K2.7 Code"],
-  ["kimi-k2.6", "Kimi K2.6"],
-  ["kimi-k2.5", "Kimi K2.5"],
-  ["glm-5.2", "GLM-5.2"],
-  ["glm-5.1", "GLM-5.1"],
-  ["glm-5", "GLM-5"],
-  ["deepseek-v4-pro", "DeepSeek V4 Pro"],
-  ["deepseek-v4-flash", "DeepSeek V4 Flash"],
-  ["qwen3.7-max", "Qwen3.7 Max"],
-  ["qwen3.7-plus", "Qwen3.7 Plus"],
-  ["qwen3.6-plus", "Qwen3.6 Plus"],
-  ["qwen3.5-plus", "Qwen3.5 Plus"],
-  ["mimo-v2-pro", "MiMo V2 Pro"],
-  ["mimo-v2-omni", "MiMo V2 Omni"],
-  ["mimo-v2.5-pro", "MiMo V2.5 Pro"],
-  ["mimo-v2.5", "MiMo V2.5"],
-  ["hy3-preview", "HY3 Preview"],
-  ["grok-4.5", "Grok 4.5"]
+const MODEL_DEFINITIONS = new Map<
+  string,
+  { name: string; api: OpenCodeGoApi }
+>([
+  ["grok-4.6", { name: "Grok 4.6", api: "openai-responses" }],
+  ["glm-5.3-flash", { name: "GLM-5.3-Flash", api: "openai-completions" }],
+  ["glm-5.3", { name: "GLM-5.3", api: "openai-completions" }],
+  ["glm-5.2", { name: "GLM-5.2", api: "openai-completions" }],
+  ["glm-5.1", { name: "GLM-5.1", api: "openai-completions" }],
+  ["gpt-5.6-luna", { name: "GPT 5.6 Luna", api: "openai-responses" }],
+  ["kimi-k3", { name: "Kimi K3", api: "openai-completions" }],
+  ["kimi-k2.7-code", { name: "Kimi K2.7 Code", api: "openai-completions" }],
+  ["kimi-k2.6", { name: "Kimi K2.6", api: "openai-completions" }],
+  ["longcat-2.0", { name: "LongCat-2.0", api: "openai-completions" }],
+  ["mimo-v2.5", { name: "MiMo-V2.5", api: "openai-completions" }],
+  ["mimo-v2.5-pro", { name: "MiMo-V2.5-Pro", api: "openai-completions" }],
+  ["minimax-m3", { name: "MiniMax M3", api: "anthropic-messages" }],
+  ["minimax-m2.7", { name: "MiniMax M2.7", api: "anthropic-messages" }],
+  [
+    "muse-spark-1.3-contributor",
+    { name: "Muse Spark 1.3 Contributor", api: "openai-responses" }
+  ],
+  [
+    "muse-spark-1.2-contributor",
+    { name: "Muse Spark 1.2 Contributor", api: "openai-responses" }
+  ],
+  ["qwen3.8-max", { name: "Qwen3.8 Max", api: "anthropic-messages" }],
+  ["qwen3.8-flash", { name: "Qwen3.8 Flash", api: "anthropic-messages" }],
+  ["qwen3.7-max", { name: "Qwen3.7 Max", api: "anthropic-messages" }],
+  ["qwen3.7-plus", { name: "Qwen3.7 Plus", api: "anthropic-messages" }],
+  ["qwen3.6-plus", { name: "Qwen3.6 Plus", api: "anthropic-messages" }],
+  ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", api: "openai-completions" }],
+  ["deepseek-v4-flash", { name: "DeepSeek V4 Flash", api: "openai-completions" }],
+  [
+    "deepseek-v4-flash-vision-exp",
+    { name: "DeepSeek V4 Flash Vision Exp", api: "openai-completions" }
+  ],
+  ["hy4-preview", { name: "Hy4 preview", api: "openai-completions" }],
+  ["hy3", { name: "Hy3", api: "openai-completions" }]
 ]);
 
-const FALLBACK_OPENCODE_GO_MODELS: OpenCodeGoModel[] = Array.from(MODEL_LABELS)
-  .filter(([id]) => isOpenCodeGoOaCompatibleModelId(id))
-  .map(([id, name]) => ({ id, name }));
+const FALLBACK_OPENCODE_GO_MODELS: OpenCodeGoModel[] = Array.from(
+  MODEL_DEFINITIONS,
+  ([id, { name }]) => ({ id, name })
+);
 
 let modelCache:
   | {
@@ -92,26 +113,27 @@ export function normalizeOpenCodeGoModelId(input: string | undefined | null) {
   return MODEL_ID_PATTERN.test(withoutProvider) ? withoutProvider : null;
 }
 
-export function normalizeOpenCodeGoOaCompatibleModelId(input: string | undefined | null) {
+export function normalizeOpenCodeGoSupportedModelId(input: string | undefined | null) {
   const modelId = normalizeOpenCodeGoModelId(input);
-  return modelId && isOpenCodeGoOaCompatibleModelId(modelId) ? modelId : null;
+  return modelId && MODEL_DEFINITIONS.has(modelId) ? modelId : null;
 }
 
-export function isOpenCodeGoOaCompatibleModelId(modelId: string) {
-  return !OPENAI_COMPAT_UNSUPPORTED_MODEL_IDS.has(modelId);
+export function getOpenCodeGoModelApi(modelId: string) {
+  const normalized = normalizeOpenCodeGoSupportedModelId(modelId);
+  return normalized ? MODEL_DEFINITIONS.get(normalized)?.api ?? null : null;
 }
 
 export function getDefaultSlackTextModel() {
-  return normalizeOpenCodeGoOaCompatibleModelId(process.env.OPENCODE_GO_MODEL) ?? DEFAULT_SLACK_TEXT_MODEL;
+  return normalizeOpenCodeGoSupportedModelId(process.env.OPENCODE_GO_MODEL) ?? DEFAULT_SLACK_TEXT_MODEL;
 }
 
 export function getDefaultSlackVisionModel() {
-  return normalizeOpenCodeGoOaCompatibleModelId(process.env.OPENCODE_GO_VISION_MODEL) ?? DEFAULT_SLACK_VISION_MODEL;
+  return normalizeOpenCodeGoSupportedModelId(process.env.OPENCODE_GO_VISION_MODEL) ?? DEFAULT_SLACK_VISION_MODEL;
 }
 
 export function formatOpenCodeGoModelName(modelId: string) {
   const normalized = normalizeOpenCodeGoModelId(modelId) ?? modelId;
-  return MODEL_LABELS.get(normalized) ?? titleizeModelId(normalized);
+  return MODEL_DEFINITIONS.get(normalized)?.name ?? titleizeModelId(normalized);
 }
 
 async function fetchOpenCodeGoModels() {
@@ -141,7 +163,7 @@ function normalizeModelList(input: unknown) {
   const models: OpenCodeGoModel[] = [];
 
   for (const item of data) {
-    const id = normalizeOpenCodeGoOaCompatibleModelId(
+    const id = normalizeOpenCodeGoSupportedModelId(
       isRecord(item) ? getString(item.id) : null
     );
 

@@ -383,7 +383,7 @@ NoBo also persists per-channel preferences in Redis at `slack-preferences:channe
 - `/nobo-channel-model <model-id>`
 - `/nobo-channel-model reset`
 
-The selector loads OpenCode Go models from `https://opencode.ai/zen/go/v1/models` and falls back to the built-in model list if discovery fails. Channel model choices only affect text requests; image-bearing messages continue using `OPENCODE_GO_VISION_MODEL`.
+The selector loads the current supported OpenCode Go catalog from `https://opencode.ai/zen/go/v1/models` and falls back to the built-in model list if discovery fails. Models are routed through their documented Chat Completions, Anthropic Messages, or OpenAI Responses endpoint. Channel model choices only affect text requests; image-bearing messages continue using `OPENCODE_GO_VISION_MODEL`.
 
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
