@@ -134,7 +134,7 @@ test("streams generated replies through Slack native agent sessions", async (t) 
           return streamTs;
         },
         async append({ markdown_text }) {
-          appended.push(markdown_text);
+          if (markdown_text) appended.push(markdown_text);
           streamTs = "2000.000";
         },
         async stop(input) {

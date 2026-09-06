@@ -8,6 +8,8 @@ import {
 } from "../lib/slack-commands.js";
 import { handleSlackEventCallbackPayload, type SlackEventCallbackPayload } from "../lib/slack-events.js";
 import { formatSlackSlashCommandMemory, recordSlackSlashCommandExchange, runSlackSlashCommandTask } from "./slack-tasks.js";
+import { registerSlackAgentEvents, buildSlackActiveContextHint } from "./slack-agent-events.js";
+import { withSlackAgentRun, SlackAgentStoppedError } from "../lib/slack-agent-runs.js";
 
 export const SLACK_ENDPOINTS = ["/api/slack/events", "/api/slack/commands", "/api/slack/interactions", "/slack/events"];
 const defaultHandlers = {
@@ -51,9 +53,24 @@ export function createSlackBolt(options: {
   });
   for (const type of ["app_mention", "message", "app_home_opened", "reaction_added"] as const) {
     bolt.event(type, async ({ body }) => {
-      await handlers.event(body as unknown as SlackEventCallbackPayload);
+      const payload = body as unknown as SlackEventCallbackPayload;
+      const { event } = payload;
+      if ((event.type === "app_mention" || event.type === "message") && payload.team_id &&
+          typeof event.channel === "string" && typeof event.user === "string" && typeof event.ts === "string") {
+        const hint = event.channel_type === "im"
+          ? await buildSlackActiveContextHint(event.app_context, payload.team_id, event.user) : undefined;
+        try {
+          await withSlackAgentRun({
+            teamId: payload.team_id, channelId: event.channel, userId: event.user,
+            threadTs: typeof event.thread_ts === "string" ? event.thread_ts : event.ts
+          }, () => handlers.event(payload), hint);
+        } catch (error) {
+          if (!(error instanceof SlackAgentStoppedError)) throw error;
+        }
+      } else await handlers.event(payload);
     });
   }
+  registerSlackAgentEvents(bolt);
   bolt.command(/^\/nobo(?:-|$)/, async ({ command, ack, respond, client }) => {
     // Slow model lists/background jobs must not hold Slack's three-second acknowledgement.
     await ack();
