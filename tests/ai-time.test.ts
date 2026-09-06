@@ -272,6 +272,133 @@ test("data-policy failures fall back to Kimi without changing normal text failur
   );
 });
 
+test("shared agent execution applies data-policy fallback to every Flue model call", async () => {
+  const calls: Array<{
+    modelId: string;
+    toolMode: string;
+    streams: boolean;
+    prompt: string;
+  }> = [];
+  const policyError = new AgentRunError({
+    outcome: "failed",
+    submissionId: "sub_policy",
+    cause: {
+      type: "operation_failed",
+      meta: {
+        reason:
+          'OpenAI API error (403): {"type":"DataPolicyError","message":"This model requires explicit opt in"}'
+      }
+    }
+  });
+  const result = await __testing.runNoboAgentPromptWithFallback(
+    {
+      prompt: "Classify this Slack thread.",
+      modelId: "muse-spark-1.3-contributor",
+      toolMode: "none",
+      onTextDelta: () => {}
+    },
+    async (options) => {
+      calls.push({
+        modelId: options.modelId,
+        toolMode: options.toolMode,
+        streams: Boolean(options.onTextDelta),
+        prompt: options.prompt
+      });
+
+      if (calls.length === 1) {
+        throw policyError;
+      }
+
+      return "RESPOND";
+    }
+  );
+
+  assert.equal(result, "RESPOND");
+  assert.deepEqual(
+    calls.map(({ modelId, toolMode, streams }) => ({ modelId, toolMode, streams })),
+    [
+      {
+        modelId: "muse-spark-1.3-contributor",
+        toolMode: "none",
+        streams: true
+      },
+      { modelId: "kimi-k3", toolMode: "none", streams: false }
+    ]
+  );
+});
+
+test("tool-enabled policy fallback recovers from OpenCode invalid parameters", async () => {
+  const calls: Array<{
+    modelId: string;
+    toolMode: string;
+    streams: boolean;
+    prompt: string;
+  }> = [];
+  const policyError = new AgentRunError({
+    outcome: "failed",
+    submissionId: "sub_policy",
+    cause: {
+      type: "operation_failed",
+      meta: {
+        reason:
+          'OpenAI API error (403): {"type":"DataPolicyError","message":"This model requires explicit opt in"}'
+      }
+    }
+  });
+  const invalidRequestError = new AgentRunError({
+    outcome: "failed",
+    submissionId: "sub_invalid",
+    cause: {
+      type: "operation_failed",
+      meta: {
+        reason:
+          '400: {"type":"server_error","message":"Upstream request failed: Invalid request parameters. Please check your input and try again."}'
+      }
+    }
+  });
+  const result = await __testing.runNoboAgentPromptWithFallback(
+    {
+      prompt: "Use a tool if needed.",
+      modelId: "muse-spark-1.3-contributor",
+      toolMode: "slack",
+      onTextDelta: () => {}
+    },
+    async (options) => {
+      calls.push({
+        modelId: options.modelId,
+        toolMode: options.toolMode,
+        streams: Boolean(options.onTextDelta),
+        prompt: options.prompt
+      });
+
+      if (calls.length === 1) {
+        throw policyError;
+      }
+
+      if (calls.length === 2) {
+        throw invalidRequestError;
+      }
+
+      return "Safe fallback response";
+    }
+  );
+
+  assert.equal(result, "Safe fallback response");
+  assert.deepEqual(
+    calls.map(({ modelId, toolMode, streams }) => ({ modelId, toolMode, streams })),
+    [
+      {
+        modelId: "muse-spark-1.3-contributor",
+        toolMode: "slack",
+        streams: true
+      },
+      { modelId: "kimi-k3", toolMode: "slack", streams: false },
+      { modelId: "kimi-k3", toolMode: "none", streams: false }
+    ]
+  );
+  assert.match(calls[2]?.prompt ?? "", /tools are temporarily unavailable/);
+});
+
 test("channel text model accepts current non-chat OpenCode models", () => {
   const originalTextModel = process.env.OPENCODE_GO_MODEL;
   delete process.env.OPENCODE_GO_MODEL;

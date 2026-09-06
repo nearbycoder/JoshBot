@@ -489,15 +489,7 @@ Conversation:
 ${promptMessages.text}`;
 }
 
-async function runNoboAgentPrompt({
-  prompt,
-  images = [],
-  modelId,
-  toolMode,
-  scheduleContext,
-  ownerUserId,
-  onTextDelta
-}: {
+type NoboAgentPromptOptions = {
   prompt: string;
   images?: PromptImage[];
   modelId: string;
@@ -505,7 +497,75 @@ async function runNoboAgentPrompt({
   scheduleContext?: SlackScheduleContext;
   ownerUserId?: string;
   onTextDelta?: (delta: string) => void | Promise<void>;
-}) {
+};
+
+type NoboAgentPromptExecutor = (
+  options: NoboAgentPromptOptions
+) => Promise<string>;
+
+async function runNoboAgentPrompt(options: NoboAgentPromptOptions) {
+  return runNoboAgentPromptWithFallback(options, executeNoboAgentPrompt);
+}
+
+async function runNoboAgentPromptWithFallback(
+  options: NoboAgentPromptOptions,
+  execute: NoboAgentPromptExecutor
+) {
+  try {
+    return await execute(options);
+  } catch (error) {
+    const fallback = selectSlackModelFailureFallback(
+      error,
+      options.modelId,
+      (options.images?.length ?? 0) > 0
+    );
+
+    if (fallback?.reason !== "data-policy") {
+      throw error;
+    }
+
+    console.warn(
+      `Model ${options.modelId} requires OpenCode data-training opt-in; retrying with ${fallback.modelId}: ${summarizeDeltaError(error)}`
+    );
+    const fallbackOptions: NoboAgentPromptOptions = {
+      ...options,
+      modelId: fallback.modelId,
+      // Buffer policy fallbacks until they complete so a compatibility retry
+      // cannot duplicate partially streamed text in Slack.
+      onTextDelta: undefined
+    };
+
+    try {
+      return await execute(fallbackOptions);
+    } catch (fallbackError) {
+      if (
+        options.toolMode !== "slack" ||
+        !isOpenCodeGoInvalidRequestError(fallbackError)
+      ) {
+        throw fallbackError;
+      }
+
+      console.warn(
+        `Model ${fallback.modelId} rejected the tool-enabled policy fallback; retrying without tools: ${summarizeDeltaError(fallbackError)}`
+      );
+      return execute({
+        ...fallbackOptions,
+        prompt: `${fallbackOptions.prompt}\n\nFallback constraint: tools are temporarily unavailable for this response. Answer only from the supplied conversation and context, and be transparent when current external information cannot be verified.`,
+        toolMode: "none"
+      });
+    }
+  }
+}
+
+async function executeNoboAgentPrompt({
+  prompt,
+  images = [],
+  modelId,
+  toolMode,
+  scheduleContext,
+  ownerUserId,
+  onTextDelta
+}: NoboAgentPromptOptions) {
   if (!process.env.OPENCODE_GO_API_KEY) {
     throw new Error("Missing required environment variable: OPENCODE_GO_API_KEY");
   }
@@ -578,6 +638,12 @@ function selectSlackModelFailureFallback(
 
 function isOpenCodeGoDataPolicyError(error: unknown) {
   return /\bDataPolicyError\b|requires explicit opt[ -]?in/i.test(
+    collectErrorSearchText(error)
+  );
+}
+
+function isOpenCodeGoInvalidRequestError(error: unknown) {
+  return /\b400\b[\s\S]*\binvalid request parameters\b/i.test(
     collectErrorSearchText(error)
   );
 }
@@ -762,6 +828,7 @@ export const __testing = {
   formatCurrentTimePrompt,
   formatChannelMemoryPrompt,
   normalizeSlackMrkdwn,
+  runNoboAgentPromptWithFallback,
   selectSlackModel: selectSlackModelForMessages,
   selectSlackModelFailureFallback
 };
