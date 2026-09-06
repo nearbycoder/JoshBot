@@ -3,6 +3,7 @@ import AdmZip from "adm-zip";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WebClient } from "@slack/web-api";
 import { getSlackAgentRun, throwIfSlackAgentStopped, type AgentTaskUpdate } from "./slack-agent-runs.js";
+import { buildResponseFooter } from "./slack-response-cards.js";
 import { listRecentArtifacts, type RecentArtifact } from "./artifacts.js";
 import {
   chooseSlackActiveListeningResponse,
@@ -119,8 +120,8 @@ type SlackReplyPost = {
 type SlackReplyStreamer = {
   start: () => Promise<void>;
   append: (delta: string) => Promise<void>;
-  finish: (finalText: string) => Promise<SlackReplyPost>;
-  fail: (notice?: string) => Promise<void>;
+  finish: (finalText: string, footer?: SlackBlock[]) => Promise<SlackReplyPost>;
+  fail: (notice?: string, footer?: SlackBlock[]) => Promise<void>;
 };
 
 type SlackNativeAiTarget = {
@@ -133,7 +134,7 @@ type SlackNativeAiTarget = {
 type SlackNativeChatStream = {
   readonly ts: string | undefined;
   append: (input: { markdown_text?: string; chunks?: AgentTaskUpdate[] }) => Promise<unknown>;
-  stop: (input?: { session_status?: string }) => Promise<{ ts?: string }>;
+  stop: (input?: { session_status?: string; blocks?: SlackBlock[] }) => Promise<{ ts?: string }>;
 };
 
 type SlackNativeAiClient = {
@@ -154,6 +155,7 @@ type SlackNativeAiClient = {
     recipient_team_id: string;
     recipient_user_id: string;
     buffer_size: number;
+    task_display_mode?: "plan" | "timeline";
   }) => SlackNativeChatStream;
 };
 
@@ -1819,6 +1821,11 @@ function createSlackReplyStreamer({
   threadTs?: string;
   nativeAi?: SlackNativeAiTarget;
 }): SlackReplyStreamer {
+  const activeRun = getSlackAgentRun();
+  nativeAi ??= activeRun ? {
+    threadTs: activeRun.threadTs, teamId: activeRun.teamId, userId: activeRun.userId,
+    title: getSlackAgentSessionTitle(activeRun.widget.prompt ?? "NoBo conversation")
+  } : undefined;
   const legacy = createLegacySlackReplyStreamer({ token, channel, threadTs });
   let implementationPromise: Promise<SlackReplyStreamer> | null = null;
   const getImplementation = () => {
@@ -1844,7 +1851,11 @@ function createSlackReplyStreamer({
       throwIfSlackAgentStopped();
       const run = getSlackAgentRun();
       if (run) run.progress = undefined;
-      return (await getImplementation()).finish(finalText);
+      const footer = await buildResponseFooter(finalText).catch((error) => {
+        console.warn("Unable to prepare response controls:", summarizeError(error));
+        return [];
+      });
+      return (await getImplementation()).finish(finalText, footer);
     },
     async fail(notice?: string) {
       const run = getSlackAgentRun();
@@ -1852,7 +1863,9 @@ function createSlackReplyStreamer({
       // Slack has already stopped native streams. Never overwrite a stopped reply
       // with an error or start a legacy fallback stream after cancellation.
       if (getSlackAgentRun()?.controller.signal.aborted) return;
-      await (await getImplementation()).fail(notice);
+      const failure = notice ?? run?.failureNotice ?? STREAM_FAILURE_NOTICE;
+      const footer = await buildResponseFooter(failure, true).catch(() => []);
+      await (await getImplementation()).fail(failure, footer);
     }
   };
 }
@@ -1905,7 +1918,8 @@ async function createNativeSlackReplyStreamer({
       thread_ts: nativeAi.threadTs,
       recipient_team_id: nativeAi.teamId,
       recipient_user_id: nativeAi.userId,
-      buffer_size: getSlackStreamBufferSize()
+      buffer_size: getSlackStreamBufferSize(),
+      task_display_mode: process.env.SLACK_TASK_DISPLAY_MODE === "timeline" ? "timeline" : "plan"
     });
   } catch (error) {
     await safelySetSlackAgentSessionActive(setSessionStatus);
@@ -1939,14 +1953,14 @@ async function createNativeSlackReplyStreamer({
     }
   };
 
-  const finishBrokenNativeStream = async (finalText: string, ts: string) => {
+  const finishBrokenNativeStream = async (finalText: string, ts: string, footer: SlackBlock[] = []) => {
     try {
       await updateSlackMessage({
         token,
         channel,
         ts,
         text: finalText,
-        blocks: createSlackTextBlocks(finalText)
+        blocks: [...createSlackTextBlocks(finalText), ...footer].slice(0, 50)
       });
     } catch (error) {
       console.warn(
@@ -1993,13 +2007,13 @@ async function createNativeSlackReplyStreamer({
         );
       }
     },
-    async finish(finalText: string) {
+    async finish(finalText: string, footer: SlackBlock[] = []) {
       if (usingLegacy) {
-        return legacy.finish(finalText);
+        return legacy.finish(finalText, footer);
       }
 
       if (nativeStreamBroken && stream.ts) {
-        return finishBrokenNativeStream(finalText, stream.ts);
+        return finishBrokenNativeStream(finalText, stream.ts, footer);
       }
 
       try {
@@ -2007,7 +2021,7 @@ async function createNativeSlackReplyStreamer({
           await stream.append({ markdown_text: finalText });
         }
 
-        const response = await stream.stop({ session_status: "active" });
+        const response = await stream.stop({ session_status: "active", ...(footer.length ? { blocks: footer } : {}) });
         const ts = response.ts ?? stream.ts;
 
         if (!ts) {
@@ -2020,19 +2034,19 @@ async function createNativeSlackReplyStreamer({
           console.warn(
             `Unable to stop Slack native reply stream; finalizing with chat.update: ${summarizeError(error)}`
           );
-          return finishBrokenNativeStream(finalText, stream.ts);
+          return finishBrokenNativeStream(finalText, stream.ts, footer);
         }
 
         console.warn(
           `Slack native reply stream failed before posting; sending a legacy reply: ${summarizeError(error)}`
         );
         await safelySetSlackAgentSessionActive(setSessionStatus);
-        return legacy.finish(finalText);
+        return legacy.finish(finalText, footer);
       }
     },
-    async fail(notice = STREAM_FAILURE_NOTICE) {
+    async fail(notice = STREAM_FAILURE_NOTICE, footer: SlackBlock[] = []) {
       if (usingLegacy) {
-        await legacy.fail(notice);
+        await legacy.fail(notice, footer);
         return;
       }
 
@@ -2041,7 +2055,7 @@ async function createNativeSlackReplyStreamer({
       if (!ts) {
         await safelySetSlackAgentSessionActive(setSessionStatus);
         await legacy.start();
-        await legacy.fail(notice);
+        await legacy.fail(notice, footer);
         return;
       }
 
@@ -2051,7 +2065,7 @@ async function createNativeSlackReplyStreamer({
         console.warn(`Unable to stop failed Slack native reply stream: ${summarizeError(error)}`);
       }
 
-      await finishBrokenNativeStream(notice, ts);
+      await finishBrokenNativeStream(notice, ts, footer);
     }
   };
 }
@@ -2151,12 +2165,13 @@ function createLegacySlackReplyStreamer({
   let hasPostedModelText = false;
   let failed = false;
 
-  const postFinalMessage = (finalText: string) =>
+  const postFinalMessage = (finalText: string, footer: SlackBlock[] = []) =>
     postSlackMessage({
       token,
       channel,
       threadTs,
-      text: finalText
+      text: finalText,
+      blocks: [...createSlackTextBlocks(finalText), ...footer].slice(0, 50)
     });
 
   const updateStartedReply = async (text: string, force = false) => {
@@ -2269,7 +2284,7 @@ function createLegacySlackReplyStreamer({
     return startPromise;
   };
 
-  const finalizeStartedReply = async (finalText: string, ts: string) => {
+  const finalizeStartedReply = async (finalText: string, ts: string, footer: SlackBlock[] = []) => {
     try {
       stopListeningAnimation();
       await updatePromise;
@@ -2278,7 +2293,7 @@ function createLegacySlackReplyStreamer({
         channel,
         ts,
         text: finalText,
-        blocks: createSlackTextBlocks(finalText)
+        blocks: [...createSlackTextBlocks(finalText), ...footer].slice(0, 50)
       });
       postedText = finalText;
     } catch (error) {
@@ -2306,21 +2321,21 @@ function createLegacySlackReplyStreamer({
 
       await updateStartedReply(streamedText);
     },
-    async finish(finalText: string) {
+    async finish(finalText: string, footer: SlackBlock[] = []) {
       if (!messageTs && !startPromise) {
-        return postFinalMessage(finalText);
+        return postFinalMessage(finalText, footer);
       }
 
       await startReply();
       await updatePromise;
 
       if (messageTs) {
-        return finalizeStartedReply(finalText, messageTs);
+        return finalizeStartedReply(finalText, messageTs, footer);
       }
 
-      return postFinalMessage(finalText);
+      return postFinalMessage(finalText, footer);
     },
-    async fail(notice = STREAM_FAILURE_NOTICE) {
+    async fail(notice = STREAM_FAILURE_NOTICE, footer: SlackBlock[] = []) {
       stopListeningAnimation();
 
       if (!messageTs && !startPromise) {
@@ -2331,7 +2346,7 @@ function createLegacySlackReplyStreamer({
       await updatePromise;
 
       if (messageTs) {
-        await finalizeStartedReply(notice, messageTs);
+        await finalizeStartedReply(notice, messageTs, footer);
       }
     }
   };

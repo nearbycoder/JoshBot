@@ -188,7 +188,8 @@ test("streams generated replies through Slack native agent sessions", async (t) 
       thread_ts: "1000.000",
       recipient_team_id: "T123",
       recipient_user_id: "U123",
-      buffer_size: 128
+      buffer_size: 128,
+      task_display_mode: "plan"
     }
   ]);
   assert.deepEqual(appended, ["Hello ", "world"]);

@@ -69,7 +69,7 @@ export function createSlackBolt(options: {
         try {
           await withSlackAgentRun({
             teamId: payload.team_id, channelId, userId: event.user, threadTs
-          }, () => handlers.event(payload), hint);
+          }, () => handlers.event(payload), hint, typeof event.text === "string" ? event.text : undefined);
         } catch (error) {
           if (!(error instanceof SlackAgentStoppedError)) throw error;
         }

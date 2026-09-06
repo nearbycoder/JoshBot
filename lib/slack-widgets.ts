@@ -29,6 +29,11 @@ export type WidgetStore = {
   set(key: string, value: string, options: { EX: number; NX?: boolean }): Promise<string | null>;
 };
 export const WIDGET_TTL_SECONDS = 86_400;
+export function widgetContent(record: WidgetRecord) {
+  return [record.text, ...(record.sections ?? []).map((s) => `## ${s.title}\n${s.text}`),
+    ...(record.sources?.length ? ["## Sources\n" + record.sources.map((s) => `- ${s.title}: ${s.url}`).join("\n")] : [])
+  ].join("\n\n").slice(0, 32000);
+}
 const prefix = "nobo:widget:v1:";
 const validId = (id: string) => /^[a-f0-9-]{36}$/.test(id);
 export async function widgetStore(): Promise<WidgetStore | null> {
@@ -138,14 +143,15 @@ export function renderWidget(record: WidgetRecord, includeText = true): WidgetBl
     ] });
     return blocks;
   }
-  if (!record.schedule) blocks.push({ type: "actions", elements: [
+  const substantial = record.kind !== "answer" || record.text.length > 280;
+  if (!record.schedule && substantial) blocks.push({ type: "actions", elements: [
     widgetButton("Save as note", "save", record.id),
     widgetButton("Make shorter", "shorter", record.id),
     widgetButton("Dig deeper", "deeper", record.id),
     widgetButton("Compare alternatives", "compare", record.id),
     widgetButton("Turn into tasks", "tasks", record.id)
   ] });
-  blocks.push({ type: "actions", elements: [
+  if (substantial) blocks.push({ type: "actions", elements: [
     widgetButton("Post elsewhere", "share", record.id),
     widgetButton("Create issues", "issues", record.id)
   ] });

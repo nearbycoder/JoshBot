@@ -1,5 +1,6 @@
 import { defineTool as defineFlueTool } from "@flue/runtime";
 import { Exa } from "exa-js";
+import { WebClient } from "@slack/web-api";
 import * as v from "valibot";
 import {
   createArtifact,
@@ -168,6 +169,7 @@ export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUse
   const artifactOwnerUserId = scheduleContext?.ownerUserId ?? ownerUserId;
 
   return [
+    createPresentationTool(),
     ...(process.env.EXA_API_KEY ? [createExaSearchTool()] : []),
     createCurrentTimeTool(scheduleContext?.timeZone),
     createArtifactTool(artifactOwnerUserId),
@@ -180,6 +182,21 @@ export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUse
     createCleanupExpiredArtifactsTool(artifactOwnerUserId),
     ...(scheduleContext ? createSlackContextTools(scheduleContext) : [])
   ];
+}
+
+function createPresentationTool() {
+  return defineTool({
+    name: "present_result",
+    description: "Prepare concise Slack result sections for research or catch-up. Cite only verified sources. This is presentation, not task creation or approval.",
+    parameters: v.object({
+      kind: v.picklist(["research", "catchup"]),
+      sections: v.pipe(v.array(v.object({
+        title: v.pipe(v.string(), v.minLength(1), v.maxLength(80)),
+        text: v.pipe(v.string(), v.minLength(1), v.maxLength(2400))
+      })), v.minLength(1), v.maxLength(3))
+    }),
+    execute: (args) => JSON.stringify(args)
+  });
 }
 
 function createCurrentTimeTool(defaultTimeZone = "America/Chicago") {
@@ -574,11 +591,20 @@ function createSlackChannelHistoryTool(scheduleContext: SlackScheduleContext) {
         limit: Math.min(parsedLimit, 250)
       });
 
+      const client = new WebClient(process.env.SLACK_BOT_TOKEN, { timeout: 3000, retryConfig: { retries: 0 } });
+      const links = new Map<string, string>();
+      await Promise.all(messages.slice(-5).map(async (message) => {
+        try {
+          const link = await client.chat.getPermalink({ channel: targetChannel.id, message_ts: message.ts });
+          if (link.permalink) links.set(message.ts, link.permalink);
+        } catch { /* Source lookup must not discard otherwise-readable history. */ }
+      }));
+
       return JSON.stringify({
         channel: targetChannel,
         days: parsedDays,
         messageCount: messages.length,
-        messages
+        messages: messages.map((message) => ({ ...message, permalink: links.get(message.ts) }))
       });
     }
   });

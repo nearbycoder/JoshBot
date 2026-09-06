@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { SlackScheduleContext } from "./schedules.js";
 
-export type NoboAgentToolMode = "slack" | "none";
+export type NoboAgentToolMode = "slack" | "read" | "none";
 
 export type NoboAgentContext = {
   nonce: string;
@@ -33,7 +33,7 @@ export function decodeNoboAgentContext(encoded: string): NoboAgentContext {
     !parsed ||
     typeof parsed.nonce !== "string" ||
     typeof parsed.modelId !== "string" ||
-    (parsed.toolMode !== "slack" && parsed.toolMode !== "none")
+    (parsed.toolMode !== "slack" && parsed.toolMode !== "read" && parsed.toolMode !== "none")
   ) {
     throw new Error("Invalid NoBo agent context.");
   }

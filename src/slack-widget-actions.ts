@@ -1,6 +1,8 @@
 import type { App } from "@slack/bolt";
+import type { ChatPostMessageArguments } from "@slack/web-api";
 import { loadWidget, plain, saveWidgetFeedback } from "../lib/slack-widgets.js";
 import { recordOpsError, summarizeOpsError } from "../lib/ops-errors.js";
+import { performWidgetAction } from "../lib/slack-widget-workflows.js";
 
 export function registerSlackWidgetActions(bolt: App) {
   bolt.action(/^nobo_widget_/, async ({ ack, body, action, client }) => {
@@ -35,7 +37,15 @@ export function registerSlackWidgetActions(bolt: App) {
             ]
           }
         });
-      } else await tell("This action is not available yet.");
+      } else await performWidgetAction(record, action.action_id.replace("nobo_widget_", ""), {
+        tell,
+        reply: (text, blocks) => client.chat.postMessage({ channel: channelId, thread_ts: record.target.threadTs, text,
+          blocks } as unknown as ChatPostMessageArguments),
+        open: (view) => {
+          if (!("trigger_id" in body)) throw new Error("Reopen this action to continue.");
+          return client.views.open({ trigger_id: body.trigger_id, view });
+        }
+      });
     } catch (error) {
       recordOpsError("widget action", error);
       await tell(summarizeOpsError(error));
