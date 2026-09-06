@@ -1,4 +1,5 @@
 import { init, type PromptImage } from "@flue/runtime";
+import { createAgentTaskProjector, getSlackAgentRun, throwIfSlackAgentStopped } from "./slack-agent-runs.js";
 import Nobo from "../src/agents/nobo.js";
 import { encodeNoboAgentContext, type NoboAgentToolMode } from "./nobo-agent-context.js";
 import { type NoboModelMessage, modelMessagesToPrompt } from "./nobo-messages.js";
@@ -511,6 +512,7 @@ async function runNoboAgentPromptWithFallback(
   options: NoboAgentPromptOptions,
   execute: NoboAgentPromptExecutor
 ) {
+  throwIfSlackAgentStopped();
   try {
     return await execute(options);
   } catch (error) {
@@ -538,6 +540,7 @@ async function runNoboAgentPromptWithFallback(
     try {
       return await execute(fallbackOptions);
     } catch (fallbackError) {
+      throwIfSlackAgentStopped();
       if (
         options.toolMode !== "slack" ||
         !isOpenCodeGoInvalidRequestError(fallbackError)
@@ -566,6 +569,7 @@ async function executeNoboAgentPrompt({
   ownerUserId,
   onTextDelta
 }: NoboAgentPromptOptions) {
+  throwIfSlackAgentStopped();
   if (!process.env.OPENCODE_GO_API_KEY) {
     throw new Error("Missing required environment variable: OPENCODE_GO_API_KEY");
   }
@@ -580,15 +584,29 @@ async function executeNoboAgentPrompt({
   const receipt = await agent.dispatch({
     message: {
       kind: "user",
-      body: prompt,
+      body: [prompt, getSlackAgentRun()?.contextHint].filter(Boolean).join("\n\n"),
       ...(images.length > 0 ? { attachments: images } : {})
     }
   });
+  const run = getSlackAgentRun();
+  const cancel = () => agent.abort();
+  run?.cancellers.add(cancel);
   let pending = Promise.resolve();
+  const projectTask = createAgentTaskProjector();
 
   try {
+    // Stop may have arrived while dispatch was persisting the submission.
+    if (run?.controller.signal.aborted) await cancel();
+    throwIfSlackAgentStopped();
     const reply = await agent.read(receipt, {
       onEvent(chunk) {
+        if (run?.controller.signal.aborted) return;
+        const progress = projectTask(chunk);
+        if (progress && run?.progress) {
+          pending = pending.then(() => run.progress?.(progress)).catch((error) => {
+            console.warn("Unable to publish Slack task progress:", summarizeDeltaError(error));
+          });
+        }
         if (
           !onTextDelta ||
           chunk.type !== "message-delta" ||
@@ -604,8 +622,13 @@ async function executeNoboAgentPrompt({
     });
 
     await pending;
+    throwIfSlackAgentStopped();
     return reply.text;
+  } catch (error) {
+    throwIfSlackAgentStopped();
+    throw error;
   } finally {
+    run?.cancellers.delete(cancel);
     await pending;
   }
 }
@@ -619,6 +642,7 @@ function selectSlackModelFailureFallback(
   modelId: string,
   hasImages: boolean
 ) {
+  throwIfSlackAgentStopped();
   const fallbackModelId = hasImages
     ? FALLBACK_SLACK_VISION_MODEL
     : FALLBACK_SLACK_TEXT_MODEL;

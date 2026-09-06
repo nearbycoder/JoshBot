@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import AdmZip from "adm-zip";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WebClient } from "@slack/web-api";
+import { getSlackAgentRun, throwIfSlackAgentStopped, type AgentTaskUpdate } from "./slack-agent-runs.js";
 import { listRecentArtifacts, type RecentArtifact } from "./artifacts.js";
 import {
   chooseSlackActiveListeningResponse,
@@ -131,7 +132,7 @@ type SlackNativeAiTarget = {
 
 type SlackNativeChatStream = {
   readonly ts: string | undefined;
-  append: (input: { markdown_text: string }) => Promise<unknown>;
+  append: (input: { markdown_text?: string; chunks?: AgentTaskUpdate[] }) => Promise<unknown>;
   stop: (input?: { session_status?: string }) => Promise<{ ts?: string }>;
 };
 
@@ -1832,15 +1833,25 @@ function createSlackReplyStreamer({
 
   return {
     async start() {
+      throwIfSlackAgentStopped();
       await (await getImplementation()).start();
     },
     async append(delta: string) {
+      throwIfSlackAgentStopped();
       await (await getImplementation()).append(delta);
     },
     async finish(finalText: string) {
+      throwIfSlackAgentStopped();
+      const run = getSlackAgentRun();
+      if (run) run.progress = undefined;
       return (await getImplementation()).finish(finalText);
     },
     async fail(notice?: string) {
+      const run = getSlackAgentRun();
+      if (run) run.progress = undefined;
+      // Slack has already stopped native streams. Never overwrite a stopped reply
+      // with an error or start a legacy fallback stream after cancellation.
+      if (getSlackAgentRun()?.controller.signal.aborted) return;
       await (await getImplementation()).fail(notice);
     }
   };
@@ -1907,6 +1918,13 @@ async function createNativeSlackReplyStreamer({
   let streamedText = "";
   let usingLegacy = false;
   let nativeStreamBroken = false;
+  const run = getSlackAgentRun();
+  if (run) {
+    run.progress = async (update) => {
+      if (run.controller.signal.aborted || usingLegacy || nativeStreamBroken) return;
+      await stream.append({ chunks: [update] });
+    };
+  }
 
   const fallBackBeforeNativeStart = async (error: unknown) => {
     console.warn(
