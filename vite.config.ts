@@ -1,6 +1,8 @@
-import { flue } from "@flue/vite";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [flue()]
+  build: {
+    ssr: "server.ts",
+    rollupOptions: { output: { entryFileNames: "server.mjs" } }
+  }
 });
