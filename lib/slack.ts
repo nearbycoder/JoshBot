@@ -2097,6 +2097,7 @@ function markSlackNativeAiUnavailable(error: unknown) {
       "messages_tab_disabled",
       "method_deprecated",
       "missing_scope",
+      "not_authorized",
       "not_allowed_token_type",
       "unknown_method"
     ].includes(errorCode)

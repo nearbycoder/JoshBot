@@ -4,11 +4,16 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import { createSlackBolt } from "../src/slack-bolt.js";
+import { getSlackAgentRun, withSlackAgentRun } from "../lib/slack-agent-runs.js";
+import type { SlackInteractionResult } from "../lib/slack-commands.js";
 
 const secret = "test-signing-secret";
-async function fixture(handlers: Parameters<typeof createSlackBolt>[0]["handlers"] = {}) {
+async function fixture(
+  handlers: Parameters<typeof createSlackBolt>[0]["handlers"] = {},
+  clientOptions?: Parameters<typeof createSlackBolt>[0]["clientOptions"]
+) {
   const { bolt, receiver } = createSlackBolt({
-    signingSecret: secret, bodyLimit: 4096, handlers,
+    signingSecret: secret, bodyLimit: 4096, handlers, clientOptions,
     authorize: async () => ({ botToken: "xoxb-test", botId: "B_BOT", botUserId: "U_BOT" })
   });
   await bolt.init();
@@ -98,4 +103,63 @@ test("Bolt returns modal updates through view acknowledgement", async () => {
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { response_action: "update", view });
   } finally { await f.close(); }
+});
+
+test("Bolt dispatches model actions, shortcut modals, Agent prompts and Stop through official clients", async () => {
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  let nextCall: (() => void) | undefined;
+  const fakeApi = createServer(async (req, res) => {
+    let raw = ""; for await (const chunk of req) raw += chunk;
+    const body = req.headers["content-type"]?.includes("application/json")
+      ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
+    calls.push({ path: req.url!, body });
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: true }));
+    nextCall?.();
+  }).listen(0, "127.0.0.1");
+  await once(fakeApi, "listening");
+  const { port } = fakeApi.address() as { port: number };
+  const origin = `http://127.0.0.1:${port}`;
+  const f = await fixture({ interaction: async (payload): Promise<SlackInteractionResult> => payload.type === "shortcut"
+    ? { response: {}, modal: { triggerId: "trigger", view: { type: "modal", title: { type: "plain_text", text: "Prefs" }, blocks: [] } } }
+    : { response: { response_type: "ephemeral", text: "Model updated", mrkdwn: true, replace_original: true } }
+  }, { slackApiUrl: origin + "/api/", retryConfig: { retries: 0 } });
+  async function sendAndWait(path: string, body: object | string) {
+    const delivered = new Promise<void>((resolve) => { nextCall = resolve; });
+    assert.equal((await f.send(path, body)).status, 200);
+    await delivered;
+    nextCall = undefined;
+  }
+  const interaction = (payload: object) => new URLSearchParams({ payload: JSON.stringify({
+    team: { id: "T_TEST" }, user: { id: "U_TEST" }, ...payload
+  }) }).toString();
+  try {
+    await sendAndWait("/api/slack/interactions", interaction({
+      type: "block_actions", channel: { id: "C_TEST" }, response_url: origin + "/response",
+      actions: [{ type: "static_select", action_id: "nobo_channel_model", selected_option: { value: "kimi-k3" } }]
+    }));
+    assert.equal(calls.at(-1)?.path, "/response");
+    assert.equal(calls.at(-1)?.body.replace_original, true);
+    await sendAndWait("/api/slack/interactions", interaction({ type: "shortcut", callback_id: "nobo_prefs", trigger_id: "trigger" }));
+    assert.equal(calls.at(-1)?.path, "/api/views.open");
+    await sendAndWait("/api/slack/events", {
+      type: "event_callback", team_id: "T_TEST",
+      event: { type: "app_home_opened", tab: "messages", user: "U_TEST", channel: "D_TEST" }
+    });
+    assert.equal(calls.at(-1)?.path, "/api/assistant.threads.setSuggestedPrompts");
+    let cancelled = false;
+    await withSlackAgentRun({ teamId: "T_TEST", channelId: "D_TEST", threadTs: "1.1", userId: "U_TEST" }, async () => {
+      getSlackAgentRun()!.cancellers.add(async () => { cancelled = true; });
+      await sendAndWait("/api/slack/events", {
+        type: "event_callback", team_id: "T_TEST",
+        event: { type: "agent_session_stopped", channel: "D_TEST", thread_ts: "1.1", user: "U_TEST", streaming_message_ts: [], event_ts: "2.2" }
+      });
+      assert.equal(cancelled, true);
+      assert.equal(calls.at(-1)?.path, "/api/agents.sessions.setStatus");
+      assert.equal(calls.at(-1)?.body.status, "active");
+    });
+  } finally {
+    await f.close();
+    fakeApi.close(); fakeApi.closeAllConnections();
+  }
 });

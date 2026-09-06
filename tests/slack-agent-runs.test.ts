@@ -7,15 +7,15 @@ import { __testing as slack } from "../lib/slack.js";
 
 const target = { teamId: "T123", channelId: "D123", threadTs: "1.1", userId: "U123" };
 
-test("Stop is workspace/thread/user scoped and cancels registered model work", async () => {
+test("Stop is workspace/thread scoped and cancels registered model work", async () => {
   let cancelled = 0;
   await withSlackAgentRun(target, async () => {
     getSlackAgentRun()!.cancellers.add(async () => { cancelled++; });
     assert.equal(await stopSlackAgentRuns({ ...target, teamId: "T_OTHER" }), 0);
     assert.equal(await stopSlackAgentRuns({ ...target, threadTs: "2.2" }), 0);
-    assert.equal(await stopSlackAgentRuns({ ...target, userId: "U_OTHER" }), 0);
     assert.equal(cancelled, 0);
-    assert.equal(await stopSlackAgentRuns(target), 1);
+    // An authorized participant stops the session, not just their own model call.
+    assert.equal(await stopSlackAgentRuns({ ...target, userId: "U_OTHER" }), 1);
     assert.equal(cancelled, 1);
     assert.throws(throwIfSlackAgentStopped, SlackAgentStoppedError);
   });
