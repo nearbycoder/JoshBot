@@ -1,5 +1,8 @@
 import type { ThreadFollowUpDraft } from "./follow-ups.js";
 import type { SlackScheduleContext } from "./schedules.js";
+import { getSlackAgentRun } from "./slack-agent-runs.js";
+import { queueWidgetApproval } from "./slack-approvals.js";
+import { escapeSlack } from "./slack-widgets.js";
 
 export type IssueTarget = "github" | "linear";
 
@@ -40,6 +43,7 @@ export type IssueDraftOptions = {
   context?: SlackScheduleContext;
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
+  approved?: boolean;
 };
 
 type IssueProviderConfig = {
@@ -141,6 +145,18 @@ export async function handleIssueDrafts(
   }
 
   const env = options.env ?? process.env;
+  const run = getSlackAgentRun();
+  if (options.create && !options.approved && run) {
+    const destinations = getIssueDestinations(options.targets, env);
+    await queueWidgetApproval(run, { type: "issues", targets: options.targets, tasks: normalized,
+      context: options.context, destinations }, "Review issue creation",
+      options.targets.map((target) => `${target}: ${escapeSlack(destinations[target] ?? "")}`).join("\n") +
+      "\n\n" + options.targets.flatMap((target) => normalized.map((task) => {
+        const draft = buildIssueDraft(target, task, options.context, env);
+        return escapeSlack(draft.title + "\n" + draft.body);
+      })).join("\n\n"));
+    return "Issue creation is awaiting your approval in Slack. Nothing has been created yet.";
+  }
   const drafts = options.targets.flatMap((target) =>
     normalized.map((followUp) => buildIssueDraft(target, followUp, options.context, env))
   );
@@ -158,6 +174,12 @@ export async function handleIssueDrafts(
   });
 
   return formatIssueCreateResults(results, drafts);
+}
+
+export function getIssueDestinations(targets: IssueTarget[], env: NodeJS.ProcessEnv = process.env) {
+  return Object.fromEntries(targets.map((target) => [target, target === "github"
+    ? env.NOBO_GITHUB_REPOSITORY ?? env.GITHUB_REPOSITORY ?? "(GitHub repository not configured)"
+    : env.NOBO_LINEAR_TEAM_ID ?? env.LINEAR_TEAM_ID ?? "(Linear team not configured)"])) as Partial<Record<IssueTarget, string>>;
 }
 
 export function buildIssueDraft(

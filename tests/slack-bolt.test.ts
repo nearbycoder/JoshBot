@@ -92,6 +92,22 @@ test("Bolt slash commands acknowledge immediately and deliver response_url messa
   }
 });
 
+test("signed widget forms return validation errors without falling through to generic handlers", async () => {
+  let genericCalls = 0;
+  const f = await fixture({ interaction: async () => { genericCalls++; return { response: {} }; } });
+  try {
+    const response = await f.send("/api/slack/interactions", new URLSearchParams({ payload: JSON.stringify({
+      type: "view_submission", team: { id: "T_TEST" }, user: { id: "U_TEST" },
+      view: { id: "V_TEST", callback_id: "nobo_widget_workflow", private_metadata: JSON.stringify({ id: "invalid", channelId: "C_TEST", action: "share" }),
+        state: { values: { text: { value: { value: "" } } } } }
+    }) }).toString());
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.response_action, "errors"); assert.ok(result.errors.text); assert.ok(result.errors.channel);
+    assert.equal(genericCalls, 0);
+  } finally { await f.close(); }
+});
+
 test("Bolt returns modal updates through view acknowledgement", async () => {
   const view = { type: "modal", title: { type: "plain_text", text: "Updated" }, blocks: [] };
   const f = await fixture({ interaction: async () => ({ response: { response_action: "update", view } }) });

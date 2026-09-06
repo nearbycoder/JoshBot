@@ -1710,6 +1710,15 @@ async function updateSlackMessage({
   });
 }
 
+async function updateSlackMessageWithWidgetFallback(options: Parameters<typeof updateSlackMessage>[0]) {
+  try { return await updateSlackMessage(options); }
+  catch (error) {
+    // Updating the same timestamp is idempotent; preserve the answer even if Slack rejects a new widget type.
+    console.warn(`Retrying final answer without widgets: ${summarizeError(error)}`);
+    return updateSlackMessage({ ...options, blocks: createSlackTextBlocks(options.text) });
+  }
+}
+
 async function acknowledgeTargetedSlackEvent(
   token: string,
   event: SlackMessageEvent
@@ -1822,7 +1831,7 @@ function createSlackReplyStreamer({
   nativeAi?: SlackNativeAiTarget;
 }): SlackReplyStreamer {
   const activeRun = getSlackAgentRun();
-  nativeAi ??= activeRun ? {
+  nativeAi ??= activeRun?.threadTs ? {
     threadTs: activeRun.threadTs, teamId: activeRun.teamId, userId: activeRun.userId,
     title: getSlackAgentSessionTitle(activeRun.widget.prompt ?? "NoBo conversation")
   } : undefined;
@@ -1955,7 +1964,7 @@ async function createNativeSlackReplyStreamer({
 
   const finishBrokenNativeStream = async (finalText: string, ts: string, footer: SlackBlock[] = []) => {
     try {
-      await updateSlackMessage({
+      await updateSlackMessageWithWidgetFallback({
         token,
         channel,
         ts,
@@ -2165,14 +2174,19 @@ function createLegacySlackReplyStreamer({
   let hasPostedModelText = false;
   let failed = false;
 
-  const postFinalMessage = (finalText: string, footer: SlackBlock[] = []) =>
-    postSlackMessage({
+  const postFinalMessage = async (finalText: string, footer: SlackBlock[] = []) => {
+    try { return await postSlackMessage({
       token,
       channel,
       threadTs,
       text: finalText,
       blocks: [...createSlackTextBlocks(finalText), ...footer].slice(0, 50)
-    });
+    }); } catch (error) {
+      // Retry a new post only after Slack explicitly rejects its blocks, never an ambiguous network error.
+      if (!footer.length || !/invalid_blocks/.test(summarizeError(error))) throw error;
+      return postSlackMessage({ token, channel, threadTs, text: finalText, blocks: createSlackTextBlocks(finalText) });
+    }
+  };
 
   const updateStartedReply = async (text: string, force = false) => {
     await startReply();
@@ -2288,7 +2302,7 @@ function createLegacySlackReplyStreamer({
     try {
       stopListeningAnimation();
       await updatePromise;
-      await updateSlackMessage({
+      await updateSlackMessageWithWidgetFallback({
         token,
         channel,
         ts,
@@ -3747,6 +3761,7 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  updateSlackMessageWithWidgetFallback,
   acquireActiveListeningReplySlot,
   acknowledgeTargetedSlackEvent,
   buildLiveUserContent,

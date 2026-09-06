@@ -94,6 +94,27 @@ const DEFAULT_MAX_ARTIFACT_VERSIONS = 10;
 const MAX_DIFF_LINES = 160;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+// Artifact files are local to the single app replica. Serialize mutations so revision
+// checks and version snapshots cannot interleave with another update or deletion.
+let artifactMutation = Promise.resolve();
+function mutateArtifacts<T>(work: () => Promise<T>): Promise<T> {
+  const result = artifactMutation.then(work);
+  artifactMutation = result.then(() => {}, () => {});
+  return result;
+}
+export function updateArtifact(...args: Parameters<typeof updateArtifactUnlocked>) {
+  return mutateArtifacts(() => updateArtifactUnlocked(...args));
+}
+export function deleteArtifact(...args: Parameters<typeof deleteArtifactUnlocked>) {
+  return mutateArtifacts(() => deleteArtifactUnlocked(...args));
+}
+export function rollbackArtifact(...args: Parameters<typeof rollbackArtifactUnlocked>) {
+  return mutateArtifacts(() => rollbackArtifactUnlocked(...args));
+}
+export function deleteExpiredArtifacts(...args: Parameters<typeof deleteExpiredArtifactsUnlocked>) {
+  return mutateArtifacts(() => deleteExpiredArtifactsUnlocked(...args));
+}
+
 export async function createArtifact({
   kind,
   title,
@@ -240,7 +261,7 @@ export async function findArtifact(
   return { status: "found", artifact: matches[0] as ListedArtifact };
 }
 
-export async function deleteArtifact(
+async function deleteArtifactUnlocked(
   idPrefix: string,
   options: { ownerUserId?: string } = {}
 ): Promise<DeleteArtifactResult> {
@@ -270,7 +291,7 @@ export async function deleteArtifact(
   };
 }
 
-export async function updateArtifact({
+async function updateArtifactUnlocked({
   idPrefix,
   ownerUserId,
   kind,
@@ -278,7 +299,8 @@ export async function updateArtifact({
   filename,
   content,
   expiresAt,
-  expiresInDays
+  expiresInDays,
+  expectedRevision
 }: {
   idPrefix: string;
   ownerUserId?: string;
@@ -288,6 +310,7 @@ export async function updateArtifact({
   content: string;
   expiresAt?: string;
   expiresInDays?: number | string | null;
+  expectedRevision?: string;
 }): Promise<UpdateArtifactResult> {
   if (!ownerUserId) {
     return { ok: false, reason: "forbidden" };
@@ -314,7 +337,10 @@ export async function updateArtifact({
   }
 
   const existing = match.artifact;
-  const updatedAt = new Date();
+  if (expectedRevision !== undefined && (existing.updatedAt ?? existing.createdAt) !== expectedRevision) {
+    throw new Error("The artifact changed while revising. Nothing was overwritten; start a fresh revision.");
+  }
+  const updatedAt = new Date(Math.max(Date.now(), new Date(existing.updatedAt ?? existing.createdAt).getTime() + 1));
   const nextKind = kind ?? existing.kind;
   const extension = nextKind === "html" ? ".html" : ".md";
   const safeFilename = filename
@@ -410,7 +436,7 @@ export async function diffArtifactVersion(
   };
 }
 
-export async function rollbackArtifact(
+async function rollbackArtifactUnlocked(
   idPrefix: string,
   versionId: string | undefined,
   options: { ownerUserId?: string } = {}
@@ -463,7 +489,7 @@ export async function rollbackArtifact(
   };
 }
 
-export async function deleteExpiredArtifacts({
+async function deleteExpiredArtifactsUnlocked({
   now = new Date(),
   ownerUserId
 }: {

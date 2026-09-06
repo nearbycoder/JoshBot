@@ -678,6 +678,13 @@ async function handleNoboReminderSlashCommand(
     return immediate(ephemeral("Slack did not send a channel for this command. Try again in a channel."));
   }
 
+  if (/^(list|manage)$/i.test(payload.text.trim()) && payload.team_id) {
+    const { getReminderCards } = await import("./slack-reminder-cards.js");
+    const result = await getReminderCards({ userId: payload.user_id, teamId: payload.team_id,
+      channelId: payload.channel_id, threadTs: "" });
+    return { response: { ...ephemeral(result.text), ...(result.blocks.length ? { blocks: result.blocks } : {}) } };
+  }
+
   if (!payload.trigger_id) {
     return immediate(ephemeral("Slack did not send a trigger for the reminder modal. Try again."));
   }

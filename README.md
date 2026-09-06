@@ -539,6 +539,15 @@ Memory commands also remain available:
 - `@NoBo show my memory`
 - `@NoBo clear my memory`
 
+## Interactive Agent responses
+
+NoBo adds source cards, structured catch-ups, model/fallback details, grouped task progress,
+document save/revise/version controls, reminder edit/cancel cards, approval workflows,
+feedback, safe recovery, and read-only follow-up buttons. Use `/nobo-reminder list` to manage
+existing reminders. See [the widget guide](docs/slack-agent-widgets.md) for behavior,
+security boundaries, examples, and deployment checks. No additional Slack scopes are
+introduced beyond the existing Bolt/Agents setup.
+
 ## Attachments
 
 NoBo passes Slack attachment metadata into the model. For image uploads it attempts to download the image and attach the bytes to the current user message. For small text-like uploads such as `.txt`, Markdown, JSON, logs, code, CSV, TSV, VTT, and SRT, it downloads the private Slack file and includes extracted text in context.

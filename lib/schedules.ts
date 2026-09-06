@@ -9,6 +9,7 @@ import {
   type UserPreferences
 } from "./preferences.js";
 import { getRedisClient } from "./redis.js";
+let scheduleRedis = getRedisClient;
 import {
   assertSlackTargetChannelAllowed,
   normalizeSlackChannelId,
@@ -190,7 +191,7 @@ export async function maybeHandleScheduleCommand(event: SlackMessageEvent) {
     return null;
   }
 
-  const redis = await getRedisClient();
+  const redis = await scheduleRedis();
   if (!redis) {
     return null;
   }
@@ -248,10 +249,12 @@ export function getScheduleRunnerStatus() {
 
 export async function createScheduleFromTool(
   context: SlackScheduleContext,
-  input: ScheduleToolInput
+  input: ScheduleToolInput,
+  approved?: { firstRunAt: string }
 ) {
   const preferences = await getUserPreferences(context.ownerUserId);
   const parsed = scheduleToolInputToParsedSchedule(input, context.timeZone ?? preferences.timeZone);
+  if (approved) parsed.firstRunAt = parseFutureRunAt(approved.firstRunAt);
   const destination = getScheduleDestination(context, input);
   await assertSlackTargetChannelAllowed({
     userId: context.ownerUserId,
@@ -294,7 +297,7 @@ export async function getUserScheduleDashboardItems(
   userId: string,
   limit = 5
 ): Promise<ScheduleDashboardItem[]> {
-  const redis = await getRedisClient();
+  const redis = await scheduleRedis();
 
   if (!redis) {
     return [];
@@ -323,7 +326,48 @@ export async function cancelScheduleFromTool(context: SlackScheduleContext, idPr
 }
 
 export async function cancelScheduleById(scheduleId: string, ownerUserId: string) {
+  const schedule = await loadSchedule(scheduleId);
+  if (!schedule || schedule.ownerUserId !== ownerUserId) throw new Error("Reminder not found for this user.");
   await deleteSchedule(scheduleId, ownerUserId);
+}
+
+export async function previewScheduleFromTool(context: SlackScheduleContext, input: ScheduleToolInput) {
+  const preferences = await getUserPreferences(context.ownerUserId);
+  const timeZone = normalizeTimeZone(context.timeZone ?? preferences.timeZone);
+  const parsed = scheduleToolInputToParsedSchedule(input, timeZone);
+  const destination = getScheduleDestination(context, input);
+  await assertSlackTargetChannelAllowed({ userId: context.ownerUserId, channelId: destination.channel,
+    action: "preview_schedule", surface: "slack-tool" });
+  const cadence = input.kind === "daily" || input.kind === "weekly"
+    ? `${input.kind === "weekly" ? "Every " + input.weekday : "Daily"} at ${String(input.hour).padStart(2, "0")}:${String(input.minute).padStart(2, "0")}`
+    : input.kind === "interval" ? `Every ${input.amount} ${input.unit}` : "One time";
+  return { timeZone, channelId: destination.channel, responseMode: destination.responseMode, nextRunAt: parsed.firstRunAt.toISOString(),
+    summary: `${cadence} · ${input.task} · ${destination.responseMode}` };
+}
+export async function getOwnedSchedule(scheduleId: string, ownerUserId: string) {
+  const record = await loadSchedule(scheduleId);
+  if (!record || record.ownerUserId !== ownerUserId) throw new Error("Reminder not found for this user.");
+  return { ...record, summary: formatScheduleSummary(record) };
+}
+export async function editOwnedSchedule(scheduleId: string, ownerUserId: string, task: string, nextRunAt: string) {
+  const existing = await getOwnedSchedule(scheduleId, ownerUserId);
+  if (!task.trim() || task.length > 1000) throw new Error("Reminder text must be 1–1000 characters.");
+  const future = parseFutureRunAt(nextRunAt);
+  await assertSlackTargetChannelAllowed({ userId: ownerUserId, channelId: existing.channel,
+    action: "edit_schedule", surface: "slack-interaction" });
+  const { summary: _summary, ...record } = existing;
+  const updated = { ...record, task: task.trim(), nextRunAt: future.toISOString() };
+  const redis = await requireRedis();
+  // Compare and swap so a cancelled, running, or concurrently edited job cannot be resurrected.
+  const changed = await redis.eval(`
+    if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+    if not redis.call('ZSCORE', KEYS[2], ARGV[4]) then return 0 end
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+    return 1`, { keys: [getScheduleJobKey(scheduleId), SCHEDULE_DUE_KEY],
+    arguments: [JSON.stringify(record), JSON.stringify(updated), String(future.getTime()), scheduleId] });
+  if (changed !== 1) throw new Error("This reminder changed or is already running. Refresh My reminders before editing.");
+  return { ...updated, summary: formatScheduleSummary(updated) };
 }
 
 export async function updateScheduleFromTool(
@@ -337,12 +381,14 @@ export async function updateScheduleFromTool(
     return existingSchedule.message;
   }
 
-  await deleteSchedule(existingSchedule.schedule.id, context.ownerUserId);
-
   const preferences = await getUserPreferences(context.ownerUserId);
   const parsed = scheduleToolInputToParsedSchedule(input, context.timeZone ?? preferences.timeZone);
   const destination = getScheduleDestinationForUpdate(context, input, existingSchedule.schedule);
+  await assertSlackTargetChannelAllowed({ userId: context.ownerUserId, channelId: destination.channel,
+    action: "update_schedule", surface: "slack-tool" });
   const schedule = await createSchedule(context, parsed, destination, preferences);
+  // Validate and persist the replacement before removing the existing reminder.
+  await deleteSchedule(existingSchedule.schedule.id, context.ownerUserId);
 
   return `Updated schedule \`${existingSchedule.schedule.id.slice(0, 8)}\` -> \`${schedule.id.slice(0, 8)}\`: ${formatScheduleSummary(schedule)}`;
 }
@@ -627,7 +673,7 @@ async function runDueSchedules({
   schedulerRunning = true;
 
   try {
-    const redis = await getRedisClient();
+    const redis = await scheduleRedis();
     if (!redis) {
       return;
     }
@@ -676,12 +722,7 @@ async function runDueSchedules({
 
         const nextRunAt = getNextRunAt(schedule);
         if (nextRunAt) {
-          schedule.nextRunAt = nextRunAt.toISOString();
-          await redis.set(getScheduleJobKey(schedule.id), JSON.stringify(schedule));
-          await redis.zAdd(SCHEDULE_DUE_KEY, {
-            score: nextRunAt.getTime(),
-            value: schedule.id
-          });
+          await rescheduleIfUnchanged(schedule, { ...schedule, nextRunAt: nextRunAt.toISOString() }, nextRunAt);
         } else {
           await deleteSchedule(schedule.id, schedule.ownerUserId);
         }
@@ -689,15 +730,22 @@ async function runDueSchedules({
         recordOpsError("schedule job", error);
         console.error(`Schedule ${schedule.id} failed: ${summarizeError(error)}`);
         const retryAt = new Date(Date.now() + 5 * 60 * 1000);
-        await redis.zAdd(SCHEDULE_DUE_KEY, {
-          score: retryAt.getTime(),
-          value: schedule.id
-        });
+        await rescheduleIfUnchanged(schedule, schedule, retryAt);
       }
     }
   } finally {
     schedulerRunning = false;
   }
+}
+
+async function rescheduleIfUnchanged(before: ScheduleRecord, after: ScheduleRecord, at: Date) {
+  const redis = await requireRedis();
+  return redis.eval(`
+    if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+    redis.call('SET', KEYS[1], ARGV[2])
+    redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
+    return 1`, { keys: [getScheduleJobKey(before.id), SCHEDULE_DUE_KEY],
+    arguments: [JSON.stringify(before), JSON.stringify(after), String(at.getTime()), before.id] });
 }
 
 function amountToMs(amountInput: number | string, unit: "minutes" | "hours" | "days") {
@@ -1023,7 +1071,7 @@ async function deleteSchedule(id: string, userId: string) {
 }
 
 async function requireRedis() {
-  const redis = await getRedisClient();
+  const redis = await scheduleRedis();
 
   if (!redis) {
     throw new Error("Scheduling requires REDIS_URL.");
@@ -1113,6 +1161,8 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  setRedisProvider(provider?: typeof getRedisClient) { scheduleRedis = provider ?? getRedisClient; },
+  rescheduleIfUnchanged,
   formatReminderText,
   formatScheduleSummary,
   getScheduleDestination,

@@ -3,6 +3,22 @@ import test from "node:test";
 import AdmZip from "adm-zip";
 import { __testing, isSlackDirectMessage, isSlackRetryRequest } from "../lib/slack.js";
 
+test("rejected response widgets fall back to the complete answer at the same timestamp", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const bodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = (async (_url, init) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response(JSON.stringify(bodies.length === 1 ? { ok: false, error: "invalid_blocks" } : { ok: true }));
+  }) as typeof fetch;
+  await __testing.updateSlackMessageWithWidgetFallback({ token: "xoxb-test", channel: "C123", ts: "1.1", text: "Complete answer",
+    blocks: [{ type: "context_actions", elements: [] }] });
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[1]?.ts, "1.1"); assert.equal(bodies[1]?.text, "Complete answer");
+  assert.doesNotMatch(JSON.stringify(bodies[1]?.blocks), /context_actions/);
+  assert.match(JSON.stringify(bodies[1]?.blocks), /Complete answer/);
+});
+
 test("detects Slack retry request headers", () => {
   assert.equal(isSlackRetryRequest(new Headers({ "x-slack-retry-num": "1" })), true);
   assert.equal(isSlackRetryRequest({ "x-slack-retry-num": "2" }), true);
