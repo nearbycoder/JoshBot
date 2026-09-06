@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { WidgetRecord } from "./slack-widgets.js";
 
 export type AgentTaskUpdate = {
   type: "task_update"; id: string; title: string;
@@ -10,6 +11,9 @@ type AgentRun = RunTarget & {
   cancellers: Set<() => Promise<unknown>>;
   progress?: (update: AgentTaskUpdate) => Promise<void>;
   contextHint?: string;
+  widget: Partial<Omit<WidgetRecord, "id" | "target" | "createdAt">>;
+  hasSideEffects: boolean;
+  failureNotice?: string;
 };
 const current = new AsyncLocalStorage<AgentRun>();
 const runs = new Map<string, Set<AgentRun>>();
@@ -22,8 +26,9 @@ export function getSlackAgentRun() { return current.getStore(); }
 export function throwIfSlackAgentStopped() {
   if (current.getStore()?.controller.signal.aborted) throw new SlackAgentStoppedError();
 }
-export async function withSlackAgentRun<T>(target: RunTarget, work: () => Promise<T>, contextHint?: string) {
-  const run: AgentRun = { ...target, controller: new AbortController(), cancellers: new Set(), contextHint };
+export async function withSlackAgentRun<T>(target: RunTarget, work: () => Promise<T>, contextHint?: string, prompt?: string) {
+  const run: AgentRun = { ...target, controller: new AbortController(), cancellers: new Set(), contextHint,
+    widget: { prompt, sources: [], sections: [] }, hasSideEffects: false };
   const id = key(target);
   const active = runs.get(id) ?? new Set<AgentRun>();
   runs.set(id, active);
