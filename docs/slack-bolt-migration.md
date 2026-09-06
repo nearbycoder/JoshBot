@@ -2,7 +2,7 @@
 
 ## Merge and deploy
 
-Merge the stacked PRs in order: **#22 → #23 → the readiness/checklist PR**. Each later PR is based on the previous branch. After merging a predecessor, verify/retarget the next PR's base to `main`. If squash-merging, GitHub may show predecessor commits in the next diff until the stack is rebased. Do not deploy a child branch independently of its ancestors.
+Merge the stacked PRs in order: **[#22](https://github.com/nearbycoder/JoshBot/pull/22) → [#23](https://github.com/nearbycoder/JoshBot/pull/23) → [#24](https://github.com/nearbycoder/JoshBot/pull/24)**. Each later PR is based on the previous branch. After merging a predecessor, verify/retarget the next PR's base to `main`. If squash-merging, GitHub may show predecessor commits in the next diff until the stack is rebased. Do not deploy a child branch independently of its ancestors.
 
 Railway still uses `npm run build` and `npm start`, listening on `PORT`. No domain, signing secret or command endpoint needs to change. Keep **one replica**: the in-flight model cancellation registry is process-local. Redis still owns existing memory, event locks and scheduled jobs; Flue's per-run execution database is process-lifetime SQLite, as configured by the standalone runtime.
 
