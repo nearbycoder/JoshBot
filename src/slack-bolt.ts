@@ -83,13 +83,22 @@ export function createSlackBolt(options: {
     await ack();
     try {
       const payload = command as SlackSlashCommandPayload;
-      const result = await handlers.command(payload);
+      const runCommand = () => handlers.command(payload);
+      const result = payload.user_id && payload.team_id && payload.channel_id
+        ? await withSlackAgentRun({ userId: payload.user_id, teamId: payload.team_id,
+            channelId: payload.channel_id, threadTs: "" }, runCommand, undefined, formatSlackSlashCommandMemory(payload))
+        : await runCommand();
       if (result.modal) {
         await client.views.open({ trigger_id: result.modal.triggerId, view: toBoltView(result.modal.view) });
       }
       await respond(result.response);
       if (result.task) {
-        await handlers.task(result.task, formatSlackSlashCommandMemory(payload));
+        const task = result.task;
+        const runTask = () => handlers.task(task, formatSlackSlashCommandMemory(payload));
+        if (payload.team_id && payload.user_id && payload.channel_id) {
+          await withSlackAgentRun({ userId: payload.user_id, teamId: payload.team_id,
+            channelId: payload.channel_id, threadTs: "" }, runTask, undefined, formatSlackSlashCommandMemory(payload));
+        } else await runTask();
       } else if (result.response.response_type === "in_channel") {
         await handlers.memory(payload, result.response.text);
       }

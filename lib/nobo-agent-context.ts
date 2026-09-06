@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SlackScheduleContext } from "./schedules.js";
+import type { WidgetTarget } from "./slack-widgets.js";
 
 export type NoboAgentToolMode = "slack" | "read" | "none";
 
@@ -9,6 +10,7 @@ export type NoboAgentContext = {
   toolMode: NoboAgentToolMode;
   ownerUserId?: string;
   scheduleContext?: SlackScheduleContext;
+  widgetTarget?: WidgetTarget;
 };
 
 export function encodeNoboAgentContext(
@@ -20,7 +22,8 @@ export function encodeNoboAgentContext(
       modelId: context.modelId,
       toolMode: context.toolMode,
       ...(context.ownerUserId ? { ownerUserId: context.ownerUserId } : {}),
-      ...(context.scheduleContext ? { scheduleContext: context.scheduleContext } : {})
+      ...(context.scheduleContext ? { scheduleContext: context.scheduleContext } : {}),
+      ...(context.widgetTarget ? { widgetTarget: context.widgetTarget } : {})
     }),
     "utf8"
   ).toString("base64url");
@@ -43,6 +46,7 @@ export function decodeNoboAgentContext(encoded: string): NoboAgentContext {
     modelId: parsed.modelId,
     toolMode: parsed.toolMode,
     ...(typeof parsed.ownerUserId === "string" ? { ownerUserId: parsed.ownerUserId } : {}),
-    ...(parsed.scheduleContext ? { scheduleContext: parsed.scheduleContext } : {})
+    ...(parsed.scheduleContext ? { scheduleContext: parsed.scheduleContext } : {}),
+    ...(parsed.widgetTarget ? { widgetTarget: parsed.widgetTarget } : {})
   };
 }

@@ -1,6 +1,8 @@
 import { defineTool as defineFlueTool } from "@flue/runtime";
 import { Exa } from "exa-js";
 import { WebClient } from "@slack/web-api";
+import { queueWidgetApproval } from "./slack-approvals.js";
+import { escapeSlack, type WidgetTarget } from "./slack-widgets.js";
 import * as v from "valibot";
 import {
   createArtifact,
@@ -27,6 +29,7 @@ import {
 import {
   cancelScheduleFromTool,
   createScheduleFromTool,
+  previewScheduleFromTool,
   listSchedulesFromTool,
   updateScheduleFromTool,
   type ScheduleToolInput,
@@ -165,7 +168,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUserId?: string) {
+export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUserId?: string, widgetTarget?: WidgetTarget) {
   const artifactOwnerUserId = scheduleContext?.ownerUserId ?? ownerUserId;
 
   return [
@@ -180,7 +183,7 @@ export function createNoboTools(scheduleContext?: SlackScheduleContext, ownerUse
     createRollbackArtifactTool(artifactOwnerUserId),
     createDeleteArtifactTool(artifactOwnerUserId),
     createCleanupExpiredArtifactsTool(artifactOwnerUserId),
-    ...(scheduleContext ? createSlackContextTools(scheduleContext) : [])
+    ...(scheduleContext ? createSlackContextTools(scheduleContext, widgetTarget) : [])
   ];
 }
 
@@ -529,9 +532,9 @@ function createCleanupExpiredArtifactsTool(ownerUserId: string | undefined) {
   });
 }
 
-function createSlackContextTools(scheduleContext: SlackScheduleContext) {
+function createSlackContextTools(scheduleContext: SlackScheduleContext, widgetTarget?: WidgetTarget) {
   return [
-    createScheduleTool(scheduleContext),
+    createScheduleTool(scheduleContext, widgetTarget),
     createListSchedulesTool(scheduleContext),
     createCancelScheduleTool(scheduleContext),
     createUpdateScheduleTool(scheduleContext),
@@ -610,7 +613,7 @@ function createSlackChannelHistoryTool(scheduleContext: SlackScheduleContext) {
   });
 }
 
-function createScheduleTool(scheduleContext: SlackScheduleContext) {
+function createScheduleTool(scheduleContext: SlackScheduleContext, widgetTarget?: WidgetTarget) {
   return defineTool({
     name: "create_schedule",
     description:
@@ -624,6 +627,14 @@ function createScheduleTool(scheduleContext: SlackScheduleContext) {
       additionalProperties: false
     }),
     execute: async (args: { schedule: ScheduleToolInput }) => {
+      if (widgetTarget) {
+        const preview = await previewScheduleFromTool(scheduleContext, args.schedule);
+        const card = await queueWidgetApproval(widgetTarget, { type: "schedule", context: { ...scheduleContext, timeZone: preview.timeZone },
+          schedule: { ...args.schedule, responseMode: preview.responseMode }, firstRunAt: preview.nextRunAt }, "Review reminder",
+          `${escapeSlack(preview.summary)}\nNext: ${preview.nextRunAt}\nTimezone: ${preview.timeZone}\nDestination: <#${preview.channelId}>`);
+        return JSON.stringify({ approvalRequired: true, cardId: card.id,
+          result: "Nothing scheduled yet. Review and approve the reminder card in Slack." });
+      }
       const schedule = await createScheduleFromTool(scheduleContext, args.schedule);
 
       return JSON.stringify({

@@ -14,7 +14,7 @@ function Nobo({ id }: AgentProps) {
   useModel(getNoboModelSpecifier(context.modelId));
 
   if (context.toolMode !== "none") {
-    for (const tool of createNoboTools(context.scheduleContext, context.ownerUserId)) {
+    for (const tool of createNoboTools(context.scheduleContext, context.ownerUserId, context.widgetTarget)) {
       if (context.toolMode === "read" && !READ_ONLY_TOOL_NAMES.has(tool.name)) continue;
       useTool(tool);
     }

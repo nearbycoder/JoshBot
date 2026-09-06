@@ -17,6 +17,21 @@ import {
 } from "../lib/artifacts.js";
 import { handleArtifactCommandText } from "../lib/artifact-commands.js";
 
+test("concurrent guided revisions cannot overwrite an intervening edit", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({ kind: "markdown", title: "Note", content: "Original", ownerUserId: "U123" });
+    const options = { idPrefix: artifact.id, ownerUserId: "U123", expectedRevision: artifact.createdAt };
+    const results = await Promise.allSettled([
+      updateArtifact({ ...options, content: "First" }), updateArtifact({ ...options, content: "Stale" })
+    ]);
+    assert.equal(results[0].status, "fulfilled");
+    assert.equal(results[1].status, "rejected");
+    assert.equal(await readFile(artifact.path, "utf8"), "First");
+    const versions = await listArtifactVersions(artifact.id, { ownerUserId: "U123" });
+    assert.equal(versions.ok && versions.versions.length, 1);
+  });
+});
+
 test("creates artifact metadata, lists it, and serves raw content", async () => {
   await withTempArtifactDir(async () => {
     const artifact = await createArtifact({

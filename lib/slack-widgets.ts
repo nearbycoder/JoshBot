@@ -8,9 +8,9 @@ import type { ThreadFollowUpDraft } from "./follow-ups.js";
 export type WidgetTarget = { teamId: string; channelId: string; threadTs: string; userId: string };
 export type WidgetSource = { title: string; url: string };
 export type WidgetApproval =
-  | { type: "schedule"; context: SlackScheduleContext; schedule: ScheduleToolInput }
+  | { type: "schedule"; context: SlackScheduleContext; schedule: ScheduleToolInput; firstRunAt: string }
   | { type: "post"; channelId: string; text: string }
-  | { type: "issues"; targets: IssueTarget[]; tasks: ThreadFollowUpDraft[]; context?: SlackScheduleContext };
+  | { type: "issues"; targets: IssueTarget[]; tasks: ThreadFollowUpDraft[]; context?: SlackScheduleContext; destinations: Partial<Record<IssueTarget, string>> };
 export type WidgetRecord = {
   id: string; target: WidgetTarget; createdAt: string;
   kind: "answer" | "research" | "catchup" | "artifact" | "reminder" | "approval" | "error";
@@ -43,7 +43,8 @@ export async function widgetStore(): Promise<WidgetStore | null> {
 export async function saveWidget(record: Omit<WidgetRecord, "id" | "createdAt">, store?: WidgetStore | null) {
   const db = store === undefined ? await widgetStore() : store;
   if (!db) return null;
-  const saved: WidgetRecord = { ...record, id: randomUUID(), createdAt: new Date().toISOString() };
+  const { teamId, channelId, threadTs, userId } = record.target;
+  const saved: WidgetRecord = { ...record, target: { teamId, channelId, threadTs, userId }, id: randomUUID(), createdAt: new Date().toISOString() };
   if (Buffer.byteLength(JSON.stringify(saved)) > 100_000) throw new Error("Widget exceeds storage limit");
   await db.set(prefix + saved.id, JSON.stringify(saved), { EX: WIDGET_TTL_SECONDS });
   return saved;
@@ -153,7 +154,8 @@ export function renderWidget(record: WidgetRecord, includeText = true): WidgetBl
   ] });
   if (substantial) blocks.push({ type: "actions", elements: [
     widgetButton("Post elsewhere", "share", record.id),
-    widgetButton("Create issues", "issues", record.id)
+    widgetButton("Create issues", "issues", record.id),
+    widgetButton("My reminders", "reminders", record.id)
   ] });
   blocks.push({ type: "context_actions", elements: [{
     type: "feedback_buttons", action_id: "nobo_widget_feedback",
