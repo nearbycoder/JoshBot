@@ -1,6 +1,7 @@
 import { getHackerNewsScheduleStatus } from "./hacker-news-schedule.js";
 import { getRecentOpsErrors, summarizeOpsError, type OpsErrorRecord } from "./ops-errors.js";
 import { getRedisClient } from "./redis.js";
+import { getSlackAgentReadiness, type SlackAgentReadiness } from "./slack-readiness.js";
 import { getScheduleRunnerStatus } from "./schedules.js";
 import { getMonitorRunnerStatus } from "./monitors.js";
 import {
@@ -27,6 +28,7 @@ export type OpsStatus = {
     botToken: boolean;
     signingSecret: boolean;
     botUserId: boolean;
+    agentReadiness?: SlackAgentReadiness;
   };
   modelSearch: {
     apiKey: boolean;
@@ -56,7 +58,8 @@ export async function collectOpsStatus(options: CollectOpsStatusOptions = {}): P
     slack: {
       botToken: hasEnv("SLACK_BOT_TOKEN"),
       signingSecret: hasEnv("SLACK_SIGNING_SECRET"),
-      botUserId: hasEnv("SLACK_BOT_USER_ID")
+      botUserId: hasEnv("SLACK_BOT_USER_ID"),
+      agentReadiness: getSlackAgentReadiness()
     },
     modelSearch: {
       apiKey: hasEnv("OPENCODE_GO_API_KEY") || hasEnv("OPENCODE_API_KEY"),
@@ -87,6 +90,7 @@ export function formatOpsStatus(status: OpsStatus) {
     `Slack config: token ${present(status.slack.botToken)}, signing secret ${present(
       status.slack.signingSecret
     )}, bot user ${present(status.slack.botUserId)}`,
+    `Slack transport: Bolt HTTP; native Agent status: ${status.slack.agentReadiness?.state ?? "unchecked"}. ${status.slack.agentReadiness?.detail ?? ""}`,
     `Model/search: API key ${present(status.modelSearch.apiKey)}, default model \`${status.modelSearch.textModel}\`, image fallback \`${status.modelSearch.visionModel}\`, web search ${
       status.modelSearch.searchEnabled ? "enabled" : "disabled"
     }`,

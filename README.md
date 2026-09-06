@@ -29,14 +29,14 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 ## Stack
 
-- Flue v2 Node.js target and Vite-generated HTTP server
+- Standalone Node.js server with Slack Bolt 5 HTTPReceiver (Vite bundles production)
 - TypeScript
 - `@flue/runtime` hook-based agent harness
 - OpenCode Go registered as a mixed-protocol Flue provider
 - Exa Search API via `exa-js`
 - Redis thread-state cache and shared channel memory
-- Flue-verified Slack events, slash commands, and interactions under `/api/slack/*`
-- Slack response streaming via an immediate listening message and progressive same-message block updates
+- Bolt-verified Slack events, slash commands, and interactions under `/api/slack/*`
+- Native Slack Agent sessions, suggested prompts, task progress and Stop, with legacy message-update fallback
 
 ## Local setup
 
@@ -112,16 +112,18 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
    npm run dev
    ```
 
-   Vite serves on `http://localhost:5173` by default. Use `npm run dev -- --port 3000` to choose another local port.
+   The same Bolt server used in production runs on `http://localhost:3000`. Set `PORT` to change the port. Startup verifies the Slack bot token, so valid Slack credentials are required.
 
 5. Confirm the process is up:
 
-   - `GET http://localhost:5173/healthz`
-   - `POST http://localhost:5173/api/slack/events`
-   - `POST http://localhost:5173/api/slack/commands`
-   - `POST http://localhost:5173/api/slack/interactions`
+   - `GET http://localhost:3000/healthz`
+   - `POST http://localhost:3000/api/slack/events`
+   - `POST http://localhost:3000/api/slack/commands`
+   - `POST http://localhost:3000/api/slack/interactions`
 
 ## Slack app configuration
+
+Existing installation? Follow the [Bolt migration and Slack admin checklist](docs/slack-bolt-migration.md). Do not recreate the app or replace its whole manifest.
 
 Create a Slack app and configure:
 
@@ -135,10 +137,12 @@ Create a Slack app and configure:
 - Subscribe to bot events: `message.im` so direct messages to NoBo trigger responses
 - Subscribe to bot events: `reaction_added` so reaction shortcuts can run
 - Subscribe to bot events: `app_home_opened` so NoBo can publish the App Home dashboard
+- Subscribe to bot events: `agent_session_stopped`, `app_context_changed`, and `agent_session_title_changed` for the new Agent surface
 - OAuth scopes:
   - `commands`
   - `app_mentions:read`
   - `chat:write`
+  - `assistant:write` (automatically added when Agents is enabled; reinstall to grant it to the bot token)
   - `channels:read` if scheduled Hacker News posts should resolve public `#hacker-news` by name instead of `NOBO_HACKER_NEWS_CHANNEL_ID`
   - `groups:read` if scheduled posts should resolve a private channel by name
   - `reactions:read` so Slack sends `reaction_added` shortcut events
@@ -152,7 +156,9 @@ Semantic search over channel history uses `conversations.history`, so public cha
 
 After adding scopes, events, slash commands, shortcuts, or interactivity, reinstall the Slack app to the workspace so the bot token receives the updated grants.
 
-Native AI replies require the existing `chat:write` scope plus the `assistant:write` scope Slack adds when Agents are enabled. NoBo marks each generated thread session `processing`, streams through Slack's `chat.startStream`/`chat.appendStream`/`chat.stopStream` APIs, and returns the session to `active`. If Agent Sessions or native streaming is unavailable, NoBo keeps working through its existing `chat.postMessage`/`chat.update` fallback. Flue continues to own verified ingress and agent execution; Slack's official Web API client owns the outbound native AI surface.
+Native AI replies require the existing `chat:write` scope plus the `assistant:write` scope Slack adds when Agents are enabled. NoBo marks generated thread sessions `processing`, streams through Slack's native APIs, and returns sessions to `active`. Bolt owns signed ingress, events, commands and interactions; Flue remains the model/tool runtime. Native tool cards contain lifecycle information, not raw tool output or model reasoning. An authorized Stop cancels model runs in that session and suppresses fallback retries and late replies. Run one Railway replica until distributed cancellation is implemented. Legacy `chat.postMessage`/`chat.update` fallback remains available.
+
+At startup and in `/nobo-status`, NoBo reports missing Agent OAuth grants with reinstall instructions. `scopes-present` does not verify the Agent view, workspace plan or event subscriptions; finish the admin checklist and live acceptance tests.
 
 If you only grant `app_mentions:read` and `chat:write`, the bot still works, but it falls back to the current mention text instead of reading thread history.
 
@@ -218,7 +224,12 @@ For Railway GitHub autodeploys, enable `Wait for CI` on the NoBo service deploy 
 
 ## Files to edit first
 
-- `src/app.ts`: Flue/Hono app entrypoint, verified Slack channel mount, health routes, and scheduler startup
+- `server.ts` / `src/server.ts`: environment loading, Bolt/Flue bootstrap, HTTP dispatch and shutdown
+- `src/app.ts`: Hono health and artifact routes (no Slack parsing or scheduler side effects)
+- `src/slack-bolt.ts`: official Bolt receiver, event/command/action/shortcut/view routing
+- `src/slack-agent-events.ts`: Agent lifecycle events, suggested prompts and active-view hints
+- `src/slack-tasks.ts`: scheduler startup and command background work
+- `lib/slack-agent-runs.ts`: scoped cancellation registry and native task projection
 - `src/agents/nobo.ts`: Flue v2 hook-based agent definition
 - `lib/nobo-prompt.ts`: assistant prompt
 - `lib/flue-tools.ts`: Flue tool definitions for web search, artifacts, schedules, time, and Slack history

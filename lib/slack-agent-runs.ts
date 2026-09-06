@@ -34,9 +34,9 @@ export async function withSlackAgentRun<T>(target: RunTarget, work: () => Promis
     if (!active.size) runs.delete(id);
   }
 }
-/** Stop only this user's work in the exact workspace/channel/thread. Single-replica registry. */
+/** Caller must authorize the signed Slack Stop event. Stop the whole session, as Slack does. */
 export async function stopSlackAgentRuns(target: RunTarget) {
-  const active = [...(runs.get(key(target)) ?? [])].filter((run) => run.userId === target.userId);
+  const active = [...(runs.get(key(target)) ?? [])];
   for (const run of active) run.controller.abort();
   const outcomes = await Promise.allSettled(active.flatMap((run) => [...run.cancellers].map((cancel) => cancel())));
   const failure = outcomes.find((outcome) => outcome.status === "rejected");

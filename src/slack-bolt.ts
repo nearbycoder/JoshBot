@@ -25,6 +25,7 @@ export function createSlackBolt(options: {
   signingSecret: string;
   token?: string;
   authorize?: AppOptions["authorize"];
+  clientOptions?: AppOptions["clientOptions"];
   bodyLimit?: number;
   handlers?: Partial<typeof defaultHandlers>;
 }) {
@@ -37,6 +38,7 @@ export function createSlackBolt(options: {
   });
   const bolt = new App({
     receiver, deferInitialization: true,
+    clientOptions: options.clientOptions ?? { timeout: 5_000, retryConfig: { retries: 1 } },
     ...(options.authorize ? { authorize: options.authorize } : { token: options.token })
   });
   bolt.error(async (error) => {
@@ -55,14 +57,17 @@ export function createSlackBolt(options: {
     bolt.event(type, async ({ body }) => {
       const payload = body as unknown as SlackEventCallbackPayload;
       const { event } = payload;
-      if ((event.type === "app_mention" || event.type === "message") && payload.team_id &&
-          typeof event.channel === "string" && typeof event.user === "string" && typeof event.ts === "string") {
+      const item = event.type === "reaction_added" && event.item && typeof event.item === "object"
+        ? event.item as Record<string, unknown> : undefined;
+      const channelId = item?.type === "message" ? item.channel : event.channel;
+      const threadTs = item?.type === "message" ? item.ts : event.thread_ts ?? event.ts;
+      if (["app_mention", "message", "reaction_added"].includes(event.type) && payload.team_id &&
+          typeof channelId === "string" && typeof event.user === "string" && typeof threadTs === "string") {
         const hint = event.channel_type === "im"
           ? await buildSlackActiveContextHint(event.app_context, payload.team_id, event.user) : undefined;
         try {
           await withSlackAgentRun({
-            teamId: payload.team_id, channelId: event.channel, userId: event.user,
-            threadTs: typeof event.thread_ts === "string" ? event.thread_ts : event.ts
+            teamId: payload.team_id, channelId, userId: event.user, threadTs
           }, () => handlers.event(payload), hint);
         } catch (error) {
           if (!(error instanceof SlackAgentStoppedError)) throw error;

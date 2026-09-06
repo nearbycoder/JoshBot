@@ -1,6 +1,7 @@
 import type { App } from "@slack/bolt";
 import { evaluateNoboAccess } from "../lib/access-controls.js";
 import { stopSlackAgentRuns } from "../lib/slack-agent-runs.js";
+import { getSlackAgentReadiness } from "../lib/slack-readiness.js";
 
 export function registerSlackAgentEvents(bolt: App) {
   bolt.event("agent_session_stopped", async ({ event, body, client }) => {
@@ -8,10 +9,9 @@ export function registerSlackAgentEvents(bolt: App) {
       userId: event.user, channelId: event.channel, teamId: body.team_id,
       action: event.type, surface: "slack-event"
     })).allowed) return;
-    const stopped = await stopSlackAgentRuns({
+    await stopSlackAgentRuns({
       teamId: body.team_id, channelId: event.channel, threadTs: event.thread_ts, userId: event.user
     });
-    if (!stopped) return;
     await client.agents.sessions.setStatus({
       channel_id: event.channel, thread_ts: event.thread_ts, status: "active"
     });
@@ -23,6 +23,7 @@ export function registerSlackAgentEvents(bolt: App) {
   bolt.event("agent_session_title_changed", async () => {});
   bolt.event("app_home_opened", async ({ event, body, client }) => {
     if (event.tab !== "messages" || /^(?:0|false|off|legacy)$/i.test(process.env.SLACK_NATIVE_AI?.trim() ?? "")) return;
+    if (getSlackAgentReadiness().state === "missing-scopes") return;
     if (!(await evaluateNoboAccess({
       userId: event.user, channelId: event.channel, teamId: body.team_id,
       action: event.type, surface: "slack-event"
