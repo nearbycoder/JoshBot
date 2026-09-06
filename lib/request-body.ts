@@ -81,7 +81,7 @@ function rejectLargeContentLength(value: string | string[] | undefined | null, m
   }
 }
 
-function getSlackRequestMaxBytes() {
+export function getSlackRequestMaxBytes() {
   const rawValue = process.env.SLACK_REQUEST_MAX_BYTES;
   const value = rawValue ? Number(rawValue) : DEFAULT_SLACK_REQUEST_MAX_BYTES;
 
