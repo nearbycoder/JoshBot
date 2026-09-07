@@ -30,6 +30,10 @@ Save HTTPS links with annotations and read/unread state: `add Slack docs | https
 
 `add Explain | Explain {{topic}} to a {{audience}}` saves a reusable prompt. Inspect `variables <id>`, then `render <id> | topic=Redis | audience=beginner`. All variables must be supplied exactly once; unknown/malformed variables are rejected and replacement is literal (never code execution). `edit <id> | template` replaces it. Rendering is a private preview, **not** an automatic model request; copy the result into a conversation when ready.
 
+## 5. Versioned code snippets (`snippets`)
+
+Save `add Query | sql | SELECT 1;`, retrieve with `copy <id>`, and revise via `edit <id> | SELECT 2;`. `history <id>` displays the last five versions. `restore <id> | 1 | confirm` creates a new revision from a retained version; it does not erase history in place. Language labels are validated, revisions are capped at 2,000 characters, and code is **never executed**.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
