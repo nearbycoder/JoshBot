@@ -18,8 +18,9 @@ async function render(html: string) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const executablePath = await chromium.executablePath();
-    browser = await playwright.launch({ executablePath, args: chromium.args, headless: true, timeout: 10000,
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH ?? "" } });
+    browser = await playwright.launch({ executablePath, args: safeChromiumArgs(), headless: true, timeout: 10000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH ?? "",
+        FONTCONFIG_PATH: process.env.FONTCONFIG_PATH ?? "/tmp/fonts" } });
     timer = setTimeout(() => { void browser?.close(); }, 10000);
     const context = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: "block", acceptDownloads: false,
       viewport: { width: 800, height: 900 }, deviceScaleFactor: 1 });
@@ -38,4 +39,10 @@ async function render(html: string) {
   }
 }
 
+// The serverless defaults disable web security and renderer isolation. Neither is
+// needed for a local static preview; keep browser security checks enabled.
+export function safeChromiumArgs() {
+  return chromium.args.filter((arg) => !["--disable-web-security", "--allow-running-insecure-content", "--disable-site-isolation-trials", "--single-process"].includes(arg)
+    && !arg.startsWith("--disable-features="));
+}
 export const __testing = { render };
