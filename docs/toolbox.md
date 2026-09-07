@@ -62,6 +62,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 `create Choose architecture`, add `criterion <id> | Simplicity | 5` (weight 1–10), add `option <id> | Bolt`, then `score <id> | Bolt | Simplicity | 4` (0–5). `rank <id>` requires every pairing, computes weighted percentages and identifies a tied top score. Repeating criterion updates its weight; repeating score corrects that pairing. Remove an option/criterion via `remove-option` or `remove-criterion <id> | name | confirm`. Up to ten of each. Rankings transparently reflect your judgments, not model advice.
 
+## 13. Timeboxed meeting agendas (`agendas`)
+
+`create Planning | 45` sets a minute budget. Add `topic <id> | Scope review | Josh | 15 | Agree on scope` with owner and desired outcome. `timeline <id>` displays time windows and highlights overruns. Reorder with `move <id> | <topic number> | <position>`, resize with `minutes <id> | <topic number> | 10`, or `remove <id> | <topic number> | confirm`. Stable topic numbers, up to 30 topics. Owners are labels only; this does not invite or notify anyone.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
