@@ -82,6 +82,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 `add Launch | 2026-10-01` saves a date. `count <id>` shows calendar days and weekdays remaining (or elapsed for past dates); `upcoming 30` returns active milestones in the next 30 days, including today. `reschedule <id> | 2026-10-15`, `archive <id>`, and `restore <id>` manage changes without losing the record. Dates use UTC. Weekday counts exclude Saturdays/Sundays **but not holidays**; no notifications are scheduled.
 
+## 18. Timezone meeting planner (`timezones`)
+
+Save `create Team | America/Chicago, Europe/London`. `convert <id> | 2026-09-07T15:00:00Z` converts an exact instant using the runtime's IANA/DST rules. `overlap <id> | 2026-09-07T00:00:00Z | 60 | 9 | 17` finds hour-long weekday meetings fitting everyone's local 09:00–17:00 window in the next 48 hours, showing the first ten candidates. Use 30-minute duration increments, up to eight zones, and daytime windows (no overnight shifts). `zone` adds a zone; `remove-zone <id> | Asia/Tokyo | confirm` removes it. Holidays are **not** excluded. No calendar access or invitations.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
