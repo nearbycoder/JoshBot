@@ -38,6 +38,10 @@ Save `add Query | sql | SELECT 1;`, retrieve with `copy <id>`, and revise via `e
 
 Record `write 2026-09-07 | 4 | Shipped a feature | Test earlier` (date, mood 1–5, wins, lessons). Writing the same date updates that entry instead of duplicating it. `entry 2026-09-07` retrieves it; `review 2026-09-01 | 2026-09-30` returns an inclusive chronological digest and average mood. Dates are explicit calendar dates, not inferred timezones; reflections never go to a model automatically.
 
+## 7. Habit tracker (`habits`)
+
+`create Read daily | 5` sets a weekly check-in target (1–7). Use `check <id> | 2026-09-07`, correct mistakes with `uncheck`, and inspect `stats <id> | 2026-09-07`. Reports show a current streak (including an unbroken run ending yesterday), best streak, last-seven-day progress and total check-ins. Duplicate dates do not double count; future dates are rejected. Dates are explicitly UTC. Up to 366 check-ins per tracker; export and create a new yearly tracker when full. This does not schedule notifications.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
