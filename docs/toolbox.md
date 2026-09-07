@@ -70,6 +70,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 `define ADR | Architecture decision record` saves a definition; `alias <id> | Decision record` adds a synonym. `lookup adr` resolves exact terms/aliases case-insensitively; `list <query>` searches definitions and titles. Use `revise <id> | Updated meaning`, `unalias <id> | alias`, or test recall via `quiz <id>` followed by `answer <id>`. Alias collisions are rejected. This glossary is personal, not injected into other users' model context.
 
+## 15. Measurable goals (`goals`)
+
+`create Read books | 12 | books | 2026-12-31` tracks a numeric target that increases from zero. Record an **absolute total**, not an increment, using `progress <id> | 3 | Finished a novel`; lower totals are allowed for corrections. `report <id>` shows percentage, deadline status, remaining amount and required daily pace. Adjust `target <id> | 15` or `due <id> | 2027-01-31`. The latest 20 check-ins are retained, with five shown in reports. Dates are UTC; this is progress tracking, not automated coaching or reminders.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
