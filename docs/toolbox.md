@@ -54,6 +54,10 @@ Record `write 2026-09-07 | 4 | Shipped a feature | Test earlier` (date, mood 1â€
 
 Create a private update with `create 2026-09-07 | NoBo`. Fill `yesterday <id> | ...`, `today <id> | ...`, and `blockers <id> | None`. `draft <id>` produces a clean copyable update. `carry <id> | 2026-09-08` moves today's plan into the next draft's yesterday section and retains blockers, without overwriting an existing draft. Nothing is posted or scheduled automatically.
 
+## 11. Retrospective boards (`retros`)
+
+Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Small PRs` (categories: keep, change, try). Cards have stable numbers. Set `priority <id> | 1 | 5`, `edit <id> | 1 | Updated thought`, `resolve <id> | 1` or `reopen`. `report <id>` groups cards by category and sorts by priority. Up to 50 cards; this is private preparation, not a shared voting board.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
