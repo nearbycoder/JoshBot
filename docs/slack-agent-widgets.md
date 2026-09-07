@@ -9,18 +9,43 @@ Interactivity must remain enabled at `/api/slack/interactions`; the existing
 | --- | --- |
 | Research results | Ask NoBo to research a topic. Actual search results become source links with save and follow-up controls. |
 | Channel catch-up | Ask for a channel summary. NoBo can emit structured sections (decisions, open questions, next steps) using `present_result`; available history permalinks link back to Slack. |
-| Reminders | Model-created schedules first show an approval preview. `/nobo-reminder list` or **My reminders** shows up to five upcoming reminders with Edit and Cancel. |
-| Artifacts | **Save note** stores an answer with its sections and sources. Artifact cards offer Open, Revise, and Versions. |
-| Model transparency | Response footers show the selected model, the model actually used, and a fallback reason when recorded. |
+| Reminders | Model-created schedules first show an approval preview. `/nobo-reminder list` shows five upcoming reminders; Home → My reminders manages up to ten with Edit and Cancel. |
+| Artifacts | **Save note** stores an answer with sources. Document cards offer Open and Revise, with Versions and sharing in the overflow menu. HTML documents get a static inline PNG preview when rendering succeeds. |
+| Model transparency | **⋯ → Response details** shows selected/used models. Only fallbacks and limitations appear automatically in the footer. Home → Model settings changes channel overrides. |
 | Progress plans | Native streams group real tool progress with `task_display_mode=plan`; no invented progress or chain-of-thought is displayed. |
 | Approval workflows | **Post elsewhere** and **Create issues** open review forms, then private Approve/Reject cards. Model schedule creation and interactive issue-create commands also require approval. |
-| Feedback | Native Helpful/Not helpful controls save a rating. **Add feedback detail** opens an optional comment form. |
+| Feedback | Native Helpful/Not helpful controls save a rating quietly. Negative feedback opens an optional detail form; dismissing it preserves the rating. |
 | Recovery | Safe failed text runs offer Retry or an alternate model. Runs that may have written data or included images do not offer automatic replay. |
 | Follow-ups | Shorter, Deeper, Compare, and Turn into tasks run with read-only tools in the original thread. Tasks produces a draft; issue creation remains a separate reviewed action. |
 
 Short conversational replies intentionally omit the large action toolbar. Structured research
 and catch-up sections are model-driven, not guaranteed for every response. Links come from
 actual tool results; missing Slack permalink permissions do not prevent an answer.
+
+## Mobile-first layout
+
+Each message has at most two visible action buttons and one native overflow menu (up to
+five entries). Research offers Save note / Dig deeper; catch-ups offer Save note / Turn into
+tasks; task lists offer Save note / Create issues; documents offer Open / Revise; reminders
+offer Edit / Cancel. A meme never gets research or issue-management actions. Simple answers
+need no action buttons at all. Global tools live in NoBo Home → Your NoBo tools: reminders,
+saved documents, channel model settings, and integration readiness. Existing slash commands
+remain available; this moves presentation, not capabilities.
+
+Submitted actions update their original card to working, completed, or needs-attention status
+and remove consumed controls. Native answer text and task blocks are preserved. Private cards
+use Slack's response URL rather than attempting `chat.update` on an ephemeral message. If a
+refresh fails or a private response URL expires, the operation's server-side single-use claim
+still prevents duplicate writes. Pre-existing messages are not proactively rewritten; interacting
+with an old card can refresh it while its stored record is still valid.
+
+Image previews use a packaged headless Chromium browser with no app secrets in its environment,
+JavaScript disabled, all network requests blocked, and a restrictive CSP. Only self-contained HTML,
+inline styles, and embedded image data can render. Rendering is serialized, limited to three queued
+requests, 256 KB of HTML and an 800 × 1600 maximum viewport. Oversized, overloaded, or failed
+previews leave the document link intact. Screenshots get version-specific URLs to avoid stale
+Slack image caches and follow the document's existing bearer-link access model. They are static
+previews, not interactive web pages; external assets and scripts are intentionally absent.
 
 ## Safety and behavior
 
@@ -60,6 +85,7 @@ actual tool results; missing Slack permalink permissions do not prevent an answe
 - `SLACK_WIDGETS=off` suppresses answer footers; approval gating remains enabled.
 - `SLACK_TASK_DISPLAY_MODE=timeline` restores chronological native task display; default is `plan`.
 - `SLACK_NATIVE_AI=off` retains legacy text streaming with final cards.
+- `ARTIFACT_IMAGE_PREVIEWS=off` disables static HTML image previews without disabling documents.
 - If Slack rejects new footer blocks, finalization retries the same message with text blocks
   so the answer is not lost. Approval failures never silently execute the requested action.
 - Keep one Railway replica: Stop cancellation and artifact mutation coordination are
@@ -82,4 +108,5 @@ in the Agent surface. Slack client rendering is not proven by API/unit tests alo
 Slack references: [context actions](https://docs.slack.dev/reference/block-kit/blocks/context-actions-block/),
 [stream footer blocks](https://docs.slack.dev/reference/methods/chat.stopStream/),
 [plan display](https://docs.slack.dev/reference/methods/chat.startStream/),
+[overflow menus](https://docs.slack.dev/reference/block-kit/block-elements/overflow-menu-element/),
 [acknowledgements](https://docs.slack.dev/tools/bolt-js/concepts/acknowledge/).

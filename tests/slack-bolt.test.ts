@@ -108,6 +108,20 @@ test("signed widget forms return validation errors without falling through to ge
   } finally { await f.close(); }
 });
 
+test("signed Home model forms validate without falling through to generic handlers", async () => {
+  let genericCalls = 0;
+  const f = await fixture({ interaction: async () => { genericCalls++; return { response: {} }; } });
+  try {
+    const response = await f.send("/api/slack/interactions", new URLSearchParams({ payload: JSON.stringify({
+      type: "view_submission", team: { id: "T_TEST" }, user: { id: "U_TEST" },
+      view: { id: "V_TEST", callback_id: "nobo_home_model_submit", state: { values: {} } }
+    }) }).toString());
+    const result = await response.json();
+    assert.equal(result.response_action, "errors"); assert.ok(result.errors.channel); assert.ok(result.errors.model);
+    assert.equal(genericCalls, 0);
+  } finally { await f.close(); }
+});
+
 test("Bolt returns modal updates through view acknowledgement", async () => {
   const view = { type: "modal", title: { type: "plain_text", text: "Updated" }, blocks: [] };
   const f = await fixture({ interaction: async () => ({ response: { response_action: "update", view } }) });

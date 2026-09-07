@@ -1,10 +1,13 @@
 import type { App } from "@slack/bolt";
 import type { ChatPostMessageArguments, ChatPostEphemeralArguments } from "@slack/web-api";
-import { loadWidget, plain, saveWidgetFeedback } from "../lib/slack-widgets.js";
+import { loadWidget, loadWidgetOrigin, storeWidgetOrigin, plain, saveWidgetFeedback, type WidgetOrigin, type WidgetBlock } from "../lib/slack-widgets.js";
+import { refreshWidgetMessage, validSlackResponseUrl } from "../lib/slack-widget-presentation.js";
 import { recordOpsError, summarizeOpsError } from "../lib/ops-errors.js";
 import { performWidgetAction, submitWidgetWorkflow, validateWidgetSubmission, type WidgetSubmission } from "../lib/slack-widget-workflows.js";
 
-export function registerSlackWidgetActions(bolt: App) {
+const widgetDependencies = { loadWidget, loadWidgetOrigin, storeWidgetOrigin, saveWidgetFeedback, performWidgetAction, submitWidgetWorkflow };
+export function registerSlackWidgetActions(bolt: App, overrides: Partial<typeof widgetDependencies> = {}) {
+  const { loadWidget, loadWidgetOrigin, storeWidgetOrigin, saveWidgetFeedback, performWidgetAction, submitWidgetWorkflow } = { ...widgetDependencies, ...overrides };
   bolt.action(/^nobo_widget_/, async ({ ack, body, action, client }) => {
     await ack();
     if (!("action_id" in action) || action.action_id === "nobo_widget_open") return;
@@ -13,14 +16,23 @@ export function registerSlackWidgetActions(bolt: App) {
     if (!channelId || !teamId) return;
     const tell = (text: string) => client.chat.postEphemeral({ channel: channelId, user: body.user.id, text });
     try {
-      const raw = "value" in action && typeof action.value === "string" ? action.value : "";
+      const raw = action.action_id === "nobo_widget_more" && "selected_option" in action
+        ? action.selected_option?.value ?? "" : "value" in action && typeof action.value === "string" ? action.value : "";
       const [id, rating] = raw.split(":");
       const record = await loadWidget(id ?? "", { channelId, teamId, userId: body.user.id });
+      const origin: WidgetOrigin = {
+        ts: "message" in body ? body.message?.ts : undefined,
+        blocks: "message" in body ? body.message?.blocks as unknown as WidgetBlock[] : undefined,
+        ephemeral: "container" in body && body.container?.is_ephemeral === true,
+        responseUrl: "response_url" in body && validSlackResponseUrl(body.response_url) ? body.response_url : undefined
+      };
+      if (origin.ts || origin.responseUrl) await storeWidgetOrigin(record, origin);
       if (action.action_id === "nobo_widget_feedback") {
         if (rating !== "good" && rating !== "bad") throw new Error("Invalid feedback.");
         await saveWidgetFeedback(record, rating);
-        await tell("Thanks — your feedback was saved.");
-      } else if (action.action_id === "nobo_widget_feedback_detail" && "trigger_id" in body) {
+        if (rating === "good") return;
+      }
+      if ((action.action_id === "nobo_widget_feedback_detail" || (action.action_id === "nobo_widget_feedback" && rating === "bad")) && "trigger_id" in body) {
         await client.views.open({
           trigger_id: body.trigger_id,
           view: {
@@ -31,14 +43,15 @@ export function registerSlackWidgetActions(bolt: App) {
               { type: "input", block_id: "rating", label: plain("Was this helpful?"),
                 element: { type: "static_select", action_id: "value", options: [
                   { text: plain("Helpful"), value: "good" }, { text: plain("Not helpful"), value: "bad" }
-                ] } },
+                ], ...(rating === "bad" ? { initial_option: { text: plain("Not helpful"), value: "bad" } } : {}) } },
               { type: "input", block_id: "detail", label: plain("What could be better?"), optional: true,
                 element: { type: "plain_text_input", action_id: "value", multiline: true, max_length: 2000 } }
             ]
           }
         });
-      } else await performWidgetAction(record, action.action_id.replace("nobo_widget_", ""), {
+      } else await performWidgetAction(record, action.action_id === "nobo_widget_more" ? rating ?? "" : action.action_id.replace("nobo_widget_", ""), {
         tell,
+        refresh: async () => refreshWidgetMessage(client, await loadWidget(record.id, record.target), origin),
         reply: (text, blocks) => client.chat.postMessage({ channel: channelId, thread_ts: record.target.threadTs || undefined, text,
           blocks } as unknown as ChatPostMessageArguments),
         privateCard: (text, blocks) => client.chat.postEphemeral({ channel: channelId, user: body.user.id, text, blocks } as unknown as ChatPostEphemeralArguments),
@@ -70,6 +83,7 @@ export function registerSlackWidgetActions(bolt: App) {
     try {
       const record = await loadWidget(meta.id, { channelId: meta.channelId, teamId: body.team.id, userId: body.user.id });
       await submitWidgetWorkflow(record, submission, {
+        refresh: async () => refreshWidgetMessage(client, await loadWidget(record.id, record.target), await loadWidgetOrigin(record)),
         tell: (text) => client.chat.postEphemeral({ channel: record.target.channelId, user: body.user.id, text }),
         reply: (text, blocks) => client.chat.postMessage({ channel: record.target.channelId,
           thread_ts: record.target.threadTs || undefined, text, blocks } as unknown as ChatPostMessageArguments),
