@@ -388,24 +388,20 @@ test("builds Slack App Home dashboard sections", () => {
   const rendered = JSON.stringify(view);
 
   assert.equal(view.type, "home");
-  assert.match(rendered, /Reminders/);
-  assert.match(rendered, /Monitors/);
+  assert.match(rendered, /Coming up/);
+  assert.match(rendered, /Watching for you/);
   assert.match(rendered, /deploy failed/);
-  assert.match(rendered, /prefers concise updates/);
-  assert.match(rendered, /<#C123> \(4\)/);
-  assert.match(rendered, /DeepSeek V4 Pro/);
-  assert.match(rendered, /deepseek-v4-pro/);
+  assert.doesNotMatch(rendered, /prefers concise updates/);
+  assert.doesNotMatch(rendered, /deepseek-v4-pro/);
   assert.match(rendered, /launch plan/);
-  assert.match(rendered, /Quick Actions/);
+  assert.match(rendered, /Open toolbox/);
   assert.match(rendered, /nobo_home_tools/);
   assert.match(rendered, /Saved documents/);
   assert.match(rendered, /Integrations/);
   assert.match(rendered, /nobo_open_modal:prefs/);
-  assert.match(rendered, /\/nobo-channel-digest/);
-  assert.match(rendered, /\/nobo-search/);
-  assert.match(rendered, /\/nobo-polls/);
-  assert.match(rendered, /meeting-notes artifact/);
-  assert.match(rendered, /gentle/);
+  assert.match(rendered, /How to use NoBo/);
+  assert.match(rendered, /nobo_home_refresh/);
+  assert.doesNotMatch(rendered, /Quick Actions|Dashboard|meeting-notes artifact/);
 });
 
 test("extracts text-like Slack uploads into message context", async (t) => {

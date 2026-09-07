@@ -1,10 +1,17 @@
 import crypto from "node:crypto";
+import {
+  buildSlackAppHomeView,
+  buildSlackHomeDetailsView,
+  type HomeDetailsKind,
+  type SlackHomeDashboardData,
+  type SlackHomeChannelStatus
+} from "./slack-home-view.js";
 import AdmZip from "adm-zip";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WebClient } from "@slack/web-api";
 import { getSlackAgentRun, throwIfSlackAgentStopped, type AgentTaskUpdate } from "./slack-agent-runs.js";
 import { buildResponseFooter } from "./slack-response-cards.js";
-import { listRecentArtifacts, type RecentArtifact } from "./artifacts.js";
+import { listRecentArtifacts } from "./artifacts.js";
 import {
   chooseSlackActiveListeningResponse,
   createSlackReplyWithMemory,
@@ -37,8 +44,7 @@ import {
   listChannelPreferenceStatuses,
   getUserPreferences,
   maybeHandleUserPreferencesCommand,
-  type ChannelPreferenceStatus,
-  type UserPreferences
+  type ChannelPreferenceStatus
 } from "./preferences.js";
 import {
   formatOpenCodeGoModelName,
@@ -46,13 +52,11 @@ import {
 } from "./nobo-models.js";
 import {
   getUserScheduleDashboardItems,
-  maybeHandleScheduleCommand,
-  type ScheduleDashboardItem
+  maybeHandleScheduleCommand
 } from "./schedules.js";
 import {
   getUserMonitorDashboardItems,
-  maybeHandleMonitorCommand,
-  type MonitorDashboardItem
+  maybeHandleMonitorCommand
 } from "./monitors.js";
 import { maybeHandleSlackSkillCommand } from "./skills.js";
 import type { NoboModelMessage } from "./nobo-messages.js";
@@ -167,23 +171,6 @@ type SlackAcknowledgement = {
   channel: string;
   ts: string;
   name: string;
-};
-
-type SlackHomeDashboardData = {
-  userId: string;
-  memories: string[];
-  schedules: ScheduleDashboardItem[];
-  monitors: MonitorDashboardItem[];
-  artifacts: RecentArtifact[];
-  channelStatuses: SlackHomeChannelStatus[];
-  preferences: UserPreferences;
-  updatedAt: Date;
-};
-
-type SlackHomeChannelStatus = ChannelMemoryStatus & {
-  modelId?: string;
-  modelName?: string;
-  modelSource?: "default" | "channel";
 };
 
 type SlackMessageEvent = {
@@ -1255,7 +1242,13 @@ async function createSlackAppHomeView(userId: string) {
   return buildSlackAppHomeView(data);
 }
 
-async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDashboardData> {
+export async function createSlackHomeDetailsView(userId: string, kind: HomeDetailsKind) {
+  return buildSlackHomeDetailsView(await loadSlackHomeDashboardData(userId, kind), kind);
+}
+
+async function loadSlackHomeDashboardData(userId: string, details?: HomeDetailsKind): Promise<SlackHomeDashboardData> {
+  const unavailable: string[] = [];
+  const load = <T>(label: string, fn: () => Promise<T>, fallback: T) => loadSlackHomeSection(label, fn, fallback, unavailable);
   const [
     memories,
     schedules,
@@ -1265,13 +1258,13 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
     channelPreferenceStatuses,
     preferences
   ] = await Promise.all([
-    loadSlackHomeSection("memories", () => getUserMemories(userId), []),
-    loadSlackHomeSection("schedules", () => getUserScheduleDashboardItems(userId, 5), []),
-    loadSlackHomeSection("monitors", () => getUserMonitorDashboardItems(userId, 5), []),
-    loadSlackHomeSection("artifacts", () => listRecentArtifacts(5, { ownerUserId: userId }), []),
-    loadSlackHomeSection("channel status", () => listChannelMemoryStatuses(12), []),
-    loadSlackHomeSection("channel models", () => listChannelPreferenceStatuses(12), []),
-    loadSlackHomeSection("preferences", () => getUserPreferences(userId), {
+    load("memories", () => getUserMemories(userId), []),
+    load("schedules", () => getUserScheduleDashboardItems(userId, 5), []),
+    load("monitors", () => getUserMonitorDashboardItems(userId, details === "monitors" ? 20 : 5), []),
+    load("artifacts", () => listRecentArtifacts(5, { ownerUserId: userId }), []),
+    load("channel status", () => listChannelMemoryStatuses(12), []),
+    load("channel models", () => listChannelPreferenceStatuses(12), []),
+    load("preferences", () => getUserPreferences(userId), {
       ...DEFAULT_USER_PREFERENCES
     })
   ]);
@@ -1287,6 +1280,7 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
       channelPreferenceStatuses
     ),
     preferences,
+    unavailable,
     updatedAt: new Date()
   };
 }
@@ -1294,57 +1288,16 @@ async function loadSlackHomeDashboardData(userId: string): Promise<SlackHomeDash
 async function loadSlackHomeSection<T>(
   label: string,
   load: () => Promise<T>,
-  fallback: T
+  fallback: T,
+  unavailable?: string[]
 ) {
   try {
     return await load();
   } catch (error) {
+    unavailable?.push(label);
     console.warn(`Unable to load Slack Home ${label}: ${summarizeError(error)}`);
     return fallback;
   }
-}
-
-function buildSlackAppHomeView(data: SlackHomeDashboardData) {
-  return {
-    type: "home",
-    blocks: [
-      {
-        type: "header",
-        text: {
-          type: "plain_text",
-          text: "NoBo Home",
-          emoji: true
-        }
-      },
-      {
-        type: "context",
-        elements: [
-          {
-            type: "mrkdwn",
-            text: `Updated ${formatHomeTimestamp(data.updatedAt)}`
-          }
-        ]
-      },
-      { type: "divider" },
-      { type: "actions", elements: [{ type: "static_select", action_id: "nobo_home_tools", placeholder: { type: "plain_text", text: "Your NoBo tools…" },
-        options: [{ text: { type: "plain_text", text: "Personal toolbox" }, value: "toolbox" },
-          { text: { type: "plain_text", text: "My reminders" }, value: "reminders" },
-          { text: { type: "plain_text", text: "Saved documents" }, value: "artifacts" },
-          { text: { type: "plain_text", text: "Model settings" }, value: "models" },
-          { text: { type: "plain_text", text: "Integrations" }, value: "integrations" }] }] },
-      createSlackHomeOverviewBlock(data),
-      { type: "divider" },
-      createSlackHomeSection("Next Up", formatHomeSchedules(data.schedules)),
-      createSlackHomeSection("Monitors", formatHomeMonitors(data.monitors)),
-      createSlackHomeSection("Memory", formatHomeMemories(data.memories)),
-      createSlackHomeSection("Channels", formatHomeChannelStatuses(data.channelStatuses)),
-      createSlackHomeSection("Recent Artifacts", formatHomeArtifacts(data.artifacts)),
-      { type: "divider" },
-      createSlackHomePreferencesBlock(data.preferences),
-      createSlackHomeShortcutsBlock(),
-      createSlackHomeModalActionsBlock()
-    ]
-  };
 }
 
 function mergeSlackHomeChannelStatuses(
@@ -1389,219 +1342,6 @@ function withHomeChannelModel(
     modelName: formatOpenCodeGoModelName(modelId),
     modelSource: modelIdOverride ? "channel" : "default"
   };
-}
-
-function createSlackHomeOverviewBlock(data: SlackHomeDashboardData): SlackBlock {
-  const activeListeningCount = data.channelStatuses.filter(
-    (status) => status.activeListening
-  ).length;
-
-  return {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: "*Dashboard*"
-    },
-    fields: [
-      createSlackHomeField("Reminders", `${data.schedules.length} upcoming`),
-      createSlackHomeField("Monitors", `${data.monitors.length} active`),
-      createSlackHomeField("Memory", `${data.memories.length} saved`),
-      createSlackHomeField("Listening", `${activeListeningCount} channels on`),
-      createSlackHomeField("Artifacts", `${data.artifacts.length} recent`),
-      createSlackHomeField("Timezone", data.preferences.timeZone),
-      createSlackHomeField("Verbosity", data.preferences.verbosity)
-    ]
-  };
-}
-
-function createSlackHomeSection(title: string, body: string): SlackBlock {
-  return {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: truncateSlackHomeText(`*${title}*\n${body}`)
-    }
-  };
-}
-
-function createSlackHomePreferencesBlock(preferences: UserPreferences): SlackBlock {
-  return {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: "*Preferences*"
-    },
-    fields: [
-      createSlackHomeField("Timezone", preferences.timeZone),
-      createSlackHomeField("Verbosity", preferences.verbosity),
-      createSlackHomeField("Reminder style", preferences.reminderStyle),
-      createSlackHomeField(
-        "News",
-        preferences.newsInterests.length
-          ? preferences.newsInterests.slice(0, 5).join(", ")
-          : "none"
-      )
-    ]
-  };
-}
-
-function createSlackHomeShortcutsBlock(): SlackBlock {
-  return {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: "*Quick Actions*"
-    },
-    fields: [
-      createSlackHomeField("Threads", "`@NoBo summarize-thread`\n`@NoBo meeting-notes artifact`\n`@NoBo follow-ups`"),
-      createSlackHomeField("Triage", "`@NoBo what needs my attention?`\n`@NoBo issues`"),
-      createSlackHomeField("Channel", "`/nobo-listen on`\n`/nobo-memory`"),
-      createSlackHomeField("Search", "`/nobo-search <query>`\n`@NoBo web-search ...`"),
-      createSlackHomeField("Polls", "`/nobo-polls create Q? | A | B`\n`/nobo-polls results`"),
-      createSlackHomeField("Monitors", "`@NoBo monitor every 10 minutes alert if ... appears`\n`@NoBo monitors`"),
-      createSlackHomeField("Digests", "`/nobo-channel-digest daily 09:00`\n`/nobo-news [focus]`"),
-      createSlackHomeField("Settings", "`/nobo-prefs`\n`/nobo-channel-model`")
-    ]
-  };
-}
-
-function createSlackHomeModalActionsBlock(): SlackBlock {
-  return {
-    type: "actions",
-    elements: [
-      createHomeButton("New reminder", "nobo_open_modal:reminder"),
-      createHomeButton("Preferences", "nobo_open_modal:prefs")
-    ]
-  };
-}
-
-function createHomeButton(text: string, actionId: string) {
-  return {
-    type: "button",
-    text: {
-      type: "plain_text",
-      text,
-      emoji: true
-    },
-    action_id: actionId
-  };
-}
-
-function createSlackHomeField(label: string, value: string) {
-  return {
-    type: "mrkdwn",
-    text: truncateSlackHomeText(`*${label}*\n${escapeSlackMrkdwn(value)}`)
-  };
-}
-
-function formatHomeSchedules(schedules: ScheduleDashboardItem[]) {
-  if (schedules.length === 0) {
-    return "No active reminders or crons.\n`@NoBo remind me in 10 minutes to check the logs`";
-  }
-
-  return schedules
-    .map((schedule) => {
-      const nextRun = formatHomeTimestamp(new Date(schedule.nextRunAt));
-      return `- \`${schedule.id.slice(0, 8)}\` ${escapeSlackMrkdwn(schedule.summary)}\n  Next: ${nextRun}`;
-    })
-    .join("\n");
-}
-
-function formatHomeMonitors(monitors: MonitorDashboardItem[]) {
-  if (monitors.length === 0) {
-    return "No active monitors.\n`@NoBo monitor every 10 minutes alert if deploy failed appears`";
-  }
-
-  return monitors
-    .map((monitor) => {
-      const nextRun = formatHomeTimestamp(new Date(monitor.nextRunAt));
-      return `- \`${monitor.id.slice(0, 8)}\` ${escapeSlackMrkdwn(monitor.summary)}\n  Next: ${nextRun}`;
-    })
-    .join("\n");
-}
-
-function formatHomeMemories(memories: string[]) {
-  if (memories.length === 0) {
-    return "No saved memories yet.\n`@NoBo remember I prefer concise updates`";
-  }
-
-  return memories
-    .slice(0, 8)
-    .map((memory) => `- ${escapeSlackMrkdwn(memory)}`)
-    .join("\n");
-}
-
-function formatHomeChannelStatuses(statuses: SlackHomeChannelStatus[]) {
-  const active = statuses.filter((status) => status.activeListening);
-  const known = statuses.filter((status) => !status.activeListening);
-  const lines = [
-    active.length > 0
-      ? `Listening on:\n${active.map(formatHomeChannelStatus).join("\n")}`
-      : "On: none. Use `/nobo-listen on` in a channel."
-  ];
-
-  if (known.length > 0) {
-    lines.push(`Known:\n${known.slice(0, 6).map(formatHomeChannelStatus).join("\n")}`);
-  }
-
-  return lines.join("\n");
-}
-
-function formatHomeArtifacts(artifacts: RecentArtifact[]) {
-  if (artifacts.length === 0) {
-    return "No recent artifacts.\nReact with `:memo:` on a thread or use `@NoBo artifacts list`.";
-  }
-
-  return artifacts
-    .map(
-      (artifact) =>
-        `- ${formatSlackHomeLink(artifact.previewUrl, artifact.title)} (${artifact.kind}, ${formatHomeTimestamp(new Date(artifact.updatedAt))})`
-    )
-    .join("\n");
-}
-
-function formatHomeChannelStatus(status: SlackHomeChannelStatus) {
-  const label = /^[CDG][A-Z0-9]+$/.test(status.channelId)
-    ? `<#${status.channelId}>`
-    : escapeSlackMrkdwn(status.channelId);
-  const model = getHomeChannelModelLabel(status);
-
-  return `- ${label} (${status.memoryCount}) - ${model}`;
-}
-
-function getHomeChannelModelLabel(status: SlackHomeChannelStatus) {
-  const modelId = status.modelId ?? getDefaultSlackTextModel();
-  const modelName = status.modelName ?? formatOpenCodeGoModelName(modelId);
-  const source = status.modelSource === "channel" ? "override" : "default";
-
-  return `${escapeSlackMrkdwn(modelName)} \`${escapeSlackMrkdwn(modelId)}\` (${source})`;
-}
-
-function formatSlackHomeLink(url: string, label: string) {
-  return `<${url.replace(/[<>\s|]/g, "")}|${escapeSlackMrkdwn(label)}>`;
-}
-
-function formatHomeTimestamp(date: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "America/Chicago"
-  }).format(date);
-}
-
-function escapeSlackMrkdwn(input: string) {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function truncateSlackHomeText(input: string) {
-  if (input.length <= SLACK_SECTION_BLOCK_TEXT_LIMIT) {
-    return input;
-  }
-
-  return `${input.slice(0, SLACK_SECTION_BLOCK_TEXT_LIMIT - 4)}...`;
 }
 
 export async function resolveSlackChannelIdByName({

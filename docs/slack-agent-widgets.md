@@ -28,7 +28,7 @@ Each message has at most two visible action buttons and one native overflow menu
 five entries). Research offers Save note / Dig deeper; catch-ups offer Save note / Turn into
 tasks; task lists offer Save note / Create issues; documents offer Open / Revise; reminders
 offer Edit / Cancel. A meme never gets research or issue-management actions. Simple answers
-need no action buttons at all. Global tools live in NoBo Home → Your NoBo tools: reminders,
+need no action buttons at all. Global tools live in NoBo Home → Open toolbox or More: reminders,
 saved documents, channel model settings, and integration readiness. Existing slash commands
 remain available; this moves presentation, not capabilities.
 

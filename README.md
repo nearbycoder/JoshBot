@@ -170,14 +170,14 @@ Enable the Slack App Home surface if you want NoBo to show a dashboard with remi
 
 NoBo publishes a Slack App Home dashboard on `app_home_opened`. It includes:
 
-- Upcoming reminders and crons for the current user
-- Active conditional monitors for the current user
-- Saved personal memories
-- Active-listening channel status and shared-memory counts
-- Channel model overrides
-- Recent generated artifacts
-- Current user preferences
-- Quick command examples for threads, triage, search, polls, monitors, digests, channel settings, and preferences
+- Two primary actions: **Open toolbox** and **New reminder**
+- **Coming up**: the next three reminders, with controls behind Manage
+- **Recent documents**: the three most recently updated documents, with Browse for more
+- **Watching for you**: a short monitor preview, shown only when needed
+- **More**: focused views for personal memory, channel activity, monitors, model settings, integrations, and a command guide
+- Preferences and Refresh controls; dates use the user's saved timezone
+
+The Home page uses native Slack Block Kit controls and avoids repeating settings or a large command reference in the main view. Empty and unavailable-data states are distinct. Existing Home setup and permissions are unchanged; reopen Home after deployment to load the new layout.
 
 For local development, expose the app with a tunnel:
 
