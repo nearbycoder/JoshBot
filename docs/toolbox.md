@@ -94,6 +94,10 @@ Save `create Team | America/Chicago, Europe/London`. `convert <id> | 2026-09-07T
 
 `create This week | 2026-09-07 | 30` sets a Monday-starting plan and hour capacity. Add `task <id> | Ship toolbox | 4 | 5 | 2026-09-09` (estimate, priority 1–5, due date). `plan <id>` prioritizes overdue work, then priority and deadline; it fits whole tasks into capacity and explicitly lists deferred work. Completed estimates consume capacity. Correct `effort`, `priority`, `due`, or `capacity`; mark `done <id> | 1` and `undo`. Up to 50 tasks, no assignments or calendar bookings. This is a greedy planning aid, not an optimal scheduling solver.
 
-## Planned feature sequence
+## Input and privacy notes
 
-Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
+The Home picker is alphabetical. `show <id>` gives a readable tool-specific view; `export <id>` retains the complete JSON record. The command field resets to `help` after a Run so a previous save is not accidentally repeated. To include a literal pipe in a field, write `\|`; write `\\` for a literal backslash. Multiline text is supported. New Run submissions are intentional new operations; retry receipts only deduplicate the same Slack delivery.
+
+Deleting an entry also clears cached reply content for that tool, while retaining recent request IDs to prevent delayed retries from recreating deleted data. Redis backups follow the existing infrastructure retention policy.
+
+All 20 features shipped separately in PRs #30–49. Every PR runs the full test suite, typecheck, dependency audit and build in CI before merging. No additional production dependencies, Slack scopes, registered commands or services were added. The final integration review covers every tool's lifecycle and the private modal boundary. Existing Redis backup/retention policies still apply; export important entries rather than treating this as the only copy.

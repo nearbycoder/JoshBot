@@ -1,0 +1,23 @@
+// Deterministic, service-free examples used by lifecycle tests and the opt-in runtime smoke check.
+export const toolboxExamples: Record<string, string> = {
+  notes: "add Example note | Keep this thought",
+  bookmarks: "add Example bookmark | https://example.com | Reference",
+  checklists: "create Example checklist",
+  prompts: "add Example prompt | Explain {{topic}}",
+  snippets: "add Example snippet | sql | SELECT 1;",
+  journal: "write 2026-09-07 | 4 | Shipped | Test earlier",
+  habits: "create Example habit | 5",
+  timelog: "start Example project | Example task",
+  focus: "start Example focus | 25 | 5",
+  standups: "create 2026-09-07 | Example project",
+  retros: "create Example retrospective",
+  scorecards: "create Example decision",
+  agendas: "create Example agenda | 30",
+  glossary: "define EXAMPLE | A demonstration",
+  goals: "create Example goal | 10 | items | 2026-12-31",
+  releases: "create Example release",
+  countdowns: "add Example milestone | 2026-10-01",
+  timezones: "create Example team | America/Chicago, Europe/London",
+  textkit: "save Example draft | First line",
+  workload: "create Example week | 2026-09-07 | 20",
+};
