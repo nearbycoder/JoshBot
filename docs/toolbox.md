@@ -78,6 +78,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 `create v1.2`, then `gate <id> | Tests | Josh`, records a release checklist with owners. Use `record <id> | 1 | pass | CI run URL/details` or `blocked | Failure details`; each record needs 5–500 characters of evidence. `readiness <id>` is ready only when at least one gate exists and all gates pass. `reset <id> confirm` clears evidence for reuse. **This is a manual record: it does not run CI, validate the evidence, contact owners, merge or deploy.**
 
+## 17. Milestone countdowns (`countdowns`)
+
+`add Launch | 2026-10-01` saves a date. `count <id>` shows calendar days and weekdays remaining (or elapsed for past dates); `upcoming 30` returns active milestones in the next 30 days, including today. `reschedule <id> | 2026-10-15`, `archive <id>`, and `restore <id>` manage changes without losing the record. Dates use UTC. Weekday counts exclude Saturdays/Sundays **but not holidays**; no notifications are scheduled.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
