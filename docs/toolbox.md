@@ -58,6 +58,10 @@ Create a private update with `create 2026-09-07 | NoBo`. Fill `yesterday <id> | 
 
 Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Small PRs` (categories: keep, change, try). Cards have stable numbers. Set `priority <id> | 1 | 5`, `edit <id> | 1 | Updated thought`, `resolve <id> | 1` or `reopen`. `report <id>` groups cards by category and sorts by priority. Up to 50 cards; this is private preparation, not a shared voting board.
 
+## 12. Decision scorecards (`scorecards`)
+
+`create Choose architecture`, add `criterion <id> | Simplicity | 5` (weight 1–10), add `option <id> | Bolt`, then `score <id> | Bolt | Simplicity | 4` (0–5). `rank <id>` requires every pairing, computes weighted percentages and identifies a tied top score. Repeating criterion updates its weight; repeating score corrects that pairing. Remove an option/criterion via `remove-option` or `remove-criterion <id> | name | confirm`. Up to ten of each. Rankings transparently reflect your judgments, not model advice.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
