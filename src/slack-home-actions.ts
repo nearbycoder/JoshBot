@@ -1,4 +1,5 @@
 import type { App } from "@slack/bolt";
+import { toolboxView } from "./slack-toolbox.js";
 import type { ViewsOpenArguments } from "@slack/web-api";
 import { plain, textBlocks, escapeSlack, widgetButton, type WidgetBlock } from "../lib/slack-widgets.js";
 import { getUserScheduleDashboardItems, getOwnedSchedule, cancelScheduleById, editOwnedSchedule } from "../lib/schedules.js";
@@ -49,6 +50,8 @@ export function registerSlackHomeActions(bolt: App) {
           { type: "input", block_id: "when", label: plain("Next occurrence"), element: { type: "datetimepicker", action_id: "value", initial_date_time: Math.floor(new Date(schedule.nextRunAt).getTime() / 1000) } },
           ...textBlocks(`Timezone: ${escapeSlack(schedule.timezone)}. Cadence and destination stay unchanged.`)
         ], { callback_id: "nobo_home_edit_submit", private_metadata: id, submit: plain("Save") }));
+      } else if (selected === "toolbox") {
+        await show(toolboxView());
       } else if (selected === "reminders") {
         const items = await getUserScheduleDashboardItems(body.user.id, 10);
         const blocks = items.flatMap((item) => [

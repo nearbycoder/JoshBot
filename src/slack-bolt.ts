@@ -12,6 +12,7 @@ import { registerSlackAgentEvents, buildSlackActiveContextHint } from "./slack-a
 import { withSlackAgentRun, SlackAgentStoppedError } from "../lib/slack-agent-runs.js";
 import { registerSlackWidgetActions } from "./slack-widget-actions.js";
 import { registerSlackHomeActions } from "./slack-home-actions.js";
+import { registerSlackToolbox } from "./slack-toolbox.js";
 
 export const SLACK_ENDPOINTS = ["/api/slack/events", "/api/slack/commands", "/api/slack/interactions", "/slack/events"];
 const defaultHandlers = {
@@ -80,6 +81,7 @@ export function createSlackBolt(options: {
   registerSlackAgentEvents(bolt);
   registerSlackWidgetActions(bolt);
   registerSlackHomeActions(bolt);
+  registerSlackToolbox(bolt);
   bolt.command(/^\/nobo(?:-|$)/, async ({ command, ack, respond, client }) => {
     // Slow model lists/background jobs must not hold Slack's three-second acknowledgement.
     await ack();
@@ -109,7 +111,7 @@ export function createSlackBolt(options: {
       await respond({ response_type: "ephemeral", text: "NoBo could not complete that command. Please try again." });
     }
   });
-  bolt.action(/^(?!nobo_widget_|nobo_home_).*/, async ({ body, ack, respond, client }) => {
+  bolt.action(/^(?!nobo_widget_|nobo_home_|nobo_tools_).*/, async ({ body, ack, respond, client }) => {
     await ack();
     const result = await handlers.interaction(body as SlackInteractionPayload);
     if (result.modal) {
@@ -126,7 +128,7 @@ export function createSlackBolt(options: {
       await respond(result.response);
     }
   });
-  bolt.view({ callback_id: /^(?!nobo_widget_|nobo_home_).*/, type: "view_submission" }, async ({ body, ack }) => {
+  bolt.view({ callback_id: /^(?!nobo_widget_|nobo_home_|nobo_tools_).*/, type: "view_submission" }, async ({ body, ack }) => {
     // Validation errors and views.update must be returned in the acknowledgement itself.
     const result = await handlers.interaction(body as SlackInteractionPayload);
     if ("response_action" in result.response && result.response.response_action === "update") await ack({
