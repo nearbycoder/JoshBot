@@ -66,6 +66,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 `create Planning | 45` sets a minute budget. Add `topic <id> | Scope review | Josh | 15 | Agree on scope` with owner and desired outcome. `timeline <id>` displays time windows and highlights overruns. Reorder with `move <id> | <topic number> | <position>`, resize with `minutes <id> | <topic number> | 10`, or `remove <id> | <topic number> | confirm`. Stable topic numbers, up to 30 topics. Owners are labels only; this does not invite or notify anyone.
 
+## 14. Personal glossary (`glossary`)
+
+`define ADR | Architecture decision record` saves a definition; `alias <id> | Decision record` adds a synonym. `lookup adr` resolves exact terms/aliases case-insensitively; `list <query>` searches definitions and titles. Use `revise <id> | Updated meaning`, `unalias <id> | alias`, or test recall via `quiz <id>` followed by `answer <id>`. Alias collisions are rejected. This glossary is personal, not injected into other users' model context.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
