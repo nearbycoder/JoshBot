@@ -22,6 +22,10 @@ tag <id> | work, launch
 
 Save HTTPS links with annotations and read/unread state: `add Slack docs | https://docs.slack.dev | API reference`. Use `queue`, `read <id>`, `unread <id>`, `annotate <id> | note`, or `url <id> | https://example.com`. Duplicate URLs are rejected, Slack-formatted links are normalized, credentials/non-HTTPS links are refused, and nothing fetches the saved URLs. Search title, URL, note or tags with `list <query>`.
 
+## 3. Project checklists (`checklists`)
+
+`create Release` makes a manual checklist, independent of thread-extracted follow-ups. Add `item <id> | Run tests`, mark `done <id> | 1` or `undo <id> | 1`, and see `progress <id>`. Item numbers remain stable after `remove <id> | 1 | confirm`. `reset <id> confirm` unchecks every item for reuse. Up to 50 items/list; nothing assigns work or posts to other people.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.

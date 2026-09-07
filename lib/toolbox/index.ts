@@ -1,7 +1,9 @@
+import { checklists } from "./checklists.js";
 import { runFeature, type Feature } from "./core.js";
 import { notes } from "./notes.js";
 import { bookmarks } from "./bookmarks.js";
 export const features: Feature[] = [
+  checklists,
   notes, bookmarks,
 ];
 export async function handleToolbox(text: string, owner: { userId?: string; teamId?: string }, requestId?: string) {
