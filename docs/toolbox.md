@@ -86,6 +86,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 Save `create Team | America/Chicago, Europe/London`. `convert <id> | 2026-09-07T15:00:00Z` converts an exact instant using the runtime's IANA/DST rules. `overlap <id> | 2026-09-07T00:00:00Z | 60 | 9 | 17` finds hour-long weekday meetings fitting everyone's local 09:00–17:00 window in the next 48 hours, showing the first ten candidates. Use 30-minute duration increments, up to eight zones, and daytime windows (no overnight shifts). `zone` adds a zone; `remove-zone <id> | Asia/Tokyo | confirm` removes it. Holidays are **not** excluded. No calendar access or invitations.
 
+## 19. Text formatting workbench (`textkit`)
+
+`save Draft | First line` stores text (multiline is supported). Use `preview <id> | bullets` without changing it, or `apply <id> | numbered` to save. Formats: trim, bullets, numbered, dedupe (exact trimmed lines), sort, ASCII slug, and JSON pretty-print. `edit <id> | New text` also supports one-step `undo <id>`. `stats <id>` reports word count, visible Unicode graphemes, lines and UTF-8 bytes. JSON rejects unsafe integers/nonfinite numbers; quote large IDs. No model calls or code execution.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
