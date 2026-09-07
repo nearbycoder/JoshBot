@@ -50,6 +50,10 @@ Record `write 2026-09-07 | 4 | Shipped a feature | Test earlier` (date, mood 1�
 
 `start Write proposal | 25 | 5` starts a work/break session. `status <id>`, `pause <id>` and `resume <id>` use persisted timestamps, so restarts do not reset the countdown. Once a phase finishes, `next <id>` starts the next phase and counts completed work blocks. `finish <id>` ends the session without awarding an incomplete block. Only one session can be active. Work is 1–180 minutes and breaks 1–60. **No automatic notification is sent**; check status or separately use the existing NoBo reminder feature.
 
+## 10. Standup builder (`standups`)
+
+Create a private update with `create 2026-09-07 | NoBo`. Fill `yesterday <id> | ...`, `today <id> | ...`, and `blockers <id> | None`. `draft <id>` produces a clean copyable update. `carry <id> | 2026-09-08` moves today's plan into the next draft's yesterday section and retains blockers, without overwriting an existing draft. Nothing is posted or scheduled automatically.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
