@@ -1,3 +1,4 @@
+import { handleToolbox } from "./toolbox/index.js";
 import {
   addChannelDecision,
   formatChannelDecisionList,
@@ -347,6 +348,11 @@ export async function handleSlackSlashCommandPayload(
     );
   }
 
+  if (/^tools(?:\s|$)/i.test(payload.text.trim())) {
+    const output = await handleToolbox(payload.text.trim().replace(/^tools\s*/i, ""), { userId: payload.user_id, teamId: payload.team_id }, payload.trigger_id);
+    return immediate({ response_type: "ephemeral", text: output, mrkdwn: false });
+  }
+
   if (!text || text === "help") {
     return immediate(ephemeral(formatNoboSlashCommandHelp()));
   }
@@ -362,6 +368,7 @@ export function formatNoboSlashCommandHelp() {
   return [
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
+    "`/nobo-help tools`: private productivity toolbox (also in NoBo Home)",
     "`/nobo-status`: show ops health",
     "`/nobo-search <query>`: search recent channel history and your artifacts",
     "`/nobo-admin`: manage NoBo access controls",
