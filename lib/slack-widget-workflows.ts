@@ -5,7 +5,7 @@ import { createWidgetContinuation, createWidgetRevision } from "./ai.js";
 import { postGeneratedSlackMessage } from "./slack.js";
 import { withSlackAgentRun } from "./slack-agent-runs.js";
 import { FALLBACK_SLACK_TEXT_MODEL, getDefaultSlackTextModel } from "./nobo-models.js";
-import { claimWidgetAction, renderWidget, saveWidget, widgetContent, plain, textBlocks, escapeSlack, type WidgetRecord, type WidgetBlock, type WidgetStore } from "./slack-widgets.js";
+import { claimWidgetAction, setWidgetActionState, renderWidget, saveWidget, widgetContent, plain, textBlocks, escapeSlack, type WidgetRecord, type WidgetBlock, type WidgetStore } from "./slack-widgets.js";
 import { cancelScheduleById, createScheduleFromTool, editOwnedSchedule, getOwnedSchedule, getUserScheduleDashboardItems } from "./schedules.js";
 import { buildIssueDraft, getIssueDestinations, handleIssueDrafts, parseFollowUpsFromText, type IssueTarget } from "./issue-drafts.js";
 import { queueWidgetApproval } from "./slack-approvals.js";
@@ -17,6 +17,7 @@ export type WidgetIO = {
   open(view: ViewsOpenArguments["view"]): Promise<unknown>;
   postElsewhere?(channelId: string, text: string): Promise<unknown>;
   privateCard?(text: string, blocks?: WidgetBlock[]): Promise<unknown>;
+  refresh?(record: WidgetRecord): Promise<unknown>;
 };
 const defaults = { createArtifact, createWidgetContinuation, createWidgetRevision, postGeneratedSlackMessage,
   findArtifact, listArtifactVersions, updateArtifact, cancelScheduleById, createScheduleFromTool,
@@ -33,11 +34,13 @@ const followups: Record<string, string> = {
 };
 export async function performWidgetAction(record: WidgetRecord, action: string, io: WidgetIO, dependencies: WidgetWorkflowDeps = {}) {
   const deps = { ...defaults, ...dependencies };
+  if (action === "model_info") return io.open({ type: "modal", title: plain("Response details"), close: plain("Close"),
+    blocks: textBlocks(record.model ? escapeSlack(`Selected: ${record.model.selected}\nUsed: ${record.model.used}\n${record.model.reason ?? "No model fallback was needed."}`) : "Model details are unavailable for this response.") } as unknown as ViewsOpenArguments["view"]);
   if (action === "approve" || action === "reject") {
     if (!record.approval) throw new Error("This is not an approval card.");
-    if (!await claimWidgetAction(record.id, "decision", deps.store)) return io.tell("This approval was already decided or is processing. Check the thread; it will not run twice.");
+    return runWidgetMutation(record, "decision", action === "reject" ? "Rejected — nothing executed." : "Approval processed — see the result below.", io, deps.store, async () => {
     if (action === "reject") return io.tell("Rejected. Nothing was executed.");
-    const approval = record.approval;
+    const approval = record.approval!;
     if (approval.type === "schedule") {
       const created = await deps.createScheduleFromTool({ ...approval.context, sourceTs: "approval:" + record.id }, approval.schedule, { firstRunAt: approval.firstRunAt });
       if (!created.nextRunAt) throw new Error("Schedule is still processing. Check My reminders before retrying.");
@@ -57,6 +60,7 @@ export async function performWidgetAction(record: WidgetRecord, action: string, 
     }
     const result = await deps.handleIssueDrafts(approval.tasks, { targets: approval.targets, context: approval.context, create: true, approved: true });
     return io.reply(result);
+    });
   }
   if (action === "reminders") {
     const items = await deps.getUserScheduleDashboardItems(record.target.userId, 5);
@@ -69,9 +73,10 @@ export async function performWidgetAction(record: WidgetRecord, action: string, 
     const schedule = await deps.getOwnedSchedule(record.schedule.id, record.target.userId);
     await deps.assertSlackTargetChannelAllowed({ userId: record.target.userId, channelId: schedule.channel,
       action: "cancel_schedule", surface: "slack-interaction" });
-    if (!await claimWidgetAction(record.id, "cancel_reminder", deps.store)) return io.tell("This cancellation is already processing or was processed.");
+    return runWidgetMutation(record, "cancel_reminder", "Cancelled — future occurrences stopped.", io, deps.store, async () => {
     await deps.cancelScheduleById(schedule.id, record.target.userId);
     return io.tell("Reminder cancelled. Future occurrences are stopped; a delivery already in progress may still finish.");
+    });
   }
   if (action === "versions") {
     if (!record.artifact) throw new Error("No artifact attached to this card.");
@@ -111,17 +116,19 @@ export async function performWidgetAction(record: WidgetRecord, action: string, 
     } as unknown as ViewsOpenArguments["view"]);
   }
   if (action === "save") {
-    if (!await claimWidgetAction(record.id, "save", deps.store)) return io.tell("This save is already processing or was processed. Check the thread for its result.");
+    if (record.artifact) return io.tell("This document is already saved. Use Open document or Revise.");
+    return runWidgetMutation(record, "save", "Saved — open the note below.", io, deps.store, async () => {
     const artifact = await deps.createArtifact({ kind: "markdown", title: record.title, content: widgetContent(record), ownerUserId: record.target.userId });
     const card = await saveWidget({ target: record.target, kind: "artifact", title: "Saved note", text: "Saved your answer and sources as a Markdown note.",
       artifact: { id: artifact.id, title: artifact.title, url: artifact.previewUrl } }, deps.store);
     return io.reply(`Saved note: ${artifact.previewUrl}`, card ? renderWidget(card) : undefined);
+    });
   }
   if (followups[action]) {
     if ((action === "retry" || action === "alternate") && (!record.replaySafe || !record.prompt)) {
       return io.tell("Automatic retry is unavailable because this run may have performed actions or included an image. Review its results and send a fresh request.");
     }
-    if (!await claimWidgetAction(record.id, action, deps.store)) return io.tell("That follow-up is already processing or was processed. Check the thread.");
+    return runWidgetMutation(record, action, "Follow-up ready in the thread.", io, deps.store, async () => {
     let model: string | undefined;
     if (action === "alternate") {
       model = record.model?.used === FALLBACK_SLACK_TEXT_MODEL ? getDefaultSlackTextModel() : FALLBACK_SLACK_TEXT_MODEL;
@@ -132,8 +139,27 @@ export async function performWidgetAction(record: WidgetRecord, action: string, 
       channel: record.target.channelId, threadTs: record.target.threadTs,
       createReply: (onTextDelta) => deps.createWidgetContinuation(record, followups[action]!, onTextDelta, model)
     }), undefined, followups[action]);
+    });
   }
   return io.tell("This action is not available yet.");
+}
+
+/** Claims remain consumed after uncertainty; presentation failures never repeat a write. */
+async function runWidgetMutation(record: WidgetRecord, action: string, done: string, io: WidgetIO, store: WidgetStore | null | undefined, work: () => Promise<unknown>) {
+  if (!await claimWidgetAction(record.id, action, store)) return io.tell("This action was already submitted. Check its result; it will not run twice.");
+  const display = async (status: "working" | "done" | "failed", label: string) => {
+    await setWidgetActionState(record, action, { status, label }, store);
+    await io.refresh?.(record).catch(() => {});
+  };
+  await display("working", "Working on your action…");
+  try {
+    const result = await work();
+    await display("done", done);
+    return result;
+  } catch (error) {
+    await display("failed", "Action needs attention — check the result before submitting again.").catch(() => {});
+    throw error;
+  }
 }
 
 function input(id: string, label: string, value: string, maxLength: number): WidgetBlock {
@@ -171,36 +197,37 @@ export async function submitWidgetWorkflow(record: WidgetRecord, submission: Wid
         destinations: getIssueDestinations([submission.target as IssueTarget]) };
     if (approval.type === "post") await deps.assertSlackTargetChannelAllowed({ userId: record.target.userId,
       channelId: approval.channelId, action: "preview_post", surface: "slack-interaction" });
-    if (!await claimWidgetAction(record.id, submission.action + "_review", deps.store)) return io.tell("A review card was already created. Use that card to approve or reject.");
-    return queueWidgetApproval(record.target, approval, "Review before sending",
+    return runWidgetMutation(record, submission.action + "_review", "Review ready — use the private approval card.", io, deps.store, () => queueWidgetApproval(record.target, approval, "Review before sending",
       approval.type === "post" ? `Destination: <#${approval.channelId}>\n\n${escapeSlack(approval.text)}`
         : `Provider: ${submission.target}\nDestination: ${escapeSlack(Object.values(approval.destinations).join(", "))}\n\n` +
           approval.tasks.map((task) => { const draft = buildIssueDraft(approval.targets[0]!, task);
             return escapeSlack(draft.title + "\n" + draft.body); }).join("\n\n"),
-      { store: deps.store, publish: (text, blocks) => io.privateCard ? io.privateCard(text, blocks) : io.reply(text, blocks) });
+      { store: deps.store, publish: (text, blocks) => io.privateCard ? io.privateCard(text, blocks) : io.reply(text, blocks) }));
   }
   if (submission.action === "edit_reminder") {
     if (!record.schedule) throw new Error("No reminder attached.");
-    if (!await claimWidgetAction(record.id, "edit_reminder", deps.store)) return io.tell("This edit is already processing or was processed.");
-    const updated = await deps.editOwnedSchedule(record.schedule.id, record.target.userId, submission.text, new Date(submission.when! * 1000).toISOString());
+    return runWidgetMutation(record, "edit_reminder", "Updated — use the new reminder card below.", io, deps.store, async () => {
+    const updated = await deps.editOwnedSchedule(record.schedule!.id, record.target.userId, submission.text, new Date(submission.when! * 1000).toISOString());
     return publishReminder(record, updated, io, deps.store);
+    });
   }
   if (!record.artifact) throw new Error("No artifact attached.");
   const found = await deps.findArtifact(record.artifact.id, { ownerUserId: record.target.userId });
   if (found.status !== "found") throw new Error("Artifact is unavailable.");
   if (found.artifact.bytes > 24000) throw new Error("This document is too large for guided revision. Use /nobo-artifacts update with complete replacement content.");
-  if (!await claimWidgetAction(record.id, "revise", deps.store)) return io.tell("This revision is already processing or was processed.");
+  return runWidgetMutation(record, "revise", "Revised — open the updated document below.", io, deps.store, async () => {
   const content = await deps.readFile(found.artifact.path, "utf8");
   await io.tell("Revising the document. Its previous version will be retained.");
   const replacement = await deps.createWidgetRevision(content, submission.text, record.target.userId, found.artifact.kind);
   if (!replacement.trim()) throw new Error("The model returned an empty revision. Nothing was overwritten.");
-  const latest = await deps.findArtifact(record.artifact.id, { ownerUserId: record.target.userId });
+  const latest = await deps.findArtifact(record.artifact!.id, { ownerUserId: record.target.userId });
   if (latest.status !== "found" || latest.artifact.updatedAt !== found.artifact.updatedAt) throw new Error("The artifact changed while revising. Nothing was overwritten; start a fresh revision.");
-  const result = await deps.updateArtifact({ idPrefix: record.artifact.id, ownerUserId: record.target.userId,
+  const result = await deps.updateArtifact({ idPrefix: record.artifact!.id, ownerUserId: record.target.userId,
     expectedRevision: found.artifact.updatedAt ?? found.artifact.createdAt,
     content: replacement.replace(/^\`\`\`(?:html|markdown|md)?\s*\n([\s\S]*?)\n\`\`\`\s*$/, "$1") });
   if (!result.ok) throw new Error("Unable to save the revision: " + result.reason);
   const card = await saveWidget({ target: record.target, kind: "artifact", title: "Document revised", text: "Saved the revision. The previous version is retained.",
-    artifact: { id: result.artifact.id, title: result.artifact.title, url: result.artifact.previewUrl } }, deps.store);
+    artifact: { id: result.artifact.id, title: result.artifact.title, url: result.artifact.previewUrl, imageUrl: result.artifact.imageUrl } }, deps.store);
   return io.reply("Document revised: " + result.artifact.previewUrl, card ? renderWidget(card) : undefined);
+  });
 }

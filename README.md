@@ -543,7 +543,9 @@ Memory commands also remain available:
 
 NoBo adds source cards, structured catch-ups, model/fallback details, grouped task progress,
 document save/revise/version controls, reminder edit/cancel cards, approval workflows,
-feedback, safe recovery, and read-only follow-up buttons. Use `/nobo-reminder list` to manage
+feedback, safe recovery, and read-only follow-up buttons. Responses show at most two contextual
+buttons plus a compact overflow menu. Global tools live on NoBo Home; HTML artifacts get
+static inline image previews. Use `/nobo-reminder list` to manage
 existing reminders. See [the widget guide](docs/slack-agent-widgets.md) for behavior,
 security boundaries, examples, and deployment checks. No additional Slack scopes are
 introduced beyond the existing Bolt/Agents setup.

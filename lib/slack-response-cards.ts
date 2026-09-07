@@ -6,6 +6,7 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   "list_artifact_versions", "diff_artifact_version", "list_schedules", "list_monitors", "present_result"
 ]);
 export function classifyWidgetPrompt(prompt = ""): WidgetRecord["kind"] {
+  if (/turn.{0,30}(tasks|checklist)|action.items|task list/i.test(prompt)) return "tasks";
   if (/catch.?up|summari[sz]e.{0,30}(channel|conversation|thread)|decisions.*(questions|actions)/i.test(prompt)) return "catchup";
   if (/research|search|compare|latest|sources|news/i.test(prompt)) return "research";
   return "answer";
@@ -79,7 +80,8 @@ export function createWidgetToolObserver() {
     if (name === "create_artifact" || name === "update_artifact") {
       const artifact = result.artifact && typeof result.artifact === "object" ? result.artifact as Record<string, unknown> : result;
       if (typeof artifact.id === "string" && typeof artifact.previewUrl === "string" && safeWidgetUrl(artifact.previewUrl)) {
-        run.widget.artifact = { id: artifact.id, title: String(artifact.title ?? "Document"), url: artifact.previewUrl };
+        run.widget.artifact = { id: artifact.id, title: String(artifact.title ?? "Document"), url: artifact.previewUrl,
+          ...(typeof artifact.imageUrl === "string" && safeWidgetUrl(artifact.imageUrl) ? { imageUrl: artifact.imageUrl } : {}) };
         run.widget.kind = "artifact";
       }
     }
@@ -91,7 +93,7 @@ export async function buildResponseFooter(text: string, failed = false, store?: 
   const kind = failed ? "error" : run.widget.kind ?? classifyWidgetPrompt(run.widget.prompt);
   const record = await saveWidget({
     ...run.widget, target: { teamId: run.teamId, userId: run.userId, channelId: run.channelId, threadTs: run.threadTs },
-    kind, title: failed ? "NoBo needs another try" : kind === "research" ? "Research results" :
+    kind, presentation: "footer", title: failed ? "NoBo needs another try" : kind === "research" ? "Research results" :
       kind === "catchup" ? "Conversation catch-up" : "NoBo response",
     text: text.slice(0, 24000), replaySafe: !run.hasSideEffects && run.widget.replaySafe !== false
   }, store);

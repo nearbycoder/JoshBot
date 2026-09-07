@@ -1326,6 +1326,11 @@ function buildSlackAppHomeView(data: SlackHomeDashboardData) {
         ]
       },
       { type: "divider" },
+      { type: "actions", elements: [{ type: "static_select", action_id: "nobo_home_tools", placeholder: { type: "plain_text", text: "Your NoBo tools…" },
+        options: [{ text: { type: "plain_text", text: "My reminders" }, value: "reminders" },
+          { text: { type: "plain_text", text: "Saved documents" }, value: "artifacts" },
+          { text: { type: "plain_text", text: "Model settings" }, value: "models" },
+          { text: { type: "plain_text", text: "Integrations" }, value: "integrations" }] }] },
       createSlackHomeOverviewBlock(data),
       { type: "divider" },
       createSlackHomeSection("Next Up", formatHomeSchedules(data.schedules)),
@@ -1463,10 +1468,8 @@ function createSlackHomeModalActionsBlock(): SlackBlock {
   return {
     type: "actions",
     elements: [
-      createHomeButton("Reminder", "nobo_open_modal:reminder"),
-      createHomeButton("Prefs", "nobo_open_modal:prefs"),
-      createHomeButton("Digest", "nobo_open_modal:digest"),
-      createHomeButton("Artifacts", "nobo_open_modal:artifacts")
+      createHomeButton("New reminder", "nobo_open_modal:reminder"),
+      createHomeButton("Preferences", "nobo_open_modal:prefs")
     ]
   };
 }

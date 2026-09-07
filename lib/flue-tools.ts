@@ -287,6 +287,7 @@ function createArtifactTool(ownerUserId: string | undefined) {
         updatedAt: artifact.updatedAt ?? artifact.createdAt,
         expiresAt: artifact.expiresAt ?? null,
         previewUrl: artifact.previewUrl,
+        ...(artifact.imageUrl ? { imageUrl: artifact.imageUrl } : {}),
         rawUrl: artifact.rawUrl
       });
     }

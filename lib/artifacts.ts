@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import { renderArtifactImage } from "./artifact-images.js";
 
 export type ArtifactKind = "html" | "markdown";
 
@@ -18,6 +19,7 @@ export type ArtifactMetadata = {
   updatedAt?: string;
   expiresAt?: string;
   bytes: number;
+  imageUrl?: string;
 };
 
 export type CreatedArtifact = ArtifactMetadata;
@@ -156,6 +158,7 @@ export async function createArtifact({
       ? `${getArtifactBaseUrl()}/artifacts/${encodeURIComponent(id)}/preview`
       : rawUrl;
 
+  const imageUrl = kind === "html" ? await saveArtifactImage(id, content) : undefined;
   const artifact = {
     id,
     kind,
@@ -168,7 +171,8 @@ export async function createArtifact({
     createdAt: createdAt.toISOString(),
     updatedAt: createdAt.toISOString(),
     ...(resolvedExpiresAt ? { expiresAt: resolvedExpiresAt } : {}),
-    bytes
+    bytes,
+    ...(imageUrl ? { imageUrl } : {})
   };
 
   await writeFile(path.join(targetDir, ARTIFACT_METADATA_FILENAME), JSON.stringify(artifact, null, 2), "utf8");
@@ -373,7 +377,8 @@ async function updateArtifactUnlocked({
     createdAt: existing.createdAt,
     updatedAt: updatedAt.toISOString(),
     expiresAt: resolvedExpiresAt,
-    bytes
+    bytes,
+    imageUrl: nextKind === "html" ? await saveArtifactImage(existing.id, content) : undefined
   });
 
   await writeFile(path.join(artifactDir, ARTIFACT_METADATA_FILENAME), JSON.stringify(artifact, null, 2), "utf8");
@@ -477,7 +482,8 @@ async function rollbackArtifactUnlocked(
     createdAt: match.artifact.createdAt,
     updatedAt: now.toISOString(),
     expiresAt: version.expiresAt,
-    bytes: Buffer.byteLength(version.content, "utf8")
+    bytes: Buffer.byteLength(version.content, "utf8"),
+    imageUrl: version.kind === "html" ? await saveArtifactImage(match.artifact.id, version.content) : undefined
   });
 
   await writeFile(path.join(artifactDir, ARTIFACT_METADATA_FILENAME), JSON.stringify(artifact, null, 2), "utf8");
@@ -537,6 +543,11 @@ export async function handleArtifactRequest(
 
   const artifactDir = path.join(getArtifactDirectory(), id);
 
+  if (/^image-[a-f0-9-]{36}\.png$/.test(requestedFile)) {
+    try { response.setHeader("content-type", "image/png"); response.end(await readFile(path.join(artifactDir, requestedFile))); }
+    catch { sendText(response, 404, "Artifact image not found"); }
+    return true;
+  }
   if (requestedFile === "preview") {
     await sendMarkdownPreview(response, artifactDir);
     return true;
@@ -583,6 +594,10 @@ export async function handleArtifactFetchRequest(request: Request) {
 
   const artifactDir = path.join(getArtifactDirectory(), id);
 
+  if (/^image-[a-f0-9-]{36}\.png$/.test(requestedFile)) {
+    try { return new Response(new Uint8Array(await readFile(path.join(artifactDir, requestedFile))), { headers: { "content-type": "image/png" } }); }
+    catch { return textResponse("Artifact image not found", 404); }
+  }
   if (requestedFile === "preview") {
     return createMarkdownPreviewResponse(artifactDir);
   }
@@ -658,7 +673,8 @@ async function normalizeStoredArtifactMetadata(
     createdAt,
     updatedAt,
     expiresAt,
-    bytes: typeof record.bytes === "number" && record.bytes >= 0 ? record.bytes : fileStats.size
+    bytes: typeof record.bytes === "number" && record.bytes >= 0 ? record.bytes : fileStats.size,
+    imageUrl: typeof record.imageUrl === "string" ? record.imageUrl : undefined
   });
 }
 
@@ -901,7 +917,8 @@ function createArtifactMetadata({
   createdAt,
   updatedAt,
   expiresAt,
-  bytes
+  bytes,
+  imageUrl
 }: {
   id: string;
   kind: ArtifactKind;
@@ -912,6 +929,7 @@ function createArtifactMetadata({
   updatedAt?: string;
   expiresAt?: string;
   bytes: number;
+  imageUrl?: string;
 }): ArtifactMetadata {
   const rawUrl = `${getArtifactBaseUrl()}/artifacts/${encodeURIComponent(id)}/${encodeURIComponent(filename)}`;
   const previewUrl =
@@ -931,8 +949,19 @@ function createArtifactMetadata({
     createdAt,
     ...(updatedAt ? { updatedAt } : {}),
     ...(expiresAt ? { expiresAt } : {}),
-    bytes
+    bytes,
+    ...(imageUrl ? { imageUrl } : {})
   };
+}
+
+async function saveArtifactImage(id: string, html: string) {
+  try {
+    const png = await renderArtifactImage(html);
+    if (!png) return undefined;
+    const filename = `image-${randomUUID()}.png`;
+    await writeFile(path.join(getArtifactDirectory(), id, filename), png);
+    return `${getArtifactBaseUrl()}/artifacts/${id}/${filename}`;
+  } catch { console.warn("Could not save artifact image preview; keeping document link."); return undefined; }
 }
 
 function toListedArtifact(artifact: ArtifactMetadata, now: Date): ListedArtifact {

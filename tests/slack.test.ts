@@ -397,6 +397,9 @@ test("builds Slack App Home dashboard sections", () => {
   assert.match(rendered, /deepseek-v4-pro/);
   assert.match(rendered, /launch plan/);
   assert.match(rendered, /Quick Actions/);
+  assert.match(rendered, /nobo_home_tools/);
+  assert.match(rendered, /Saved documents/);
+  assert.match(rendered, /Integrations/);
   assert.match(rendered, /nobo_open_modal:prefs/);
   assert.match(rendered, /\/nobo-channel-digest/);
   assert.match(rendered, /\/nobo-search/);
