@@ -34,6 +34,10 @@ Save HTTPS links with annotations and read/unread state: `add Slack docs | https
 
 Save `add Query | sql | SELECT 1;`, retrieve with `copy <id>`, and revise via `edit <id> | SELECT 2;`. `history <id>` displays the last five versions. `restore <id> | 1 | confirm` creates a new revision from a retained version; it does not erase history in place. Language labels are validated, revisions are capped at 2,000 characters, and code is **never executed**.
 
+## 6. Daily journal (`journal`)
+
+Record `write 2026-09-07 | 4 | Shipped a feature | Test earlier` (date, mood 1–5, wins, lessons). Writing the same date updates that entry instead of duplicating it. `entry 2026-09-07` retrieves it; `review 2026-09-01 | 2026-09-30` returns an inclusive chronological digest and average mood. Dates are explicit calendar dates, not inferred timezones; reflections never go to a model automatically.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
