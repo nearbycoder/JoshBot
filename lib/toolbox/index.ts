@@ -13,10 +13,12 @@ import { glossary } from "./glossary.js";
 import { goals } from "./goals.js";
 import { releases } from "./releases.js";
 import { countdowns } from "./countdowns.js";
+import { timezones } from "./timezones.js";
 import { runFeature, type Feature } from "./core.js";
 import { notes } from "./notes.js";
 import { bookmarks } from "./bookmarks.js";
 export const features: Feature[] = [
+  timezones,
   countdowns,
   releases,
   goals,
