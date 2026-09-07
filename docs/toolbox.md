@@ -46,6 +46,10 @@ Record `write 2026-09-07 | 4 | Shipped a feature | Test earlier` (date, mood 1�
 
 `start NoBo | Review PRs`, `active`, and `stop` maintain one running timer. Backfill `log NoBo | 2026-09-07T09:00:00Z | 2026-09-07T10:00:00Z | Review` or correct `adjust <id> | <start ISO> | <end ISO>`. Endpoints must include Z/an offset; overlapping or future completed entries and spans over 24 hours are rejected. A forgotten timer can be corrected with adjust. `report 2026-09-01 | 2026-09-07` sums each project's time, clipping sessions at the inclusive UTC date boundaries and including elapsed running time.
 
+## 9. Focus sessions (`focus`)
+
+`start Write proposal | 25 | 5` starts a work/break session. `status <id>`, `pause <id>` and `resume <id>` use persisted timestamps, so restarts do not reset the countdown. Once a phase finishes, `next <id>` starts the next phase and counts completed work blocks. `finish <id>` ends the session without awarding an incomplete block. Only one session can be active. Work is 1–180 minutes and breaks 1–60. **No automatic notification is sent**; check status or separately use the existing NoBo reminder feature.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
