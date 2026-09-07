@@ -74,6 +74,10 @@ Prepare a **personal** retro with `create Sprint 12`, then `add <id> | keep | Sm
 
 `create Read books | 12 | books | 2026-12-31` tracks a numeric target that increases from zero. Record an **absolute total**, not an increment, using `progress <id> | 3 | Finished a novel`; lower totals are allowed for corrections. `report <id>` shows percentage, deadline status, remaining amount and required daily pace. Adjust `target <id> | 15` or `due <id> | 2027-01-31`. The latest 20 check-ins are retained, with five shown in reports. Dates are UTC; this is progress tracking, not automated coaching or reminders.
 
+## 16. Release readiness (`releases`)
+
+`create v1.2`, then `gate <id> | Tests | Josh`, records a release checklist with owners. Use `record <id> | 1 | pass | CI run URL/details` or `blocked | Failure details`; each record needs 5–500 characters of evidence. `readiness <id>` is ready only when at least one gate exists and all gates pass. `reset <id> confirm` clears evidence for reuse. **This is a manual record: it does not run CI, validate the evidence, contact owners, merge or deploy.**
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
