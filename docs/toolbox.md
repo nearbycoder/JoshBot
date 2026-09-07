@@ -18,6 +18,10 @@ list beta
 tag <id> | work, launch
 ```
 
+## 2. Bookmark library (`bookmarks`)
+
+Save HTTPS links with annotations and read/unread state: `add Slack docs | https://docs.slack.dev | API reference`. Use `queue`, `read <id>`, `unread <id>`, `annotate <id> | note`, or `url <id> | https://example.com`. Duplicate URLs are rejected, Slack-formatted links are normalized, credentials/non-HTTPS links are refused, and nothing fetches the saved URLs. Search title, URL, note or tags with `list <query>`.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
