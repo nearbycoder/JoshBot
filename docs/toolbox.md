@@ -90,6 +90,10 @@ Save `create Team | America/Chicago, Europe/London`. `convert <id> | 2026-09-07T
 
 `save Draft | First line` stores text (multiline is supported). Use `preview <id> | bullets` without changing it, or `apply <id> | numbered` to save. Formats: trim, bullets, numbered, dedupe (exact trimmed lines), sort, ASCII slug, and JSON pretty-print. `edit <id> | New text` also supports one-step `undo <id>`. `stats <id>` reports word count, visible Unicode graphemes, lines and UTF-8 bytes. JSON rejects unsafe integers/nonfinite numbers; quote large IDs. No model calls or code execution.
 
+## 20. Weekly workload planner (`workload`)
+
+`create This week | 2026-09-07 | 30` sets a Monday-starting plan and hour capacity. Add `task <id> | Ship toolbox | 4 | 5 | 2026-09-09` (estimate, priority 1–5, due date). `plan <id>` prioritizes overdue work, then priority and deadline; it fits whole tasks into capacity and explicitly lists deferred work. Completed estimates consume capacity. Correct `effort`, `priority`, `due`, or `capacity`; mark `done <id> | 1` and `undo`. Up to 50 tasks, no assignments or calendar bookings. This is a greedy planning aid, not an optimal scheduling solver.
+
 ## Planned feature sequence
 
 Each ships in a separately verified PR: bookmarks, checklists, prompts, snippets, journal, habits, time tracking, focus sessions, standups, retrospectives, decision scorecards, meeting agendas, glossary, goals, release readiness, countdowns, timezone planner, text formatter, and workload planner.
