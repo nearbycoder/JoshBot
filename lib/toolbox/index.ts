@@ -1,9 +1,11 @@
 import { checklists } from "./checklists.js";
 import { prompts } from "./prompts.js";
+import { snippets } from "./snippets.js";
 import { runFeature, type Feature } from "./core.js";
 import { notes } from "./notes.js";
 import { bookmarks } from "./bookmarks.js";
 export const features: Feature[] = [
+  snippets,
   prompts,
   checklists,
   notes, bookmarks,
