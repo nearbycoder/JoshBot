@@ -6,10 +6,12 @@ import { habits } from "./habits.js";
 import { timelog } from "./timelog.js";
 import { focus } from "./focus.js";
 import { standups } from "./standups.js";
+import { retros } from "./retros.js";
 import { runFeature, type Feature } from "./core.js";
 import { notes } from "./notes.js";
 import { bookmarks } from "./bookmarks.js";
 export const features: Feature[] = [
+  retros,
   standups,
   focus,
   timelog,
