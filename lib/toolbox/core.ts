@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getRedisClient } from "../redis.js";
 
 export type Entry = { id: string; title: string; body: string; tags: string[]; createdAt: string; updatedAt: string; data: Record<string, unknown> };
-export type Feature = { id: string; title: string; description: string; help: string; run: (entries: Entry[], verb: string, args: string, now: Date) => string | undefined };
+export type Feature = { id: string; title: string; description: string; help: string; validateRename?: (entries: Entry[], entry: Entry, title: string) => void; run: (entries: Entry[], verb: string, args: string, now: Date) => string | undefined };
 export class InputError extends Error {}
 export function requireText(text: string, label = "Text", max = 2000) {
   if (!text.trim() || text.length > max) throw new InputError(`${label} must contain 1–${max} characters.`);
@@ -56,7 +56,7 @@ export function execute(feature: Feature, entries: Entry[], command: string, now
   }
   if (verb === "rename" || verb === "tag") {
     const [id, value] = parts(args, 2); const entry = find(entries, id);
-    if (verb === "rename") entry.title = requireText(value, "Title", 120);
+    if (verb === "rename") { const title = requireText(value, "Title", 120); feature.validateRename?.(entries, entry, title); entry.title = title; }
     else { const tags = value === "-" ? [] : [...new Set(value.split(",").map(t => requireText(t, "Tag", 30).toLowerCase()))]; if (tags.length > 10) throw new InputError("Use at most 10 tags."); entry.tags = tags; }
     touch(entry, now); return detail(entry);
   }

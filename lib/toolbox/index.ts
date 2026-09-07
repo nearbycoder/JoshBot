@@ -9,10 +9,12 @@ import { standups } from "./standups.js";
 import { retros } from "./retros.js";
 import { scorecards } from "./scorecards.js";
 import { agendas } from "./agendas.js";
+import { glossary } from "./glossary.js";
 import { runFeature, type Feature } from "./core.js";
 import { notes } from "./notes.js";
 import { bookmarks } from "./bookmarks.js";
 export const features: Feature[] = [
+  glossary,
   agendas,
   scorecards,
   retros,
