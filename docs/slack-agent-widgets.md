@@ -86,6 +86,8 @@ previews, not interactive web pages; external assets and scripts are intentional
 - `SLACK_TASK_DISPLAY_MODE=timeline` restores chronological native task display; default is `plan`.
 - `SLACK_NATIVE_AI=off` retains legacy text streaming with final cards.
 - `ARTIFACT_IMAGE_PREVIEWS=off` disables static HTML image previews without disabling documents.
+- `railpack.json` includes Chromium's NSS/NSPR/Expat runtime libraries and fonts in the final
+  Railway image. These are runtime requirements, not only build dependencies.
 - If Slack rejects new footer blocks, finalization retries the same message with text blocks
   so the answer is not lost. Approval failures never silently execute the requested action.
 - Keep one Railway replica: Stop cancellation and artifact mutation coordination are

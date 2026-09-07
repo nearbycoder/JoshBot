@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { __testing, renderArtifactImage } from "../lib/artifact-images.js";
+import { __testing, renderArtifactImage, safeChromiumArgs } from "../lib/artifact-images.js";
+
+test("preview launch does not disable browser web security or renderer isolation", () => {
+  assert.doesNotMatch(safeChromiumArgs().join(" "), /disable-web-security|allow-running-insecure-content|disable-site-isolation-trials|single-process|IsolateOrigins/);
+});
 
 test("HTML preview renderer produces a bounded PNG without network requests or scripts", { timeout: 30000 }, async () => {
   let requests = 0;
