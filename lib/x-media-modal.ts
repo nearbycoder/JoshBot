@@ -14,7 +14,7 @@ export function buildXMediaModal(target: Target): ModalView {
     submit: { type: "plain_text", text: "Upload media" },
     close: { type: "plain_text", text: "Cancel" },
     blocks: [
-      { type: "section", text: { type: "mrkdwn", text: `Send a post’s photos or videos directly to <#${target.channelId}>. Just the media—no post card or source link.` } },
+      { type: "section", text: { type: "mrkdwn", text: `Send a post’s photos or videos directly to <#${target.channelId}>, with a short summary when the post has text. No post card or source link.` } },
       { type: "input", block_id: "link", label: { type: "plain_text", text: "X post link" },
         element: { type: "plain_text_input", action_id: "url", focus_on_load: true, max_length: 2048,
           placeholder: { type: "plain_text", text: "https://x.com/user/status/…" } },

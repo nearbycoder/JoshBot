@@ -148,7 +148,7 @@ export function createSlackBolt(options: {
     }
     // Acknowledge before access checks, network lookups or uploads; keep progress in the private modal.
     await ack({ response_action: "update", view: buildXMediaStatusModal(request.channelId,
-      "Fetching the post’s media and uploading the files to Slack…", true) });
+      "Fetching the media, summarizing any post text, and uploading to Slack…", true) });
     let message: string;
     try {
       const count = await handlers.media(request, xMediaUploadClient(context.botToken ?? client.token));

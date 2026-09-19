@@ -1,4 +1,5 @@
 import { WebClient, type FilesUploadV2Arguments } from "@slack/web-api";
+import { summarizeXPost } from "./x-media-summary.js";
 import {
   evaluateNoboAccess,
   type NoboAccessSubject,
@@ -8,7 +9,7 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 const USER_AGENT = "NoBo/0.1 (https://github.com/nearbycoder/JoshBot)";
 export const X_MEDIA_HELP =
-  "Use `/nobo-x` to open the upload form, or `/nobo-x https://x.com/user/status/123` to upload a public post’s images or videos into this channel (not the post/link). Also available as `/nobo-help x [link]`. Up to 4 files, 50 MiB each / 100 MiB total. Only share media you have permission to share.";
+  "Use `/nobo-x` to open the upload form, or `/nobo-x https://x.com/user/status/123` to upload a public post’s images or videos with a short summary when the post has text (no post card or source link). Also available as `/nobo-help x [link]`. Up to 4 files, 50 MiB each / 100 MiB total. Only share media you have permission to share.";
 export class XMediaError extends Error {}
 export type XMediaRequest = {
   postId: string;
@@ -21,10 +22,12 @@ type UploadClient = Pick<WebClient, "filesUploadV2">;
 type Dependencies = {
   fetch: typeof fetch;
   access: (subject: NoboAccessSubject) => Promise<{ allowed: boolean }>;
+  summarize: typeof summarizeXPost;
 };
 const defaults: Dependencies = {
   fetch: (...args) => fetch(...args),
   access: evaluateNoboAccess,
+  summarize: summarizeXPost,
 };
 // One bounded transfer per process; production currently runs one replica. Never retain a queue of buffers.
 let transferring = false;
@@ -264,10 +267,8 @@ export async function uploadXMedia(
         "The X media lookup is temporarily unavailable. Please try again later.",
       );
     }
-    const items = extractXMedia(
-      JSON.parse((await readBounded(lookup, 1024 * 1024)).toString("utf8")),
-      request.postId,
-    );
+    const postData: unknown = JSON.parse((await readBounded(lookup, 1024 * 1024)).toString("utf8"));
+    const items = extractXMedia(postData, request.postId);
     const files: {
       file: Buffer;
       filename: string;
@@ -300,7 +301,9 @@ export async function uploadXMedia(
         ...(item.altText ? { alt_text: item.altText } : {}),
       });
     }
-    // Recheck after downloads in case policy changed; upload the whole set without a post/link comment.
+    const summary = await deps.summarize(record(record(postData).status).text, request.channelId, signal).catch(() => undefined);
+    signal.throwIfAborted();
+    // Recheck after downloads and summarization in case policy changed; share files and summary together.
     if (!(await deps.access(subject)).allowed)
       throw new XMediaError(
         "NoBo access changed during the download. Nothing was posted.",
@@ -309,6 +312,7 @@ export async function uploadXMedia(
     const result = await client.filesUploadV2({
       channel_id: request.channelId,
       file_uploads: files,
+      ...(summary ? { blocks: [{ type: "section", text: { type: "plain_text", text: `Post summary (AI)\n${summary}` } }] } : {}),
     } satisfies FilesUploadV2Arguments);
     if (!result.ok) throw new Error("Upload not confirmed");
     return files.length;

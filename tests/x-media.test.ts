@@ -28,7 +28,7 @@ const request = {
 };
 const body = (items: unknown[] = [photo, video]) => ({
   code: 200,
-  status: { id, type: "status", text: "Do not post me", media: { all: items } },
+  status: { id, type: "status", text: "", media: { all: items } },
 });
 const allow = async () => ({ allowed: true });
 const response = (file = jpeg, type = "image/jpeg", headers = {}) =>
@@ -252,6 +252,41 @@ test("failed, empty, oversized and non-media downloads never upload a partial se
       XMediaError,
     );
   }
+});
+
+test("post summary accompanies the files in one upload, before a final access recheck", async () => {
+  const calls: string[] = [];
+  const data = body([photo]); data.status.text = "A new space telescope image has been released.";
+  Object.assign(data.status, { quote: { text: "Unrelated quoted content" } });
+  const count = await uploadXMedia(request, { filesUploadV2: async (args) => {
+    calls.push("upload");
+    assert.equal(args.initial_comment, undefined);
+    assert.deepEqual(args.blocks, [{ type: "section", text: { type: "plain_text", text: "Post summary (AI)\nThe post announces a new telescope image." } }]);
+    assert.ok("file_uploads" in args); assert.equal(args.file_uploads.length, 1);
+    return { ok: true, files: [] };
+  } }, { access: async () => { calls.push("access"); return { allowed: true }; },
+    fetch: async url => String(url).includes("api.fxtwitter") ? Response.json(data) : response(),
+    summarize: async (text, channelId) => { calls.push("summary"); assert.equal(text, data.status.text); assert.equal(channelId, "C123"); return "The post announces a new telescope image."; }
+  });
+  assert.equal(count, 1); assert.deepEqual(calls, ["access", "summary", "access", "upload"]);
+});
+
+test("summary failure still uploads files without a caption, never a raw tweet fallback", async () => {
+  const data = body([photo]); data.status.text = "Do not copy the whole tweet as a fallback.";
+  assert.equal(await uploadXMedia(request, { filesUploadV2: async args => {
+    assert.equal(args.blocks, undefined); assert.equal(args.initial_comment, undefined);
+    return { ok: true, files: [] };
+  } }, { access: allow, summarize: async () => { throw new Error("private model failure"); },
+    fetch: async url => String(url).includes("api.fxtwitter") ? Response.json(data) : response()
+  }), 1);
+});
+
+test("policy changes during summarization prevent both files and summary being shared", async () => {
+  let allowed = true;
+  await assert.rejects(uploadXMedia(request, { filesUploadV2: async () => assert.fail("do not share") }, {
+    access: async () => ({ allowed }), summarize: async () => { allowed = false; return "A summary"; },
+    fetch: async url => String(url).includes("api.fxtwitter") ? Response.json(body([photo])) : response()
+  }), /access changed/);
 });
 
 test("denial before download or changed policy before upload prevents sharing", async () => {

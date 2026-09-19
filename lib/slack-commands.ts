@@ -267,7 +267,7 @@ export async function handleSlackSlashCommandPayload(
     }
     try {
       const postId = parseXPostId(link);
-      return { response: ephemeral("Fetching media from X. I’ll upload the files here without posting the link."),
+      return { response: ephemeral("Fetching media from X. I’ll add a short summary if the post has text, without posting the link."),
         media: { postId, channelId: payload.channel_id, userId: payload.user_id, teamId: payload.team_id } };
     } catch (error) {
       if (!(error instanceof XMediaError)) throw error;
@@ -395,7 +395,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-help tools`: private productivity toolbox (also in NoBo Home)",
     "`/nobo-status`: show ops health",
     "`/nobo-search <query>`: search recent channel history and your artifacts",
-    "`/nobo-x [X post link]`: upload images/videos into this channel; leave the link out to open a form (also `/nobo-help x [link]`)",
+    "`/nobo-x [X post link]`: upload images/videos with a short post summary when available; leave the link out to open a form (also `/nobo-help x [link]`)",
     "`/nobo-admin`: manage NoBo access controls",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",
