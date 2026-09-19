@@ -3,12 +3,20 @@
 Run in the destination channel:
 
 ```text
+/nobo-x
+```
+
+This opens a native Slack modal with a link field, destination channel, and **Upload media** button. Invalid links are flagged inline. Upload progress and the result stay in the private modal; closing it after submission does not cancel the upload. If you close it early, check the channel for the files before retrying.
+
+Or include the link to skip the form:
+
+```text
 /nobo-x https://x.com/user/status/123456789
 ```
 
 NoBo uploads the actual attached images and MP4 videos as native Slack files, in media order, without posting the source link, tweet text, thumbnail preview, or a link-unfurl message. GIF-style X videos are uploaded as playable MP4s. Progress, completion, and errors are visible only to the requester. A `/photo/2` or `/video/1` link still uploads the whole post's attachments.
 
-You can also use the existing command `/nobo-help x <link>` without registering another slash command. The file-upload permission below is still required.
+You can also use the existing command `/nobo-help x <link>` without registering another slash command, or `/nobo-help x` to open the same form. The file-upload permission below is still required. The modal uses NoBo’s existing Interactivity endpoint and requires no additional Slack scopes or admin changes.
 
 ## Slack admin setup
 
