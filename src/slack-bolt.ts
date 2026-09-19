@@ -14,6 +14,7 @@ import { registerSlackWidgetActions } from "./slack-widget-actions.js";
 import { registerSlackHomeActions } from "./slack-home-actions.js";
 import { registerSlackToolbox } from "./slack-toolbox.js";
 import { uploadXMedia, xMediaUploadClient, XMediaError } from "../lib/x-media.js";
+import { X_MEDIA_MODAL, buildXMediaStatusModal, parseXMediaSubmission } from "../lib/x-media-modal.js";
 
 export const SLACK_ENDPOINTS = ["/api/slack/events", "/api/slack/commands", "/api/slack/interactions", "/slack/events"];
 const defaultHandlers = {
@@ -138,7 +139,32 @@ export function createSlackBolt(options: {
       await respond(result.response);
     }
   });
-  bolt.view({ callback_id: /^(?!nobo_widget_|nobo_home_|nobo_tools_).*/, type: "view_submission" }, async ({ body, ack }) => {
+  bolt.view(X_MEDIA_MODAL, async ({ body, ack, client, context }) => {
+    let request;
+    try { request = parseXMediaSubmission(body); }
+    catch (error) {
+      await ack({ response_action: "errors", errors: { link: error instanceof XMediaError ? error.message : "Please reopen the form and try again." } });
+      return;
+    }
+    // Acknowledge before access checks, network lookups or uploads; keep progress in the private modal.
+    await ack({ response_action: "update", view: buildXMediaStatusModal(request.channelId,
+      "Fetching the post’s media and uploading the files to Slack…", true) });
+    let message: string;
+    try {
+      const count = await handlers.media(request, xMediaUploadClient(context.botToken ?? client.token));
+      message = `Uploaded ${count} media file${count === 1 ? "" : "s"}. You’ll find ${count === 1 ? "it" : "them"} in the channel—without the source link or post card.`;
+    } catch (error) {
+      message = error instanceof XMediaError ? error.message : "The upload could not be confirmed. Check the channel before retrying.";
+    }
+    try {
+      await client.views.update({ view_id: body.view.id, view: buildXMediaStatusModal(request.channelId, message) });
+    } catch (error) {
+      // Closing the modal does not cancel an upload. A failed status update must never retry the upload.
+      const code = (error as { data?: { error?: string } }).data?.error;
+      if (code !== "view_not_found" && code !== "not_found") recordOpsError("slack x media modal status", error);
+    }
+  });
+  bolt.view({ callback_id: /^(?!nobo_widget_|nobo_home_|nobo_tools_|nobo_x_media(?:_|$)).*/, type: "view_submission" }, async ({ body, ack }) => {
     // Validation errors and views.update must be returned in the acknowledgement itself.
     const result = await handlers.interaction(body as SlackInteractionPayload);
     if ("response_action" in result.response && result.response.response_action === "update") await ack({

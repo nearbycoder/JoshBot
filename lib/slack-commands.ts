@@ -1,5 +1,6 @@
 import { handleToolbox } from "./toolbox/index.js";
 import { parseXPostId, X_MEDIA_HELP, XMediaError, type XMediaRequest } from "./x-media.js";
+import { buildXMediaModal } from "./x-media-modal.js";
 import {
   addChannelDecision,
   formatChannelDecisionList,
@@ -255,8 +256,15 @@ export async function handleSlackSlashCommandPayload(
 
   if (command === "/nobo-x" || (command === "/nobo-help" && /^x(?:\s|$)/i.test(payload.text.trim()))) {
     const link = command === "/nobo-x" ? payload.text.trim() : payload.text.trim().replace(/^x\s*/i, "");
-    if (!link || /^help$/i.test(link)) return immediate(ephemeral(X_MEDIA_HELP));
+    if (/^help$/i.test(link)) return immediate(ephemeral(X_MEDIA_HELP));
     if (!payload.channel_id || !payload.user_id || !payload.team_id) return immediate(ephemeral("Run this command from a Slack channel with NoBo in it."));
+    if (!link) {
+      if (!payload.trigger_id) return immediate(ephemeral("Slack did not send a trigger for the media form. Run /nobo-x again, or include the link in the command."));
+      return { response: ephemeral("Opening the media upload form."), modal: {
+        triggerId: payload.trigger_id,
+        view: buildXMediaModal({ channelId: payload.channel_id, userId: payload.user_id, teamId: payload.team_id }) as unknown as Record<string, unknown>
+      } };
+    }
     try {
       const postId = parseXPostId(link);
       return { response: ephemeral("Fetching media from X. I’ll upload the files here without posting the link."),
@@ -387,7 +395,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-help tools`: private productivity toolbox (also in NoBo Home)",
     "`/nobo-status`: show ops health",
     "`/nobo-search <query>`: search recent channel history and your artifacts",
-    "`/nobo-x <X post link>`: upload the post’s images/videos directly into this channel (also `/nobo-help x <link>`)",
+    "`/nobo-x [X post link]`: upload images/videos into this channel; leave the link out to open a form (also `/nobo-help x [link]`)",
     "`/nobo-admin`: manage NoBo access controls",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",

@@ -8,7 +8,7 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 const USER_AGENT = "NoBo/0.1 (https://github.com/nearbycoder/JoshBot)";
 export const X_MEDIA_HELP =
-  "Use `/nobo-x https://x.com/user/status/123` to upload a public post’s images or videos into this channel (not the post/link). Also available as `/nobo-help x <link>`. Up to 4 files, 50 MiB each / 100 MiB total. Only share media you have permission to share.";
+  "Use `/nobo-x` to open the upload form, or `/nobo-x https://x.com/user/status/123` to upload a public post’s images or videos into this channel (not the post/link). Also available as `/nobo-help x [link]`. Up to 4 files, 50 MiB each / 100 MiB total. Only share media you have permission to share.";
 export class XMediaError extends Error {}
 export type XMediaRequest = {
   postId: string;

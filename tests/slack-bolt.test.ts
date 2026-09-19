@@ -7,6 +7,8 @@ import { createSlackBolt } from "../src/slack-bolt.js";
 import { getSlackAgentRun, withSlackAgentRun } from "../lib/slack-agent-runs.js";
 import type { SlackInteractionResult } from "../lib/slack-commands.js";
 import { handleSlackSlashCommandPayload } from "../lib/slack-commands.js";
+import { buildXMediaModal, X_MEDIA_MODAL } from "../lib/x-media-modal.js";
+import { XMediaError } from "../lib/x-media.js";
 
 const secret = "test-signing-secret";
 async function fixture(
@@ -132,6 +134,80 @@ test("signed X media command acknowledges before upload and keeps progress priva
     assert.match(String(messages[1].text), /Uploaded 2 media files/);
     assert.ok(messages.every(message => !String(message.text).includes("https://")));
   } finally { release(); await f.close(); responseServer.close(); responseServer.closeAllConnections(); }
+});
+
+test("signed X media modal opens, validates inline, acknowledges before upload and shows private results", { timeout: 15_000 }, async () => {
+  const target = { channelId: "C123", userId: "U123", teamId: "T123" };
+  for (const outcome of ["success", "known-error", "unknown-error", "closed"] as const) {
+    const calls: Array<{ path: string; body: Record<string, any> }> = [];
+    let opened!: () => void, updated!: () => void, started!: () => void, release!: () => void;
+    const opening = new Promise<void>(resolve => { opened = resolve; });
+    const updating = new Promise<void>(resolve => { updated = resolve; });
+    const uploading = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fakeApi = createServer(async (req, res) => {
+      let raw = ""; for await (const chunk of req) raw += chunk;
+      const body = req.headers["content-type"]?.includes("application/json") ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw));
+      if (typeof body.view === "string") body.view = JSON.parse(body.view);
+      calls.push({ path: req.url!, body });
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(outcome === "closed" && req.url === "/api/views.update"
+        ? { ok: false, error: "view_not_found" } : { ok: true }));
+      if (req.url === "/api/views.open") opened();
+      if (req.url === "/api/views.update") updated();
+    }).listen(0, "127.0.0.1");
+    await once(fakeApi, "listening");
+    const origin = `http://127.0.0.1:${(fakeApi.address() as { port: number }).port}`;
+    let uploads = 0;
+    const f = await fixture({
+      command: payload => handleSlackSlashCommandPayload(payload, { evaluateAccess: async () => ({ allowed: true }) }),
+      interaction: async () => { assert.fail("X modal must not fall through to generic interactions"); },
+      media: async (request, client) => {
+        uploads++; assert.deepEqual(request, { ...target, postId: "1546621144358391808" });
+        assert.ok(client.filesUploadV2); started(); await gate;
+        if (outcome === "known-error") throw new XMediaError("NoBo access is restricted for this user or channel.");
+        if (outcome === "unknown-error") throw new Error("sensitive internal details");
+        return 2;
+      }
+    }, { slackApiUrl: origin + "/api/", retryConfig: { retries: 0 } });
+    const submit = (value: string) => new URLSearchParams({ payload: JSON.stringify({
+      type: "view_submission", team: { id: target.teamId }, user: { id: target.userId },
+      view: { id: "V123", callback_id: X_MEDIA_MODAL, private_metadata: JSON.stringify(target),
+        state: { values: { link: { url: { type: "plain_text_input", value } } } } }
+    }) }).toString();
+    try {
+      assert.equal((await f.send("/api/slack/commands", new URLSearchParams({ command: "/nobo-x", text: "",
+        user_id: target.userId, channel_id: target.channelId, team_id: target.teamId,
+        trigger_id: "trigger", response_url: origin + "/response" }).toString())).status, 200);
+      await opening;
+      assert.deepEqual(calls.find(call => call.path === "/api/views.open")?.body.view, buildXMediaModal(target));
+      assert.equal(uploads, 0);
+      const invalid = await f.send("/api/slack/interactions", submit("https://example.com"));
+      const errors = await invalid.json();
+      assert.equal(errors.response_action, "errors"); assert.match(errors.errors.link, /HTTPS X\/Twitter/);
+      assert.equal(uploads, 0);
+      const payload = submit("https://x.com/NASA/status/1546621144358391808");
+      const response = await f.send("/api/slack/interactions", payload);
+      const progress = await response.json();
+      assert.equal(progress.response_action, "update");
+      assert.equal(progress.view.title.text, "Uploading media…");
+      assert.equal(progress.view.submit, undefined);
+      await uploading;
+      assert.equal(calls.filter(call => call.path === "/api/views.update").length, 0);
+      assert.equal((await f.send("/api/slack/interactions", payload, { "x-slack-retry-num": "1" })).status, 200);
+      assert.equal(uploads, 1);
+      release(); await updating;
+      const result = calls.find(call => call.path === "/api/views.update")!.body;
+      assert.equal(result.view_id, "V123");
+      assert.equal(result.view.submit, undefined);
+      const text = result.view.blocks[0].text.text;
+      assert.match(text, outcome === "known-error" ? /access is restricted/ : outcome === "unknown-error" ? /could not be confirmed/ : /Uploaded 2 media files/);
+      assert.ok(!text.includes("sensitive internal details"));
+      assert.ok(calls.every(call => ["/api/views.open", "/api/views.update", "/response"].includes(call.path)));
+      assert.ok(calls.filter(call => call.path === "/response").every(call => call.body.response_type === "ephemeral"));
+      assert.equal(uploads, 1);
+    } finally { release(); await f.close(); fakeApi.close(); fakeApi.closeAllConnections(); }
+  }
 });
 
 test("signed widget forms return validation errors without falling through to generic handlers", async () => {
