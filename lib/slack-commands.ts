@@ -1,4 +1,5 @@
 import { handleToolbox } from "./toolbox/index.js";
+import { parseXPostId, X_MEDIA_HELP, XMediaError, type XMediaRequest } from "./x-media.js";
 import {
   addChannelDecision,
   formatChannelDecisionList,
@@ -164,6 +165,7 @@ export type SlackSlashCommandTask = {
 
 export type SlackSlashCommandResult = {
   response: SlackSlashCommandResponse;
+  media?: XMediaRequest;
   task?: SlackSlashCommandTask;
   modal?: SlackModalOpenRequest;
 };
@@ -249,6 +251,20 @@ export async function handleSlackSlashCommandPayload(
 
   if (!access.allowed) {
     return immediate(ephemeral(formatNoboAccessDenied(access)));
+  }
+
+  if (command === "/nobo-x" || (command === "/nobo-help" && /^x(?:\s|$)/i.test(payload.text.trim()))) {
+    const link = command === "/nobo-x" ? payload.text.trim() : payload.text.trim().replace(/^x\s*/i, "");
+    if (!link || /^help$/i.test(link)) return immediate(ephemeral(X_MEDIA_HELP));
+    if (!payload.channel_id || !payload.user_id || !payload.team_id) return immediate(ephemeral("Run this command from a Slack channel with NoBo in it."));
+    try {
+      const postId = parseXPostId(link);
+      return { response: ephemeral("Fetching media from X. I’ll upload the files here without posting the link."),
+        media: { postId, channelId: payload.channel_id, userId: payload.user_id, teamId: payload.team_id } };
+    } catch (error) {
+      if (!(error instanceof XMediaError)) throw error;
+      return immediate(ephemeral(`${error.message}\n\n${X_MEDIA_HELP}`));
+    }
   }
 
   if (command === "/nobo-dad-joke") {
@@ -343,7 +359,7 @@ export async function handleSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-admin`, `/nobo-search`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-polls`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-admin`, `/nobo-search`, `/nobo-x`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-polls`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
       )
     );
   }
@@ -371,6 +387,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-help tools`: private productivity toolbox (also in NoBo Home)",
     "`/nobo-status`: show ops health",
     "`/nobo-search <query>`: search recent channel history and your artifacts",
+    "`/nobo-x <X post link>`: upload the post’s images/videos directly into this channel (also `/nobo-help x <link>`)",
     "`/nobo-admin`: manage NoBo access controls",
     "`/nobo-listen [on|off|status]`: toggle active listening for this channel",
     "`/nobo-prefs [setting]`: show or update personal preferences",

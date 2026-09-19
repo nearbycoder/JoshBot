@@ -6,6 +6,7 @@ import test from "node:test";
 import { createSlackBolt } from "../src/slack-bolt.js";
 import { getSlackAgentRun, withSlackAgentRun } from "../lib/slack-agent-runs.js";
 import type { SlackInteractionResult } from "../lib/slack-commands.js";
+import { handleSlackSlashCommandPayload } from "../lib/slack-commands.js";
 
 const secret = "test-signing-secret";
 async function fixture(
@@ -90,6 +91,47 @@ test("Bolt slash commands acknowledge immediately and deliver response_url messa
     release(); await f.close();
     responseServer.close(); responseServer.closeAllConnections();
   }
+});
+
+test("signed X media command acknowledges before upload and keeps progress private", async () => {
+  const messages: Record<string, unknown>[] = [];
+  let delivered!: () => void;
+  const done = new Promise<void>(resolve => { delivered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let started!: () => void;
+  const uploading = new Promise<void>(resolve => { started = resolve; });
+  const responseServer = createServer(async (req, res) => {
+    let raw = ""; for await (const chunk of req) raw += chunk;
+    messages.push(JSON.parse(raw)); res.end("ok");
+    if (messages.length === 2) delivered();
+  }).listen(0, "127.0.0.1");
+  await once(responseServer, "listening");
+  const { port } = responseServer.address() as { port: number };
+  let uploads = 0;
+  const f = await fixture({
+    command: payload => handleSlackSlashCommandPayload(payload, { evaluateAccess: async () => ({ allowed: true }) }),
+    media: async (request, client) => {
+      assert.deepEqual(request, { postId: "1546621144358391808", channelId: "C123", userId: "U123", teamId: "T123" });
+      assert.ok(client.filesUploadV2);
+      uploads++; started(); await gate; return 2;
+    },
+    memory: async () => assert.fail("Do not record progress as a public message"),
+    task: async () => assert.fail("Do not run an AI task"),
+  });
+  const payload = new URLSearchParams({ command: "/nobo-x", text: "https://x.com/NASA/status/1546621144358391808", user_id: "U123", channel_id: "C123", team_id: "T123", response_url: `http://127.0.0.1:${port}/reply` }).toString();
+  try {
+    assert.equal((await f.send("/api/slack/commands", payload)).status, 200);
+    await uploading;
+    assert.equal(messages.length, 1);
+    assert.equal((await f.send("/api/slack/commands", payload, { "x-slack-retry-num": "1" })).status, 200);
+    assert.equal(uploads, 1);
+    release(); await done;
+    assert.ok(messages.every(message => message.response_type === "ephemeral"));
+    assert.equal(messages[1].replace_original, true);
+    assert.match(String(messages[1].text), /Uploaded 2 media files/);
+    assert.ok(messages.every(message => !String(message.text).includes("https://")));
+  } finally { release(); await f.close(); responseServer.close(); responseServer.closeAllConnections(); }
 });
 
 test("signed widget forms return validation errors without falling through to generic handlers", async () => {

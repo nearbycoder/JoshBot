@@ -131,6 +131,7 @@ Create a Slack app and configure:
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
 - Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-polls`, `/nobo-poll`, `/nobo-admin`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
+- X media uploads: add `/nobo-x` at the same commands URL and grant `files:write`; see the [X media command setup](docs/x-media.md). `/nobo-help x <link>` also works through the existing help command.
 - Shortcuts: optional global/message shortcuts can use callback IDs `nobo_reminder`, `nobo_prefs`, `nobo_channel_digest`, and `nobo_artifacts`
 - Subscribe to bot events: `app_mention`
 - Subscribe to bot events: `message.channels` so thread replies trigger follow-up responses
@@ -151,6 +152,7 @@ Create a Slack app and configure:
   - `channels:history` for thread context in public channels
   - `groups:history` if NoBo should summarize private channels it has joined
   - `files:read` so uploaded attachment metadata, PDF/DOCX/XLSX/text contents, previews, and image bytes can be passed into the model
+  - `files:write` so `/nobo-x <link>` can upload images and videos directly into the channel
 
 Semantic search over channel history uses `conversations.history`, so public channels need `channels:history`; private channels need `groups:history`. Artifact results are scoped to the Slack user who ran the command.
 
