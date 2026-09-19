@@ -13,6 +13,7 @@ import { withSlackAgentRun, SlackAgentStoppedError } from "../lib/slack-agent-ru
 import { registerSlackWidgetActions } from "./slack-widget-actions.js";
 import { registerSlackHomeActions } from "./slack-home-actions.js";
 import { registerSlackToolbox } from "./slack-toolbox.js";
+import { uploadXMedia, xMediaUploadClient, XMediaError } from "../lib/x-media.js";
 
 export const SLACK_ENDPOINTS = ["/api/slack/events", "/api/slack/commands", "/api/slack/interactions", "/slack/events"];
 const defaultHandlers = {
@@ -20,6 +21,7 @@ const defaultHandlers = {
   command: handleSlackSlashCommandPayload,
   interaction: handleSlackInteractionRequest,
   task: runSlackSlashCommandTask,
+  media: uploadXMedia,
   memory: recordSlackSlashCommandExchange
 };
 
@@ -82,7 +84,7 @@ export function createSlackBolt(options: {
   registerSlackWidgetActions(bolt);
   registerSlackHomeActions(bolt);
   registerSlackToolbox(bolt);
-  bolt.command(/^\/nobo(?:-|$)/, async ({ command, ack, respond, client }) => {
+  bolt.command(/^\/nobo(?:-|$)/, async ({ command, ack, respond, client, context }) => {
     // Slow model lists/background jobs must not hold Slack's three-second acknowledgement.
     await ack();
     try {
@@ -96,7 +98,15 @@ export function createSlackBolt(options: {
         await client.views.open({ trigger_id: result.modal.triggerId, view: toBoltView(result.modal.view) });
       }
       await respond(result.response);
-      if (result.task) {
+      if (result.media) {
+        try {
+          const count = await handlers.media(result.media, xMediaUploadClient(context.botToken ?? client.token));
+          await respond({ response_type: "ephemeral", replace_original: true, text: `Uploaded ${count} media file${count === 1 ? "" : "s"} to this channel.`, mrkdwn: false });
+        } catch (error) {
+          await respond({ response_type: "ephemeral", replace_original: true, mrkdwn: false,
+            text: error instanceof XMediaError ? error.message : "The upload could not be confirmed. Check the channel before retrying." });
+        }
+      } else if (result.task) {
         const task = result.task;
         const runTask = () => handlers.task(task, formatSlackSlashCommandMemory(payload));
         if (payload.team_id && payload.user_id && payload.channel_id) {

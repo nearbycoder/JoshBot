@@ -19,7 +19,7 @@
     "@slack/bolt": "^5.1.0",
     "@slack/web-api": "^8.1.1",
     "@sparticuz/chromium": "^149.0.0",
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "croner": "^10.0.1",
     "dotenv": "^16.6.1",
     "exa-js": "^2.13.0",
