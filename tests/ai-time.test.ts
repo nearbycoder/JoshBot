@@ -204,6 +204,21 @@ test("image-capable channel model handles image messages itself", () => {
   }
 });
 
+test("new and refreshed vision models keep Slack image requests on the selected model", () => {
+  for (const model of [
+    "grok-4.7", "mimo-v2.6-flash", "mimo-v2.6-pro", "deepseek-v4.1-flash",
+    "grok-4.6", "glm-5.3-flash", "gpt-5.6-luna", "qwen3.8-max", "qwen3.8-flash"
+  ]) {
+    assert.equal(__testing.selectSlackModel([{
+      role: "user",
+      content: [
+        { type: "text", text: "Describe this image" },
+        { type: "image", image: Buffer.from("image"), mediaType: "image/jpeg" }
+      ]
+    }], model), model);
+  }
+});
+
 test("image-capable default model handles image messages itself", () => {
   const originalTextModel = process.env.OPENCODE_GO_MODEL;
   const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;

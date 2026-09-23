@@ -19,12 +19,23 @@ const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/models`;
 const MODEL_CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,74}$/;
 const IMAGE_INPUT_MODEL_IDS = new Set([
+  "grok-4.7",
+  "grok-4.6",
+  "glm-5.3-flash",
+  "gpt-5.6-luna",
+  "deepseek-v4.1-flash",
   "deepseek-v4-flash-vision-exp",
   "kimi-k2.6",
   "kimi-k2.7-code",
   "kimi-k3",
   "minimax-m3",
   "mimo-v2.5",
+  "mimo-v2.6-flash",
+  "mimo-v2.6-pro",
+  "muse-spark-1.3-contributor",
+  "muse-spark-1.2-contributor",
+  "qwen3.8-max",
+  "qwen3.8-flash",
   "qwen3.6-plus",
   "qwen3.7-plus"
 ]);
@@ -37,6 +48,7 @@ const MODEL_DEFINITIONS = new Map<
   string,
   { name: string; api: OpenCodeGoApi }
 >([
+  ["grok-4.7", { name: "Grok 4.7", api: "openai-responses" }],
   ["grok-4.6", { name: "Grok 4.6", api: "openai-responses" }],
   ["glm-5.3-flash", { name: "GLM-5.3-Flash", api: "openai-completions" }],
   ["glm-5.3", { name: "GLM-5.3", api: "openai-completions" }],
@@ -47,6 +59,8 @@ const MODEL_DEFINITIONS = new Map<
   ["kimi-k2.7-code", { name: "Kimi K2.7 Code", api: "openai-completions" }],
   ["kimi-k2.6", { name: "Kimi K2.6", api: "openai-completions" }],
   ["longcat-2.0", { name: "LongCat-2.0", api: "openai-completions" }],
+  ["mimo-v2.6-flash", { name: "MiMo-V2.6-Flash", api: "openai-completions" }],
+  ["mimo-v2.6-pro", { name: "MiMo-V2.6-Pro", api: "openai-completions" }],
   ["mimo-v2.5", { name: "MiMo-V2.5", api: "openai-completions" }],
   ["mimo-v2.5-pro", { name: "MiMo-V2.5-Pro", api: "openai-completions" }],
   ["minimax-m3", { name: "MiniMax M3", api: "anthropic-messages" }],
@@ -65,6 +79,7 @@ const MODEL_DEFINITIONS = new Map<
   ["qwen3.7-plus", { name: "Qwen3.7 Plus", api: "anthropic-messages" }],
   ["qwen3.6-plus", { name: "Qwen3.6 Plus", api: "anthropic-messages" }],
   ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", api: "openai-completions" }],
+  ["deepseek-v4.1-flash", { name: "DeepSeek V4.1 Flash", api: "openai-completions" }],
   ["deepseek-v4-flash", { name: "DeepSeek V4 Flash", api: "openai-completions" }],
   [
     "deepseek-v4-flash-vision-exp",
