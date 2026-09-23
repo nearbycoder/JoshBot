@@ -7,6 +7,7 @@ import {
   getDefaultSlackVisionModel,
   getSlackImageModel,
   getOpenCodeGoModelApi,
+  listOpenCodeGoModels,
   normalizeOpenCodeGoSupportedModelId,
   requiresOpenCodeGoDataTrainingOptIn,
   supportsOpenCodeGoImageInput
@@ -102,6 +103,52 @@ test("formats authoritative runtime model context for NoBo", () => {
   assert.match(context, /Active model for this request: `kimi-k2\.7-code`/);
   assert.match(context, /Image fallback model: `kimi-k3`/);
   assert.match(context, /kimi-k2\.7-code \[image\]/);
-  assert.match(context, /muse-spark-1\.3-contributor \[training opt-in\]/);
+  assert.match(context, /muse-spark-1\.3-contributor \[image, training opt-in\]/);
   assert.match(context, /deepseek-v4-pro/);
+});
+
+const newModels = [
+  { id: "grok-4.7", name: "Grok 4.7", api: "openai-responses" },
+  { id: "mimo-v2.6-flash", name: "MiMo-V2.6-Flash", api: "openai-completions" },
+  { id: "mimo-v2.6-pro", name: "MiMo-V2.6-Pro", api: "openai-completions" },
+  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "openai-completions" }
+];
+
+test("registers the September models with image input and documented endpoints", () => {
+  for (const { id, name, api } of newModels) {
+    assert.equal(normalizeOpenCodeGoSupportedModelId(`opencode-go/${id.toUpperCase()}`), id);
+    assert.equal(formatOpenCodeGoModelName(id), name);
+    assert.equal(getOpenCodeGoModelApi(id), api);
+    assert.equal(supportsOpenCodeGoImageInput(id), true);
+    assert.equal(getSlackImageModel(id), id);
+    assert.equal(requiresOpenCodeGoDataTrainingOptIn(id), false);
+    assert.ok(formatOpenCodeGoRuntimeContext(id).includes(`${id} [image]`));
+  }
+});
+
+test("refreshes existing image capabilities without bypassing Muse consent", () => {
+  for (const id of [
+    "grok-4.6", "glm-5.3-flash", "gpt-5.6-luna", "qwen3.8-max", "qwen3.8-flash",
+    "muse-spark-1.3-contributor", "muse-spark-1.2-contributor"
+  ]) {
+    assert.equal(getSlackImageModel(id), id);
+    assert.equal(requiresOpenCodeGoDataTrainingOptIn(id), id.startsWith("muse-"));
+  }
+});
+
+test("new models appear in live discovery and offline fallback without enabling unknown models", async (t) => {
+  __testing.clearModelCache();
+  t.after(() => __testing.clearModelCache());
+  t.mock.method(globalThis, "fetch", async () => Response.json({
+    data: [...newModels, { id: "omen-alpha" }, { id: "unknown-model" }, newModels[0]]
+  }));
+  assert.deepEqual(await listOpenCodeGoModels(), newModels.map(({ id, name }) => ({ id, name })));
+
+  __testing.clearModelCache();
+  t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 503 }));
+  const fallback = await listOpenCodeGoModels();
+  for (const { id, name } of newModels) {
+    assert.deepEqual(fallback.find((model) => model.id === id), { id, name });
+  }
+  assert.equal(fallback.some(({ id }) => id === "omen-alpha"), false);
 });
