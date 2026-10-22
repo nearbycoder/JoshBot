@@ -1,4 +1,5 @@
 import { getRedisClient } from "./redis.js";
+import { trackAgentWork } from "./agent-features/admission.js";
 
 type AccessKind = "channels" | "users";
 type AccessMode = "allow" | "deny";
@@ -89,12 +90,14 @@ export async function getAccessConfig() {
     allowUsers,
     denyUsers
   ] = await Promise.all([
-    redis.sMembers(getAccessKey("admin", "users")),
-    redis.sMembers(getAccessKey("allow", "channels")),
-    redis.sMembers(getAccessKey("deny", "channels")),
-    redis.sMembers(getAccessKey("allow", "users")),
-    redis.sMembers(getAccessKey("deny", "users"))
-  ]);
+    getAccessKey("admin", "users"),
+    getAccessKey("allow", "channels"),
+    getAccessKey("deny", "channels"),
+    getAccessKey("allow", "users"),
+    getAccessKey("deny", "users")
+  // Preserve fail-fast policy errors, but hold an agent's permit until every
+  // dispatched Redis read settles, even when Promise.all or its caller exits.
+  ].map(key => trackAgentWork(() => redis.sMembers(key))));
 
   return {
     adminUsers: mergeIdSets(bootstrap.adminUsers, adminUsers),
