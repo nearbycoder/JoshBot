@@ -117,7 +117,8 @@ function validCard(value: unknown): value is Card {
       || item.revision !== (value.revision as number) - value.history.length + index + 1
       || !isInstant(item.at) || item.at < previousAt || item.at > value.updatedAt) return false;
     const action = item.revision === 1 ? value.origin.kind === "user" ? "capture" : "import" : null;
-    if (action ? item.action !== action || item.at !== value.capturedAt : !["correct", "confirm"].includes(String(item.action))) return false;
+    if (typeof item.action !== "string"
+      || (action ? item.action !== action || item.at !== value.capturedAt : !["correct", "confirm"].includes(item.action))) return false;
     if (item.action === "confirm" ? item.confirmedAt !== item.at : item.confirmedAt !== null) return false;
     previousAt = item.at;
   }

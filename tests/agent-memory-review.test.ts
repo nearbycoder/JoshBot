@@ -3,6 +3,8 @@ import test from "node:test";
 import defaultFeature, { feature, readApprovedMemoryContext } from "../lib/agent-features/memory-review.js";
 import type { AgentContextItem, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend } from "./helpers/agent-feature-fixture.js";
+import { createAgentFeatureServices, createProductionContextAdapters } from "../lib/agent-features/services.js";
 
 type SavedCard = {
   id: string;
@@ -603,4 +605,83 @@ test("storage errors are reported without exposing internal details", async () =
     assert.match(response, /Memory review is unavailable/);
     assert.ok(!response.includes("database password"));
   }
+});
+
+
+async function approvedHistoryFixture() {
+  const backend = createMemoryAgentBackend();
+  const owner = { teamId: "TMEMHISTORY", userId: "UMEMHISTORY" };
+  const now = new Date("2026-10-22T15:00:00Z"), timezone = "America/Chicago";
+  const fixture = createAgentFeatureFixture(feature, { backend, owner, now, timezone });
+  assert.match(await fixture.run("capture me | city | I work in Chicago | My update"), /Captured:/);
+  const id = (await fixture.store().read<SavedState>("cards"))!.cards[0].id;
+  assert.match(await fixture.run(`confirm ${id} 1`), /revision 2/);
+  assert.match(await fixture.run(`correct ${id} 2 | I work in Madison | My relocation note`), /Approval was reset/);
+  assert.match(await fixture.run(`confirm ${id} 3`), /revision 4/);
+  const valid = (await fixture.store().read<SavedState>("cards"))!;
+  assert.deepEqual(valid.cards[0].history.map(entry => entry.action), ["capture", "confirm", "correct", "confirm"]);
+  const adapters = createProductionContextAdapters({ redis: async () => { throw new Error("Unexpected owner-index access for approved memory"); } });
+  const serviceFor = (scope = owner) => createAgentFeatureServices(backend, scope, new AbortController().signal, { now, timezone, featureId: "concept-links" }, adapters);
+  return { fixture, backend, owner, id, valid, now, timezone, serviceFor };
+}
+
+const malformedHistoryActions: Array<[string, unknown]> = [
+  ["array", ["correct"]], ["nested array", [["correct"]]],
+  ["object", { toString: "correct" }], ["number", 1],
+  ["boolean", true], ["unknown string", "approved"],
+];
+
+test("real approved history refuses malformed action read/render/edit/forget and preserves raw bytes", async t => {
+  const { fixture, backend, id, valid, now, timezone } = await approvedHistoryFixture();
+  for (const [label, action] of malformedHistoryActions) await t.test(label, async () => {
+    const corrupted = structuredClone(valid) as unknown as { cards: Array<{ history: Array<{ action: unknown }> }> };
+    // Corrupt a non-current correction so the final approval remains otherwise valid.
+    corrupted.cards[0].history[2].action = action;
+    const raw = `\n ${JSON.stringify(corrupted, null, 2)} \n`;
+    backend.data.set(fixture.key("cards"), raw);
+    const writes = backend.calls.writes;
+    for (const command of ["list", "review", `show ${id}`, `show ${id} 3`, `correct ${id} 4 | New claim | New source`, `confirm ${id} 4`, `forget ${id} 4 confirm`, "capture me | another | Another claim | Source"]) {
+      assert.match(await fixture.run(command), /Saved memory-review data is invalid/, command);
+      assert.equal(backend.data.get(fixture.key("cards")), raw, `${command} must preserve exact raw bytes`);
+    }
+    await assert.rejects(readApprovedMemoryContext({ store: fixture.store(), now, timezone }), /Saved memory-review data is invalid/);
+    assert.equal(backend.calls.writes, writes);
+  });
+  backend.data.set(fixture.key("cards"), JSON.stringify(valid));
+  assert.match(await fixture.run(`show ${id} 3`), /I work in Madison/);
+  assert.match(await fixture.run(`correct ${id} 4 | I work in Denver | New relocation note`), /revision 5/);
+  assert.match(await fixture.run(`confirm ${id} 5`), /revision 6/);
+  assert.match(await fixture.run(`forget ${id} 6 confirm`), /and its retained history/);
+  assert.deepEqual((await fixture.store().read<SavedState>("cards"))!.cards, []);
+  assert.deepEqual(fixture.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("production approved-memory adapter rejects malformed history before concept-links receives context", async t => {
+  const { fixture, backend, owner, valid, serviceFor } = await approvedHistoryFixture();
+  const services = serviceFor();
+  const approved = await services.readContext(["memory"]);
+  assert.equal(approved.length, 1);
+  assert.equal(approved[0].text, "I work in Madison");
+  assert.equal(approved[0].metadata?.revision, 4);
+  for (const [label, action] of malformedHistoryActions) await t.test(label, async () => {
+    const corrupted = structuredClone(valid) as unknown as { cards: Array<{ history: Array<{ action: unknown }> }> };
+    corrupted.cards[0].history[2].action = action;
+    const raw = `\n ${JSON.stringify(corrupted, null, 2)} \n`;
+    backend.data.set(fixture.key("cards"), raw);
+    const writes = backend.calls.writes;
+    await assert.rejects(services.readContext(["memory"]), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Personal context source approved memory could not be read completely/);
+      assert.ok(error.cause instanceof Error);
+      assert.match(error.cause.message, /Saved memory-review data is invalid/);
+      return true;
+    });
+    assert.equal(backend.data.get(fixture.key("cards")), raw);
+    assert.equal(backend.calls.writes, writes);
+    // The malformed owner's state must neither leak nor poison another scope.
+    assert.deepEqual(await serviceFor({ ...owner, userId: "UOTHER" }).readContext(["memory"]), []);
+    assert.deepEqual(await serviceFor({ ...owner, teamId: "TOTHER" }).readContext(["memory"]), []);
+  });
+  backend.data.set(fixture.key("cards"), JSON.stringify(valid));
+  assert.deepEqual(await services.readContext(["memory"]), approved);
 });
