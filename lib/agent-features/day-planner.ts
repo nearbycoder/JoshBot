@@ -191,11 +191,12 @@ function eventIntervals(raw: unknown, start: number, end: number): { busy: Busy[
     if (item.metadata.busy === false) continue;
     const startAt = instant(item.metadata.startAt), endAt = instant(item.metadata.endAt);
     if (!cleanString(item.id, 120) || seen.has(item.id) || typeof item.title !== "string" || item.title.length > 2_000 ||
-      (item.metadata.busy !== undefined && typeof item.metadata.busy !== "boolean") || startAt === null || endAt === null || startAt >= endAt) {
-      throw new PlannerError("An owned event has an invalid/duplicate ID or invalid interval. Every busy event needs startAt/endAt ISO timestamps with explicit offsets and start before end. No plan was replaced.");
+      (item.metadata.busy !== undefined && typeof item.metadata.busy !== "boolean") || startAt === null || endAt === null || startAt > endAt) {
+      throw new PlannerError("An owned event has an invalid/duplicate ID or invalid interval. Every busy event needs startAt/endAt ISO timestamps with explicit offsets and end at or after start. Equal endpoints do not block time. No plan was replaced.");
     }
     seen.add(item.id);
-    if (startAt >= end || endAt <= start || start === end) continue;
+    // Timed VEVENTs without DTEND are valid point events, even when marked busy.
+    if (startAt === endAt || startAt >= end || endAt <= start || start === end) continue;
     const title = item.title.replace(/[\x00-\x1f\x7f]/g, " ").trim().slice(0, 160).trim() || "Untitled event";
     events.push({ id: item.id, title });
     busy.push({ start: Math.max(start, startAt), end: Math.min(end, endAt), eventIds: [item.id], hasBreak: false });

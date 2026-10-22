@@ -23,7 +23,7 @@ plan 2026-10-23
 
 Use a current or future date when running these examples. `add` returns a stable UUID, and `tasks` lists those IDs. To change a task, remove its ID and add the replacement. Any successful task/settings edit clears the saved plan so `show` cannot present an outdated task list as current.
 
-The plan lists task blocks, blocked intervals with source IDs, and a reason for every unscheduled task. Overlapping events and breaks are merged into nonoverlapping unavailable intervals. Tasks may fill a smaller earlier gap even if a higher-priority, longer task was placed later.
+The plan lists task blocks, blocked intervals with source IDs, and a reason for every unscheduled task. Overlapping events and breaks are merged into nonoverlapping unavailable intervals. Tasks may fill a smaller earlier gap even if a higher-priority, longer task was placed later. Point events with equal start/end timestamps occupy no time and are omitted from unavailable intervals, even when marked busy. This includes imported timed events without `DTEND`; they do not block planning on their own date or any other date.
 
 ## Commands and limits
 
@@ -79,12 +79,12 @@ Each invocation makes **zero generation calls and zero searches** (below the run
    ```ts
    {
      startAt: "2026-10-23T10:00:00-05:00", // or UTC ISO with Z
-     endAt: "2026-10-23T11:00:00-05:00",   // exclusive; strictly after startAt
+     endAt: "2026-10-23T11:00:00-05:00",   // exclusive; equal endpoints mean a point event
      busy: true                          // optional; defaults to true
    }
    ```
 
-   Both timestamps must have explicit offsets or `Z`; naive timestamps, missing ends, duplicate IDs, or malformed records reject the entire proposal. No inference from `dueAt`, natural-language text, or an assumed duration occurs. Record `status: "cancelled"` / `"canceled"`, or `metadata.busy: false`, to skip a nonblocking event. Normalize other transparency/status spellings in the adapter.
+   Both timestamps must have explicit offsets or `Z`; naive timestamps, missing endpoint metadata, reversed intervals, duplicate IDs, or malformed records reject the entire proposal, including when outside the requested day. Equal endpoint instants are valid nonblocking point events: the calendar adapter's equal `startAt`/`endAt` for a timed VEVENT without `DTEND` is consumed directly, without rewriting its `busy: true` flag. No inference from `dueAt`, natural-language text, or an assumed duration occurs. Record `status: "cancelled"` / `"canceled"`, or `metadata.busy: false`, to skip other nonblocking events. Normalize other transparency/status spellings in the adapter.
 
 5. Convert all-day events to absolute start/end instants using the calendar's intended timezone, preserving the **exclusive end date**; the same metadata shape then works for all-day or multiday events. `allDay` may be included for provenance but does not alter scheduling. Date-only `startDate`/`endDate` metadata is not consumed here. Expand any supported recurrence in the calendar adapter before supplying concrete occurrences, with distinct IDs. Propagate calendar import/completeness failures instead of silently dropping conflicts.
 
@@ -100,4 +100,12 @@ npm run typecheck
 git diff --check
 ```
 
-Tests use only the shared in-memory store fixture and fake services. They cover complete command flows, priority/deadline ordering, merged blockers, empty/error states, UTF-8 byte quotas and lifecycle headroom with Unicode data, quota recovery without partial writes, bounded retention/output, invalid persisted state, DST gaps/overlaps and non-hour changes, all-day/overnight event boundaries, retries, concurrent changes, cancellation, and provider failure preservation.
+In an isolated planner worktree without the calendar module, run the targeted test command with `NOBO_TEST_CALENDAR_MODULE` set to the absolute path of the parent's read-only `lib/agent-features/calendar.ts`. For example:
+
+```sh
+NOBO_TEST_CALENDAR_MODULE=/home/nearby/Sites/JoshBot/lib/agent-features/calendar.ts node --import tsx --test tests/agent-day-planner.test.ts
+```
+
+After integration the regression loads the local calendar module by default; it is never skipped. It imports pasted ICS through the real calendar preview/confirm flow and calls `readCalendarEventContext` with a separate in-memory calendar store. It verifies a timed event without `DTEND` remains a busy point in source context, does not obstruct a task crossing that instant, and does not invalidate plans for another day. Normal meetings still block time and reversed intervals remain errors.
+
+Tests use only in-memory stores and fake services, plus that local calendar parser/adapter; no production services or network calls occur. They also cover complete command flows, priority/deadline ordering, merged blockers, empty/error states, UTF-8 byte quotas and lifecycle headroom with Unicode data, quota recovery without partial writes, bounded retention/output, invalid persisted state, DST gaps/overlaps and non-hour changes, all-day/overnight event boundaries, retries, concurrent changes, cancellation, and provider failure preservation.

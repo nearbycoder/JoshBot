@@ -1,8 +1,9 @@
 import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import feature, { feature as namedFeature } from "../lib/agent-features/day-planner.js";
-import type { AgentContextItem, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
+import type { AgentContextItem, AgentFeature, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
 
 type Saved = {
@@ -278,6 +279,59 @@ test("events are clipped across day boundaries; free/cancelled events do not blo
   assert.equal((await plan(context)).blocks.filter(block => block.kind === "task").length, 1);
 });
 
+test("real calendar adapter point events without DTEND do not block plans inside or outside the requested day", async () => {
+  // Isolated feature worktrees can point at the parent's read-only calendar module.
+  // The integrated suite uses its own calendar module, with no skipped regression.
+  const calendarModule = process.env.NOBO_TEST_CALENDAR_MODULE
+    ? pathToFileURL(process.env.NOBO_TEST_CALENDAR_MODULE)
+    : new URL("../lib/agent-features/calendar.js", import.meta.url);
+  const calendar: {
+    feature: AgentFeature;
+    readCalendarEventContext(store: AgentFeatureStore, timezone: string): Promise<AgentContextItem[]>;
+  } = await import(calendarModule.href);
+  const calendarContext = createAgentTestContext({ now: new Date("2026-10-22T13:00:00Z") });
+  const source = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Day planner regression//EN",
+    "BEGIN:VEVENT", "UID:point-without-dtend", "DTSTART:20261023T150000Z", "SUMMARY:Milestone", "END:VEVENT",
+    "BEGIN:VEVENT", "UID:real-meeting", "DTSTART:20261023T160000Z", "DTEND:20261023T163000Z", "SUMMARY:Meeting", "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const preview = await calendar.feature.execute(`import preview ${source}`, calendarContext);
+  const token = /import confirm ([a-f0-9]{32})/.exec(preview)?.[1];
+  assert.ok(token, preview);
+  assert.match(await calendar.feature.execute(`import confirm ${token}`, calendarContext), /^Imported: 2 new/);
+  const imported = await calendar.readCalendarEventContext(calendarContext.store, calendarContext.timezone);
+  assert.equal(imported.length, 2);
+  const point = imported.find(item => item.metadata?.uid === "point-without-dtend")!;
+  const meeting = imported.find(item => item.metadata?.uid === "real-meeting")!;
+  assert.ok(point);
+  assert.ok(meeting);
+  assert.equal(point.metadata?.startAt, "2026-10-23T15:00:00.000Z");
+  assert.equal(point.metadata?.endAt, point.metadata?.startAt);
+  assert.equal(point.metadata?.busy, true, "test the adapter's actual point semantics, without rewriting busy");
+
+  const context = createAgentTestContext({ now: calendarContext.now });
+  assert.notEqual(context.store, calendarContext.store, "calendar and planner storage remain independently scoped");
+  context.services.readContext = async kinds => {
+    assert.deepEqual(kinds, ["event"]);
+    return calendar.readCalendarEventContext(calendarContext.store, context.timezone);
+  };
+  const taskId = await add(context, "Work through the milestone | 120 | high");
+  for (const date of ["2026-10-22", "2026-10-23"]) {
+    const reply = await feature.execute(`plan ${date}`, context);
+    assert.match(reply, /Scheduled: 1\/1/, reply);
+    const result = await plan(context);
+    assertNoOverlap(result);
+    const task = result.blocks.find(block => block.taskId === taskId)!;
+    assert.equal(task.startAt, `${date}T14:00:00.000Z`);
+    assert.equal(task.endAt, `${date}T16:00:00.000Z`);
+    assert.ok(result.blocks.every(block => !block.eventIds?.includes(point.id)));
+    assert.deepEqual(result.events.map(item => item.id), date === "2026-10-23" ? [meeting.id] : []);
+    assert.equal(await feature.execute("show", context), reply);
+  }
+  assert.deepEqual(await calendar.readCalendarEventContext(calendarContext.store, calendarContext.timezone), imported);
+});
+
 test("provider failures and malformed/incomplete event context preserve the saved plan", async () => {
   const context = withEvents([]);
   await add(context, "Keep me | 30 | high");
@@ -292,6 +346,7 @@ test("provider failures and malformed/incomplete event context preserve the save
     [event("bad", "2026-10-24T09:00", "2026-10-24T10:00")],
     [event("bad", "2026-02-30T09:00Z", "2026-10-24T10:00Z")],
     [event("bad", "2026-10-24T10:00Z", "2026-10-24T09:00Z")],
+    [event("reversed-outside-day", "2026-10-23T10:00Z", "2026-10-23T09:00Z")],
     [event("bad", "2026-10-24T09:00Z", "2026-10-24T10:00Z", { metadata: undefined })],
     [event("same", "2026-10-24T09:00Z", "2026-10-24T10:00Z"), event("same", "2026-10-24T11:00Z", "2026-10-24T12:00Z")],
     Array.from({ length: 201 }, (_, i) => event(String(i), "2026-10-24T09:00Z", "2026-10-24T10:00Z")),
