@@ -1,3 +1,4 @@
+import { AgentContextCapacityError } from "../lib/agent-features/budgets.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
@@ -127,4 +128,50 @@ test("schema-valid legacy aggregate recovers by exact root deletion, including C
   }
   assert.match(await f.run("create Recovered"), /Saved privately/);
   assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+test("backend errors are sanitized before and after dispatch while validation stays actionable", async () => {
+  const marker = "FAKE_BACKEND_DIAGNOSTIC_PASSWORD_DO_NOT_DISPLAY";
+  for (const operation of ["get", "compareSet", "committed"] as const) for (const rejected of [false, true]) {
+    const backend = createMemoryAgentBackend(), f = createAgentFeatureFixture(feature, { backend });
+    await f.run("create Original"); const r = (await state(f)).records[0];
+    const original = backend.data.get(f.key("state")), get = backend.get, compareSet = backend.compareSet;
+    let dispatched: string | undefined;
+    const fail = () => { if (rejected) return Promise.reject(new Error(marker)); throw new Error(marker); };
+    if (operation === "get") backend.get = () => fail();
+    else backend.compareSet = (key, previous, next) => {
+      if (operation === "committed") {
+        assert.equal(backend.data.get(key), previous); backend.data.set(key, next); dispatched = next;
+      }
+      return fail();
+    };
+    const reply = await f.run(operation === "get" ? "list" : `edit ${r.id} | Changed`);
+    assert.doesNotMatch(reply, new RegExp(marker)); assert.match(reply, /Inspect before retrying/);
+    assert.match(reply, /dispatched save may have completed/); assert.ok(reply.length <= 3500);
+    assert.equal(backend.data.get(f.key("state")), operation === "committed" ? dispatched : original);
+    backend.get = get; backend.compareSet = compareSet;
+    assert.equal(JSON.parse(await f.run(`export ${r.id}`)).record.goal, operation === "committed" ? "Changed" : "Original");
+    const raw = backend.data.get(f.key("state"));
+    for (const cmd of ["create " + "x".repeat(161), "create A | surplus", "list 0"]) {
+      const bad = await f.run(cmd); assert.match(bad, /Field|field|page|Page/);
+      assert.doesNotMatch(bad, /could not be read|unavailable/); assert.equal(backend.data.get(f.key("state")), raw);
+    }
+    assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+  }
+});
+
+test("source failures hide diagnostics and preserve typed capacity recovery", async () => {
+  const marker = "FAKE_SOURCE_DIAGNOSTIC_PASSWORD_DO_NOT_DISPLAY";
+  for (const capacity of [false, true]) {
+    const f = createAgentFeatureFixture(feature, {services:{readContext:async () => {
+      throw capacity ? new AgentContextCapacityError() : new Error(marker);
+    }}});
+    await f.run("create Sources"); const r = (await state(f)).records[0], raw = f.backend.data.get(f.key("state"));
+    const reply = await f.run(`bookmarks ${r.id}`);
+    assert.doesNotMatch(reply, new RegExp(marker));
+    assert.match(reply, capacity ? /complete-read budget.*No source data was truncated/ : /could not be read completely/);
+    assert.match(reply, capacity ? /Narrow|Reduce/ : /owning source/);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+    assert.deepEqual(f.calls,{generate:0,search:0,readContext:1});
+  }
 });

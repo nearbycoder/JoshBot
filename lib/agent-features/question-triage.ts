@@ -2,9 +2,27 @@ import { randomUUID } from "node:crypto";
 import * as v from "valibot";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 import metadata from "./question-triage.metadata.js";
-import { boundedText, pipeFields, parsePage, paginateParts, pageAt } from "./feature-kit/command-and-display.js";
-import { assertQuota, assertRevision, assertStateVersion, serializedBytes } from "./feature-kit/bounded-state.js";
-import { civilDate, dateInZone } from "./feature-kit/civil-time.js";
+import { boundedText as kitBoundedText, pipeFields as kitPipeFields, parsePage as kitParsePage, paginateParts as kitPaginateParts, pageAt as kitPageAt } from "./feature-kit/command-and-display.js";
+import { assertQuota as kitAssertQuota, assertRevision as kitAssertRevision, assertStateVersion as kitAssertStateVersion, serializedBytes as kitSerializedBytes } from "./feature-kit/bounded-state.js";
+import { civilDate as kitCivilDate, dateInZone as kitDateInZone } from "./feature-kit/civil-time.js";
+class CommandError extends Error {}
+// Only pure local validation is trusted as guidance. Never wrap backend/service I/O.
+function checked<T>(work: () => T): T {
+  try { return work(); }
+  catch (error) { throw new CommandError(error instanceof Error ? error.message : "Invalid input."); }
+}
+const boundedText: typeof kitBoundedText = (...args) => checked(() => kitBoundedText(...args));
+const pipeFields: typeof kitPipeFields = (...args) => checked(() => kitPipeFields(...args));
+const parsePage: typeof kitParsePage = (...args) => checked(() => kitParsePage(...args));
+const paginateParts: typeof kitPaginateParts = (...args) => checked(() => kitPaginateParts(...args));
+const pageAt: typeof kitPageAt = (...args) => checked(() => kitPageAt(...args));
+const assertQuota: typeof kitAssertQuota = (...args) => checked(() => kitAssertQuota(...args));
+const assertRevision: typeof kitAssertRevision = (...args) => checked(() => kitAssertRevision(...args));
+const assertStateVersion: typeof kitAssertStateVersion = (...args) => checked(() => kitAssertStateVersion(...args));
+const serializedBytes: typeof kitSerializedBytes = (...args) => checked(() => kitSerializedBytes(...args));
+const civilDate: typeof kitCivilDate = (...args) => checked(() => kitCivilDate(...args));
+const dateInZone: typeof kitDateInZone = (...args) => checked(() => kitDateInZone(...args));
+
 const route = "/nobo-help agent question-triage", MAX_REV = 999_999_999;
 const id = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));
 const text = (bytes: number, empty = false) => v.pipe(v.string(), v.check(s => { try { boundedText(s, { label: "Text", maxBytes: bytes, trim: false, allowEmpty: empty }); return empty || !!s.trim(); } catch { return false; } }));
@@ -21,9 +39,9 @@ const initial: State = { version: 1, records: [] };
 const envelope = (r: Board) => ({ feature: metadata.id, version: 1, record: r });
 function validate(raw: unknown): State {
   assertStateVersion(raw, 1); const p = v.safeParse(schema, raw);
-  if (!p.success) throw new Error("Invalid saved question fields; data preserved. Ask the operator for scoped recovery.");
+  if (!p.success) throw new CommandError("Invalid saved question fields; data preserved. Ask the operator for scoped recovery.");
   const ids = p.output.records.flatMap(r => [r.id, ...r.questions.flatMap(q => [q.id, ...q.challenges.map(c => c.id)])]);
-  if (new Set(ids).size !== ids.length) throw new Error("Duplicate saved IDs; data preserved.");
+  if (new Set(ids).size !== ids.length) throw new CommandError("Duplicate saved IDs; data preserved.");
   return p.output;
 }
 function quota(s: State, content: boolean) {
@@ -36,10 +54,10 @@ function quota(s: State, content: boolean) {
   for (const r of s.records) render(r, "show", JSON.stringify(envelope(r), null, 2), 1);
 }
 const fields = (s: string, sizes: number[], empty = false) => pipeFields(s, sizes.map(maxBytes => ({ label: "Field", maxBytes: maxBytes + 32, allowEmpty: empty }))).map((s, i) => boundedText(s, { label: "Field", maxBytes: sizes[i], allowEmpty: empty }));
-const get = (s: State, key: string) => { const r = s.records.find(r => r.id === key); if (!r) throw new Error(`Item not found in your private records. Use ${route} list`); return r; };
-const getQuestion = (r: Board, key: string) => { const q = r.questions.find(q => q.id === key); if (!q) throw new Error("Question not found; inspect show for full IDs."); return q; };
+const get = (s: State, key: string) => { const r = s.records.find(r => r.id === key); if (!r) throw new CommandError(`Item not found in your private records. Use ${route} list`); return r; };
+const getQuestion = (r: Board, key: string) => { const q = r.questions.find(q => q.id === key); if (!q) throw new CommandError("Question not found; inspect show for full IDs."); return q; };
 function render(r: Board, verb: string, body: string, page: number, expected?: string, today?: string) {
-  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new Error(`Board changed or revision missing. Restart: ${route} ${verb} ${r.id} page 1`);
+  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new CommandError(`Board changed or revision missing. Restart: ${route} ${verb} ${r.id} page 1`);
   return pageAt(paginateParts(body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Question board ${r.id} · revision ${r.revision}${today ? ` · as of ${today}` : ""}`, command: p => `${route} ${verb} ${r.id} page ${p} rev ${r.revision}${today ? ` as-of ${today}` : ""}` }), page).text;
 }
 function status(q: Question) {
@@ -64,11 +82,11 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const expected = JSON.stringify(get(s, key));
     return ctx.store.update("state", initial, raw => {
       const state = validate(raw), target = get(state, key);
-      if (JSON.stringify(target) !== expected) throw new Error("Record changed; inspect before deleting again.");
+      if (JSON.stringify(target) !== expected) throw new CommandError("Record changed; inspect before deleting again.");
       const beforeBytes = serializedBytes(state);
       state.records = state.records.filter(r => r.id !== key);
       validate(state);
-      if (serializedBytes(state) >= beforeBytes) throw new Error("Removal did not reduce saved data; nothing changed.");
+      if (serializedBytes(state) >= beforeBytes) throw new CommandError("Removal did not reduce saved data; nothing changed.");
       return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
     });
   };
@@ -82,21 +100,22 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     });
   };
   let m: RegExpMatchArray | null;
-  if ((m = command.match(/^list(?: (?:page )?(\d+))?$/))) { const p = parsePage(m[1]), total = Math.max(1, Math.ceil(s.records.length / 10)); if (p > total) throw new Error(`Restart: ${route} list 1`); return `Private current list · ${p}/${total}\n${s.records.slice((p - 1) * 10, p * 10).map(r => `${r.id} · ${r.decision.replace(/[\r\n]/g, " ")} · revision ${r.revision}`).join("\n") || `No boards. Start: ${metadata.example}`}\n${p < total ? `Next: ${route} list ${p + 1}` : ""}`; }
-  if ((m = command.match(/^(show|queue) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?(?: as-of (\S+))?$/))) { const [, verb, key, p, rev, date] = m, r = get(s, key); if (verb === "show" && date) throw new Error("as-of applies only to queue."); const today = date ? civilDate(date) : dateInZone(ctx.now, ctx.timezone); if (verb === "queue" && parsePage(p) > 1 && !date) throw new Error(`Review date missing; restart: ${route} queue ${key} page 1`); return render(r, verb, verb === "show" ? JSON.stringify(envelope(r), null, 2) : queue(r, today), parsePage(p), rev, verb === "queue" ? today : undefined); }
-  if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new Error("Record exceeds export limit; use show pages."); return JSON.stringify(out); }
+  if ((m = command.match(/^list(?: (?:page )?(\d+))?$/))) { const p = parsePage(m[1]), total = Math.max(1, Math.ceil(s.records.length / 10)); if (p > total) throw new CommandError(`Restart: ${route} list 1`); return `Private current list · ${p}/${total}\n${s.records.slice((p - 1) * 10, p * 10).map(r => `${r.id} · ${r.decision.replace(/[\r\n]/g, " ")} · revision ${r.revision}`).join("\n") || `No boards. Start: ${metadata.example}`}\n${p < total ? `Next: ${route} list ${p + 1}` : ""}`; }
+  if ((m = command.match(/^(show|queue) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?(?: as-of (\S+))?$/))) { const [, verb, key, p, rev, date] = m, r = get(s, key); if (verb === "show" && date) throw new CommandError("as-of applies only to queue."); const today = date ? civilDate(date) : dateInZone(ctx.now, ctx.timezone); if (verb === "queue" && parsePage(p) > 1 && !date) throw new CommandError(`Review date missing; restart: ${route} queue ${key} page 1`); return render(r, verb, verb === "show" ? JSON.stringify(envelope(r), null, 2) : queue(r, today), parsePage(p), rev, verb === "queue" ? today : undefined); }
+  if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new CommandError("Record exceeds export limit; use show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete board and all questions/answers/challenges: ${route} delete ${key} confirm`; return deleteRoot(key); }
   if (command.startsWith("create ")) { const [decision] = fields(command.slice(7), [160]); return save(undefined, state => { state.records.push({ id: newId, decision, revision: 1, questions: [] }); return `Saved privately: ${newId}\nInspect: ${route} queue ${newId}`; }); }
   if ((m = command.match(/^edit (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [decision] = fields(input, [160]); return save(key, (_, r) => { if (r!.decision !== decision) for (const q of r!.questions) if (q.answer) q.answer.stale = true; r!.decision = decision; return `Updated decision: ${key}. Changed decisions mark existing answers stale.`; }); }
   if ((m = command.match(/^ask (\S+) (add|edit) ([\s\S]+)$/))) {
     const [, key, action, input] = m, f = fields(input, action === "add" ? [320, 8, 256] : [36, 320, 8, 256]), qid = action === "edit" ? f.shift()! : newId;
-    if (!v.is(kind, f[1])) throw new Error("Question kind must be blocking or optional."); const priority = f[1];
-    return save(key, (_, r) => { if (action === "add") { if (r!.questions.length === 24) throw new Error("Maximum 24 questions; remove one explicitly."); r!.questions.push({ id: qid, question: f[0], kind: priority, consequence: f[2], acceptableEvidence: "", answer: null, challenges: [] }); } else { const q = getQuestion(r!, qid); if ((q.question !== f[0] || q.consequence !== f[2]) && q.answer) q.answer.stale = true; Object.assign(q, { question: f[0], kind: priority, consequence: f[2] }); } return `Saved question: ${qid}. Changed wording/consequences mark the prior answer stale.`; });
+    if (!v.is(kind, f[1])) throw new CommandError("Question kind must be blocking or optional."); const priority = f[1];
+    return save(key, (_, r) => { if (action === "add") { if (r!.questions.length === 24) throw new CommandError("Maximum 24 questions; remove one explicitly."); r!.questions.push({ id: qid, question: f[0], kind: priority, consequence: f[2], acceptableEvidence: "", answer: null, challenges: [] }); } else { const q = getQuestion(r!, qid); if ((q.question !== f[0] || q.consequence !== f[2]) && q.answer) q.answer.stale = true; Object.assign(q, { question: f[0], kind: priority, consequence: f[2] }); } return `Saved question: ${qid}. Changed wording/consequences mark the prior answer stale.`; });
   }
   if ((m = command.match(/^evidence-needed (\S+) ([\s\S]+)$/))) { const [, key, input] = m, [qid, criterion] = fields(input, [36, 256]); return save(key, (_, r) => { const q = getQuestion(r!, qid); if (q.acceptableEvidence !== criterion && q.answer) q.answer.stale = true; q.acceptableEvidence = criterion; return `Saved evidence criterion for ${qid}. Existing answers need explicit re-reporting after a change.`; }); }
-  if ((m = command.match(/^(answer|answer-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, [qid, value, label, date] = fields(input, [36, 256, 128, 10]), reviewDate = date === "unknown" ? null : civilDate(date); return save(key, (_, r) => { const q = getQuestion(r!, qid); if ((action === "answer") !== (q.answer === null)) throw new Error("Use answer for a first report, answer-edit to explicitly replace/reaffirm it."); q.answer = { text: value, sourceLabel: label, reviewDate, stale: false }; return `Saved user-reported answer for ${qid}; criteria and challenges remain visible. ${status(q)}`; }, false); }
-  if ((m = command.match(/^(challenge|challenge-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, f = fields(input, action === "challenge" ? [36, 128] : [36, 36, 128]), qid = f.shift()!, cid = action === "challenge-edit" ? f.shift()! : newId; return save(key, (_, r) => { const q = getQuestion(r!, qid); if (action === "challenge") { if (q.challenges.length === 3) throw new Error("Maximum three challenges; edit or explicitly remove a note."); q.challenges.push({ id: cid, note: f[0] }); } else { const c = q.challenges.find(c => c.id === cid); if (!c) throw new Error("Challenge not found."); c.note = f[0]; } return `Saved challenge: ${cid}. Prior answer/source retained; uncertainty reopened.`; }, false); }
-  if ((m = command.match(/^remove (\S+) (question|evidence|answer|challenge) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "challenge") { const q = r!.questions.find(q => q.challenges.some(c => c.id === child)); if (!q) throw new Error("Challenge not found."); q.challenges = q.challenges.filter(c => c.id !== child); } else { const q = getQuestion(r!, child); if (kind === "question") r!.questions = r!.questions.filter(q => q.id !== child); else if (kind === "answer") q.answer = null; else { q.acceptableEvidence = ""; if (q.answer) q.answer.stale = true; } } return `Removed ${kind}: ${child}. Other evidence is retained.`; }, false); }
-  throw new Error(`Unknown/incomplete command. Use ${route} help`);
+  if ((m = command.match(/^(answer|answer-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, [qid, value, label, date] = fields(input, [36, 256, 128, 10]), reviewDate = date === "unknown" ? null : civilDate(date); return save(key, (_, r) => { const q = getQuestion(r!, qid); if ((action === "answer") !== (q.answer === null)) throw new CommandError("Use answer for a first report, answer-edit to explicitly replace/reaffirm it."); q.answer = { text: value, sourceLabel: label, reviewDate, stale: false }; return `Saved user-reported answer for ${qid}; criteria and challenges remain visible. ${status(q)}`; }, false); }
+  if ((m = command.match(/^(challenge|challenge-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, f = fields(input, action === "challenge" ? [36, 128] : [36, 36, 128]), qid = f.shift()!, cid = action === "challenge-edit" ? f.shift()! : newId; return save(key, (_, r) => { const q = getQuestion(r!, qid); if (action === "challenge") { if (q.challenges.length === 3) throw new CommandError("Maximum three challenges; edit or explicitly remove a note."); q.challenges.push({ id: cid, note: f[0] }); } else { const c = q.challenges.find(c => c.id === cid); if (!c) throw new CommandError("Challenge not found."); c.note = f[0]; } return `Saved challenge: ${cid}. Prior answer/source retained; uncertainty reopened.`; }, false); }
+  if ((m = command.match(/^remove (\S+) (question|evidence|answer|challenge) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "challenge") { const q = r!.questions.find(q => q.challenges.some(c => c.id === child)); if (!q) throw new CommandError("Challenge not found."); q.challenges = q.challenges.filter(c => c.id !== child); } else { const q = getQuestion(r!, child); if (kind === "question") r!.questions = r!.questions.filter(q => q.id !== child); else if (kind === "answer") q.answer = null; else { q.acceptableEvidence = ""; if (q.answer) q.answer.stale = true; } } return `Removed ${kind}: ${child}. Other evidence is retained.`; }, false); }
+  throw new CommandError(`Unknown/incomplete command. Use ${route} help`);
 }
-export default { ...metadata, async execute(command, ctx) { try { return await execute(command, ctx); } catch (error) { ctx.signal?.throwIfAborted(); return `${error instanceof Error ? error.message : "Command failed safely; inspect before retrying."}\nNext: ${route} help`; } } } satisfies AgentFeature;
+export default { ...metadata, async execute(command, ctx) { try { return await execute(command, ctx); } catch (error) { ctx.signal?.throwIfAborted(); if (error instanceof CommandError) return `${error.message}\nNext: ${route} help`;
+    return `Saved work could not be read or confirmed safely. Inspect before retrying; a dispatched save may have completed. Help remains available; ask the operator about scoped state recovery if this persists.\nNext: ${route} list`; } } } satisfies AgentFeature;

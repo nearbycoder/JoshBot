@@ -2,9 +2,27 @@ import { randomUUID } from "node:crypto";
 import * as v from "valibot";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 import metadata from "./timeline-builder.metadata.js";
-import { boundedText, pipeFields, parsePage, paginateParts, pageAt } from "./feature-kit/command-and-display.js";
-import { assertQuota, assertRevision, assertStateVersion, serializedBytes } from "./feature-kit/bounded-state.js";
-import { civilDate, normalizeInstant } from "./feature-kit/civil-time.js";
+import { boundedText as kitBoundedText, pipeFields as kitPipeFields, parsePage as kitParsePage, paginateParts as kitPaginateParts, pageAt as kitPageAt } from "./feature-kit/command-and-display.js";
+import { assertQuota as kitAssertQuota, assertRevision as kitAssertRevision, assertStateVersion as kitAssertStateVersion, serializedBytes as kitSerializedBytes } from "./feature-kit/bounded-state.js";
+import { civilDate as kitCivilDate, normalizeInstant as kitNormalizeInstant } from "./feature-kit/civil-time.js";
+
+class CommandError extends Error {}
+// Only pure local validation is trusted as guidance. Never wrap backend/service I/O.
+function checked<T>(work: () => T): T {
+  try { return work(); }
+  catch (error) { throw new CommandError(error instanceof Error ? error.message : "Invalid input."); }
+}
+const boundedText: typeof kitBoundedText = (...args) => checked(() => kitBoundedText(...args));
+const pipeFields: typeof kitPipeFields = (...args) => checked(() => kitPipeFields(...args));
+const parsePage: typeof kitParsePage = (...args) => checked(() => kitParsePage(...args));
+const paginateParts: typeof kitPaginateParts = (...args) => checked(() => kitPaginateParts(...args));
+const pageAt: typeof kitPageAt = (...args) => checked(() => kitPageAt(...args));
+const assertQuota: typeof kitAssertQuota = (...args) => checked(() => kitAssertQuota(...args));
+const assertRevision: typeof kitAssertRevision = (...args) => checked(() => kitAssertRevision(...args));
+const assertStateVersion: typeof kitAssertStateVersion = (...args) => checked(() => kitAssertStateVersion(...args));
+const serializedBytes: typeof kitSerializedBytes = (...args) => checked(() => kitSerializedBytes(...args));
+const civilDate: typeof kitCivilDate = (...args) => checked(() => kitCivilDate(...args));
+const normalizeInstant: typeof kitNormalizeInstant = (...args) => checked(() => kitNormalizeInstant(...args));
 
 const route = "/nobo-help agent timeline-builder", MAX_REV = 999_999_999;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -22,21 +40,21 @@ const envelope = (r: Timeline) => ({ feature: metadata.id, version: 1, record: r
 function validate(raw: unknown): State {
   assertStateVersion(raw, 1);
   const result = v.safeParse(schema, raw);
-  if (!result.success) throw new Error("Invalid saved timeline fields; data preserved. Ask the operator for scoped recovery; help remains available.");
+  if (!result.success) throw new CommandError("Invalid saved timeline fields; data preserved. Ask the operator for scoped recovery; help remains available.");
   const ids: string[] = [];
   for (const r of result.output.records) {
     ids.push(r.id, ...r.entries.map(e => e.id), ...r.orders.map(e => e.id));
     const degree = new Map(r.entries.map(e => [e.id, 0])), outgoing = new Map(r.entries.map(e => [e.id, [] as string[]]));
-    if (new Set(r.orders.map(e => `${e.before}/${e.after}`)).size !== r.orders.length) throw new Error("Duplicate order constraint; nothing changed.");
+    if (new Set(r.orders.map(e => `${e.before}/${e.after}`)).size !== r.orders.length) throw new CommandError("Duplicate order constraint; nothing changed.");
     for (const e of r.orders) {
-      if (e.before === e.after || !degree.has(e.before) || !degree.has(e.after)) throw new Error("Order constraints need two different existing entries; nothing changed.");
+      if (e.before === e.after || !degree.has(e.before) || !degree.has(e.after)) throw new CommandError("Order constraints need two different existing entries; nothing changed.");
       degree.set(e.after, degree.get(e.after)! + 1); outgoing.get(e.before)!.push(e.after);
     }
     const queue = r.entries.filter(e => degree.get(e.id) === 0).map(e => e.id);
     for (let i = 0; i < queue.length; i++) for (const child of outgoing.get(queue[i])!) { degree.set(child, degree.get(child)! - 1); if (degree.get(child) === 0) queue.push(child); }
-    if (queue.length !== r.entries.length) throw new Error("Declared order cycle rejected atomically. Remove or reverse a constraint; observations remain unchanged.");
+    if (queue.length !== r.entries.length) throw new CommandError("Declared order cycle rejected atomically. Remove or reverse a constraint; observations remain unchanged.");
   }
-  if (new Set(ids).size !== ids.length) throw new Error("Duplicate saved IDs; data preserved.");
+  if (new Set(ids).size !== ids.length) throw new CommandError("Duplicate saved IDs; data preserved.");
   return result.output;
 }
 function quota(s: State, content: boolean) {
@@ -47,15 +65,15 @@ function quota(s: State, content: boolean) {
   for (const r of s.records) render(r, "show", JSON.stringify(envelope(r), null, 2), 1);
 }
 const fields = (input: string, sizes: number[]) => pipeFields(input, sizes.map(maxBytes => ({ label: "Field", maxBytes: maxBytes + 32 }))).map((s, i) => boundedText(s, { label: "Field", maxBytes: sizes[i] }));
-const get = (s: State, key: string) => { const r = s.records.find(r => r.id === key); if (!r) throw new Error(`Item not found in your private records. Use ${route} list`); return r; };
-const getEntry = (r: Timeline, key: string) => { const e = r.entries.find(e => e.id === key); if (!e) throw new Error("Entry not found; inspect show for full IDs."); return e; };
+const get = (s: State, key: string) => { const r = s.records.find(r => r.id === key); if (!r) throw new CommandError(`Item not found in your private records. Use ${route} list`); return r; };
+const getEntry = (r: Timeline, key: string) => { const e = r.entries.find(e => e.id === key); if (!e) throw new CommandError("Entry not found; inspect show for full IDs."); return e; };
 function parseDate(value: string): Timeline["entries"][number]["date"] {
   if (value === "unknown") return { kind: "unknown", value: null };
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return { kind: "civil", value: civilDate(value) };
   normalizeInstant(value); return { kind: "instant", value };
 }
 function render(r: Timeline, verb: string, body: string, page: number, expected?: string) {
-  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new Error(`This timeline page changed or needs a revision. Restart: ${route} ${verb} ${r.id} page 1`);
+  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new CommandError(`This timeline page changed or needs a revision. Restart: ${route} ${verb} ${r.id} page 1`);
   return pageAt(paginateParts(body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Timeline ${r.id} · revision ${r.revision}`, command: p => `${route} ${verb} ${r.id} page ${p} rev ${r.revision}` }), page).text;
 }
 function orderStatus(a: Timeline["entries"][number], b: Timeline["entries"][number]) {
@@ -93,11 +111,11 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const expected = JSON.stringify(get(s, key));
     return ctx.store.update("state", initial, raw => {
       const state = validate(raw), target = get(state, key);
-      if (JSON.stringify(target) !== expected) throw new Error("Record changed; inspect before deleting again.");
+      if (JSON.stringify(target) !== expected) throw new CommandError("Record changed; inspect before deleting again.");
       const beforeBytes = serializedBytes(state);
       state.records = state.records.filter(r => r.id !== key);
       validate(state);
-      if (serializedBytes(state) >= beforeBytes) throw new Error("Removal did not reduce saved data; nothing changed.");
+      if (serializedBytes(state) >= beforeBytes) throw new CommandError("Removal did not reduce saved data; nothing changed.");
       return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
     });
   };
@@ -107,33 +125,34 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const state = validate(raw), r = key === undefined ? undefined : get(state, key);
       if (r) assertRevision(r.revision, expected);
       const detail = change(state, r);
-      if (r && state.records.includes(r)) { if (r.revision === MAX_REV) throw new Error("Revision limit reached; export then delete this record."); r.revision++; }
+      if (r && state.records.includes(r)) { if (r.revision === MAX_REV) throw new CommandError("Revision limit reached; export then delete this record."); r.revision++; }
       validate(state); quota(state, content);
       return { value: state, result: `${detail}\n${serializedBytes(state)}/49152 state bytes.\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `view ${key}` : "list"}` };
     });
   };
   let m: RegExpMatchArray | null;
   if ((m = command.match(/^list(?: (?:page )?(\d+))?$/))) {
-    const p = parsePage(m[1]), total = Math.max(1, Math.ceil(s.records.length / 10)); if (p > total) throw new Error(`Page out of range. Restart: ${route} list 1`);
+    const p = parsePage(m[1]), total = Math.max(1, Math.ceil(s.records.length / 10)); if (p > total) throw new CommandError(`Page out of range. Restart: ${route} list 1`);
     return `Private current list · ${p}/${total}\n${s.records.slice((p - 1) * 10, p * 10).map(r => `${r.id} · ${r.title.replace(/[\r\n]/g, " ")} · revision ${r.revision}`).join("\n") || `No timelines. Start: ${metadata.example}`}\n${p < total ? `Next: ${route} list ${p + 1}` : ""}`;
   }
   if ((m = command.match(/^(show|view) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : view(r), parsePage(m[3]), m[4]); }
-  if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new Error("Record exceeds export limit; retrieve show pages."); return JSON.stringify(out); }
+  if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new CommandError("Record exceeds export limit; retrieve show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete timeline and all observations/orders: ${route} delete ${key} confirm`; return deleteRoot(key); }
-  if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 12) throw new Error("Maximum 12 timelines. Export/delete one explicitly."); state.records.push({ id: newId, title, revision: 1, entries: [], orders: [] }); return `Saved privately: ${newId}\nInspect: ${route} view ${newId}`; }); }
+  if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 12) throw new CommandError("Maximum 12 timelines. Export/delete one explicitly."); state.records.push({ id: newId, title, revision: 1, entries: [], orders: [] }); return `Saved privately: ${newId}\nInspect: ${route} view ${newId}`; }); }
   if ((m = command.match(/^edit (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [title] = fields(input, [160]); return save(key, (_, r) => { r!.title = title; return `Updated timeline: ${key}`; }); }
   if ((m = command.match(/^entry (\S+) (add|edit) ([\s\S]+)$/))) {
     const [, key, action, input] = m, f = fields(input, action === "add" ? [160, 29, 200, 600] : [36, 160, 29, 200, 600]), eid = action === "edit" ? f.shift()! : newId, [label, dateInput, sourceLabel, excerpt] = f, parsedDate = parseDate(dateInput);
-    return save(key, (_, r) => { if (action === "add") { if (r!.entries.length === 30) throw new Error("Maximum 30 observations; remove one explicitly."); r!.entries.push({ id: eid, label, date: parsedDate, sourceLabel, excerpt, dispute: null }); } else Object.assign(getEntry(r!, eid), { label, date: parsedDate, sourceLabel, excerpt }); return `Saved entry: ${eid}. Existing disputes/orders are retained for review.`; });
+    return save(key, (_, r) => { if (action === "add") { if (r!.entries.length === 30) throw new CommandError("Maximum 30 observations; remove one explicitly."); r!.entries.push({ id: eid, label, date: parsedDate, sourceLabel, excerpt, dispute: null }); } else Object.assign(getEntry(r!, eid), { label, date: parsedDate, sourceLabel, excerpt }); return `Saved entry: ${eid}. Existing disputes/orders are retained for review.`; });
   }
   if ((m = command.match(/^(before|before-edit) (\S+) ([\s\S]+)$/))) {
     const [, action, key, input] = m, f = fields(input, action === "before" ? [36, 36] : [36, 36, 36]), oid = action === "before-edit" ? f.shift()! : newId;
-    return save(key, (_, r) => { const next = { id: oid, before: f[0], after: f[1] }; if (action === "before") { if (r!.orders.length === 50) throw new Error("Maximum 50 order constraints; remove one explicitly."); r!.orders.push(next); } else { const e = r!.orders.find(e => e.id === oid); if (!e) throw new Error("Order ID not found."); Object.assign(e, next); } return `Saved order: ${oid}`; });
+    return save(key, (_, r) => { const next = { id: oid, before: f[0], after: f[1] }; if (action === "before") { if (r!.orders.length === 50) throw new CommandError("Maximum 50 order constraints; remove one explicitly."); r!.orders.push(next); } else { const e = r!.orders.find(e => e.id === oid); if (!e) throw new CommandError("Order ID not found."); Object.assign(e, next); } return `Saved order: ${oid}`; });
   }
-  if ((m = command.match(/^(dispute|dispute-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, [eid, note] = fields(input, [36, 256]); return save(key, (_, r) => { const e = getEntry(r!, eid); if ((action === "dispute") !== (e.dispute === null)) throw new Error("Use dispute for a new note, dispute-edit to replace it, or remove TIMELINE dispute ENTRY confirm."); e.dispute = note; return `Saved dispute on entry: ${eid}. No truth winner selected.`; }, false); }
+  if ((m = command.match(/^(dispute|dispute-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, [eid, note] = fields(input, [36, 256]); return save(key, (_, r) => { const e = getEntry(r!, eid); if ((action === "dispute") !== (e.dispute === null)) throw new CommandError("Use dispute for a new note, dispute-edit to replace it, or remove TIMELINE dispute ENTRY confirm."); e.dispute = note; return `Saved dispute on entry: ${eid}. No truth winner selected.`; }, false); }
   if ((m = command.match(/^remove (\S+) (entry|order|dispute) (\S+) confirm$/))) {
-    const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "order") { if (!r!.orders.some(e => e.id === child)) throw new Error("Order ID not found."); r!.orders = r!.orders.filter(e => e.id !== child); } else { const e = getEntry(r!, child); if (kind === "dispute") e.dispute = null; else { r!.entries = r!.entries.filter(e => e.id !== child); r!.orders = r!.orders.filter(e => e.before !== child && e.after !== child); } } return `Removed ${kind}: ${child}${kind === "entry" ? " and its incident orders/dispute" : ""}.`; }, false);
+    const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "order") { if (!r!.orders.some(e => e.id === child)) throw new CommandError("Order ID not found."); r!.orders = r!.orders.filter(e => e.id !== child); } else { const e = getEntry(r!, child); if (kind === "dispute") e.dispute = null; else { r!.entries = r!.entries.filter(e => e.id !== child); r!.orders = r!.orders.filter(e => e.before !== child && e.after !== child); } } return `Removed ${kind}: ${child}${kind === "entry" ? " and its incident orders/dispute" : ""}.`; }, false);
   }
-  throw new Error(`Unknown/incomplete command. Use ${route} help`);
+  throw new CommandError(`Unknown/incomplete command. Use ${route} help`);
 }
-export default { ...metadata, async execute(command, ctx) { try { return await execute(command, ctx); } catch (error) { ctx.signal?.throwIfAborted(); return `${error instanceof Error ? error.message : "Command failed safely; inspect before retrying."}\nNext: ${route} help`; } } } satisfies AgentFeature;
+export default { ...metadata, async execute(command, ctx) { try { return await execute(command, ctx); } catch (error) { ctx.signal?.throwIfAborted(); if (error instanceof CommandError) return `${error.message}\nNext: ${route} help`;
+    return `Saved work could not be read or confirmed safely. Inspect before retrying; a dispatched save may have completed. Help remains available; ask the operator about scoped state recovery if this persists.\nNext: ${route} list`; } } } satisfies AgentFeature;
