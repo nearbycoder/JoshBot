@@ -30,6 +30,13 @@ const civilDate: typeof kitCivilDate = (...args) => checked(() => kitCivilDate(.
 const dateInZone: typeof kitDateInZone = (...args) => checked(() => kitDateInZone(...args));
 
 const route = '/nobo-help agent learning-transfer';
+// These versions identify retained evidence, so exhaustion must never reuse one.
+function nextVersion(current: number, subject: string, rootId: string): number {
+  if (current === Number.MAX_SAFE_INTEGER)
+    throw new CommandError(`This operation needs a new ${subject} version, but the finite history limit is exhausted. Saved data is unchanged; this removal/change was not applied. Export the complete record: ${route} export ${rootId}. To erase this entire record and its owned history: ${route} delete ${rootId} confirm. You may instead create a separate record from explicitly re-entered data.`);
+  return current + 1;
+}
+
 const id = v.pipe(v.string(), v.uuid());
 const rev = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const text = (bytes: number, units = bytes) => v.pipe(v.string(), v.check(s => {
@@ -319,7 +326,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     return edit(key, a => {
       a.opportunity = opportunity;
       a.action = action;
-      a.planRevision++;
+      a.planRevision = nextVersion(a.planRevision, "plan/evidence", a.id);
     }, 'lifecycle');
   }
   if ((m = command.match(/^(predict|observe|reflect) (\S+)\s*\|([\s\S]*)$/))) {
@@ -327,7 +334,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     return edit(key, a => {
       if (verb === 'predict') {
         a.prediction = value;
-        a.planRevision++;
+        a.planRevision = nextVersion(a.planRevision, "plan/evidence", a.id);
       } else if (verb === 'observe') {
         if (!ready(a))
           throw new CommandError(
@@ -336,7 +343,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
           throw new CommandError(
               'Five observations retained; remove an observation explicitly before adding another.');
         a.observations.push({id: newId, date, text: value, planRevision: a.planRevision});
-        a.observationRevision++;
+        a.observationRevision = nextVersion(a.observationRevision, "observation/reflection", a.id);
       } else {
         if (!a.observations.some(o => o.planRevision === a.planRevision))
           throw new CommandError('Observe the current plan before reflecting.');
@@ -355,7 +362,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       boundedText(value, {label: 'Source excerpt', maxBytes: 1800, maxUnits: 600, trim: false});
     return edit(key, a => {
       a[field] = value;
-      a.planRevision++;
+      a.planRevision = nextVersion(a.planRevision, "plan/evidence", a.id);
     }, ['opportunity', 'action', 'prediction'].includes(field) ? 'lifecycle' : 'content');
   }
   if ((m = command.match(
@@ -366,7 +373,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         a.reflection = null;
       else {
         a[field as Field] = '';
-        a.planRevision++;
+        a.planRevision = nextVersion(a.planRevision, "plan/evidence", a.id);
       }
     }, 'remove');
   }
@@ -378,15 +385,15 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       if (!o) throw new CommandError('Observation not found; use show.');
       if (!ready(a)) throw new CommandError('Complete the plan before reasserting an observation.');
       Object.assign(o, {date: day, text: value, planRevision: a.planRevision});
-      a.observationRevision++;
+      a.observationRevision = nextVersion(a.observationRevision, "observation/reflection", a.id);
     }, 'lifecycle');
   }
   if ((m = command.match(/^observation (\S+) remove (\S+) confirm$/))) {
     const key = m[1], oid = m[2];
     return edit(key, a => {
       if (!a.observations.some(o => o.id === oid)) throw new CommandError('Observation not found.');
+      a.observationRevision = nextVersion(a.observationRevision, "observation/reflection", a.id);
       a.observations = a.observations.filter(o => o.id !== oid);
-      a.observationRevision++;
     }, 'remove');
   }
   throw new CommandError(`Unknown or incomplete command. Use ${route} help`);

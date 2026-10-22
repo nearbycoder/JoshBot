@@ -27,6 +27,13 @@ const assertStateVersion: typeof kitAssertStateVersion = (...args) =>
 const serializedBytes: typeof kitSerializedBytes = (...args) => checked(() => kitSerializedBytes(...args));
 
 const route = '/nobo-help agent teach-back';
+// These versions identify retained evidence, so exhaustion must never reuse one.
+function nextVersion(current: number, subject: string, rootId: string): number {
+  if (current === Number.MAX_SAFE_INTEGER)
+    throw new CommandError(`This operation needs a new ${subject} version, but the finite history limit is exhausted. Saved data is unchanged; this removal/change was not applied. Export the complete record: ${route} export ${rootId}. To erase this entire record and its owned history: ${route} delete ${rootId} confirm. You may instead create a separate record from explicitly re-entered data.`);
+  return current + 1;
+}
+
 const id = v.pipe(v.string(), v.uuid()),
       rev = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const text = (bytes: number, units = bytes) => v.pipe(v.string(), v.check(s => {
@@ -310,10 +317,10 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     return edit(key, r => {
       if (verb === 'source') {
         r.source = value;
-        r.sourceRevision++;
+        r.sourceRevision = nextVersion(r.sourceRevision, "source", r.id);
       } else
         r.explanation = value;
-      r.contentRevision++;
+      r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
     }, verb === 'explain' ? 'lifecycle' : 'content');
   }
   if ((m = command.match(/^edit (\S+) (title|source|explanation)\s*\|([\s\S]*)$/))) {
@@ -334,16 +341,16 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     });
     return edit(key, r => {
       r[field as 'title' | 'source' | 'explanation'] = value;
-      if (field !== 'title') r.contentRevision++;
-      if (field === 'source') r.sourceRevision++;
+      if (field !== 'title') r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
+      if (field === 'source') r.sourceRevision = nextVersion(r.sourceRevision, "source", r.id);
     }, field === 'explanation' ? 'lifecycle' : 'content');
   }
   if ((m = command.match(/^clear (\S+) (title|source|explanation) confirm$/))) {
     const [, key, field] = m;
     return edit(key, r => {
+      if (field !== 'title') r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
+      if (field === 'source') r.sourceRevision = nextVersion(r.sourceRevision, "source", r.id);
       r[field as 'title' | 'source' | 'explanation'] = '';
-      if (field !== 'title') r.contentRevision++;
-      if (field === 'source') r.sourceRevision++;
     }, 'remove');
   }
   if ((m = command.match(/^concept (\S+) add ([\s\S]+)$/))) {
@@ -352,7 +359,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const result = await edit(key, r => {
       if (r.concepts.length === 12) throw new CommandError('Maximum 12 concepts; remove a concept first.');
       r.concepts.push({id: newId, label, requiredTerms, sourceSpan: bind(r, quote), selfRating: null});
-      r.contentRevision++;
+      r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
     });
     return `Concept ${newId} added.\n${result}`;
   }
@@ -361,28 +368,28 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
                        requiredTerms = terms(required);
     return edit(key, r => {
       Object.assign(getConcept(r, cid), {label, requiredTerms, sourceSpan: bind(r, quote)});
-      r.contentRevision++;
+      r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
     });
   }
   if ((m = command.match(/^concept (\S+) clear (\S+) (label|requiredTerms|sourceSpan) confirm$/))) {
     const [, key, cid, field] = m;
     return edit(key, r => {
       const c = getConcept(r, cid);
+      r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
       if (field === 'label')
         c.label = '';
       else if (field === 'requiredTerms')
         c.requiredTerms = [];
       else
         c.sourceSpan = null;
-      r.contentRevision++;
     }, 'remove');
   }
   if ((m = command.match(/^concept (\S+) remove (\S+) confirm$/))) {
     const [, key, cid] = m;
     return edit(key, r => {
       getConcept(r, cid);
+      r.contentRevision = nextVersion(r.contentRevision, "content/assessment", r.id);
       r.concepts = r.concepts.filter(c => c.id !== cid);
-      r.contentRevision++;
     }, 'remove');
   }
   if ((m = command.match(/^self-rate (\S+) (\S+)\s*\|([\s\S]*)$/))) {

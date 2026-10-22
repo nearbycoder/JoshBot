@@ -343,3 +343,25 @@ test("all field and relationship erasures remain valid at the root revision ceil
   }
   assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
 });
+
+test("semantic version exhaustion is an honest refusal with export/delete recovery, not corruption", async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await create(f); await prepare(f,id);
+  await f.run(`observe ${id} | Preserved evidence`); await f.run(`reflect ${id} | Prior reflection`); await create(f);
+  const read = async () => (await f.store().read<any>("state"))!;
+  const s = await read(), r = s.records[0]; r.revision = Number.MAX_SAFE_INTEGER;
+  r.observationRevision = Number.MAX_SAFE_INTEGER;
+  const raw = " \n" + JSON.stringify(s, null, 2) + "\t\n"; f.backend.data.set(f.key("state"), raw);
+  const exported = await f.run(`export ${id}`); assert.ok(Buffer.byteLength(exported) <= 24576);
+  assert.deepEqual(JSON.parse(exported).record, r);
+  const writes = f.backend.calls.writes, reply = await f.run(`observation ${id} remove ${r.observations[0].id} confirm`);
+  assert.match(reply, /needs a new observation\/reflection version/); assert.match(reply, /finite history limit is exhausted/);
+  assert.match(reply, /not applied/); assert.doesNotMatch(reply, /Invalid saved|corrupt|repair|retry|unavailable/i);
+  assert.ok(reply.includes(`export ${id}`)); assert.ok(reply.includes(`delete ${id} confirm`));
+  assert.ok(reply.length <= 3500);
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.equal(f.backend.calls.writes, writes);
+  assert.equal(await f.run(`export ${id}`), exported, "history and all associations are unchanged");
+  assert.match(await f.run(`delete ${id} confirm`), /Deleted/);
+    assert.deepEqual((await read()).records, s.records.slice(1));
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});

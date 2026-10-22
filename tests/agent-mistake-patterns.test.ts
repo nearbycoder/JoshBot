@@ -366,3 +366,29 @@ test("all field and relationship erasures remain valid at the root revision ceil
   }
   assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
 });
+
+test("semantic version exhaustion is an honest refusal with export/delete recovery, not corruption", async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await rule(f);
+  await f.run(`opportunity ${id} | 2026-10-24 | success | Preserved evidence`);
+  await f.run("record 2026-10-22 | Keep case | Keep observable evidence | testing");
+  const cid = (await f.store().read<any>("state"))!.records[1].id;
+  await f.run(`link ${cid} | ${id}`); await rule(f);
+  const read = async () => (await f.store().read<any>("state"))!;
+  const s = await read(), r = s.records[0]; r.revision = Number.MAX_SAFE_INTEGER;
+  r.ruleRevision = Number.MAX_SAFE_INTEGER; s.records[1].revision = Number.MAX_SAFE_INTEGER;
+  const raw = " \n" + JSON.stringify(s, null, 2) + "\t\n"; f.backend.data.set(f.key("state"), raw);
+  const exported = await f.run(`export ${id}`); assert.ok(Buffer.byteLength(exported) <= 24576);
+  assert.deepEqual(JSON.parse(exported).record, r);
+  const writes = f.backend.calls.writes, reply = await f.run(`clear ${id} text confirm`);
+  assert.match(reply, /needs a new rule\/evidence version/); assert.match(reply, /finite history limit is exhausted/);
+  assert.match(reply, /not applied/); assert.doesNotMatch(reply, /Invalid saved|corrupt|repair|retry|unavailable/i);
+  assert.ok(reply.includes(`export ${id}`)); assert.ok(reply.includes(`delete ${id} confirm`));
+  assert.ok(reply.length <= 3500);
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.equal(f.backend.calls.writes, writes);
+  assert.equal(await f.run(`export ${id}`), exported, "history and all associations are unchanged");
+  assert.match(await f.run(`delete ${id} confirm`), /Deleted/);
+    const expected = s.records.slice(1).map((record:any) => record.id === cid ? {...record,preventionRuleId:null} : record);
+  assert.deepEqual((await read()).records, expected);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});

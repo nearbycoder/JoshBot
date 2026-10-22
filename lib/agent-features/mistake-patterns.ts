@@ -30,6 +30,13 @@ const serializedBytes: typeof kitSerializedBytes = (...args) =>
 const civilDate: typeof kitCivilDate = (...args) => checked(() => kitCivilDate(...args));
 
 const route = '/nobo-help agent mistake-patterns';
+// These versions identify retained evidence, so exhaustion must never reuse one.
+function nextVersion(current: number, subject: string, rootId: string): number {
+  if (current === Number.MAX_SAFE_INTEGER)
+    throw new CommandError(`This operation needs a new ${subject} version, but the finite history limit is exhausted. Saved data is unchanged; this removal/change was not applied. Export the complete record: ${route} export ${rootId}. To erase this entire record and its owned history: ${route} delete ${rootId} confirm. You may instead create a separate record from explicitly re-entered data.`);
+  return current + 1;
+}
+
 const id = v.pipe(v.string(), v.uuid()),
       rev = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const text = (bytes: number) => v.pipe(v.string(), v.check(s => {
@@ -394,7 +401,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         if (!['text', 'category', 'startDate'].includes(field))
           throw new CommandError('Rule fields: text, category, startDate.');
         r[field as 'text' | 'category' | 'startDate'] = value;
-        r.ruleRevision++;
+        r.ruleRevision = nextVersion(r.ruleRevision, "rule/evidence", r.id);
       }
     });
   }
@@ -410,13 +417,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         else
           throw new CommandError('Unknown case field.');
       } else {
+        const revision = nextVersion(r.ruleRevision, "rule/evidence", r.id);
         if (field === 'startDate')
           r.startDate = null;
         else if (field === 'text' || field === 'category')
           r[field] = '';
         else
           throw new CommandError('Unknown rule field.');
-        r.ruleRevision++;
+        r.ruleRevision = revision;
       }
     }, 'remove');
   }

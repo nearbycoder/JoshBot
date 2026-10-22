@@ -31,6 +31,13 @@ const civilDate: typeof kitCivilDate = (...args) => checked(() => kitCivilDate(.
 const dateInZone: typeof kitDateInZone = (...args) => checked(() => kitDateInZone(...args));
 
 const route = '/nobo-help agent curriculum';
+// These versions identify retained evidence, so exhaustion must never reuse one.
+function nextVersion(current: number, subject: string, rootId: string): number {
+  if (current === Number.MAX_SAFE_INTEGER)
+    throw new CommandError(`This operation needs a new ${subject} version, but the finite history limit is exhausted. Saved data is unchanged; this removal/change was not applied. Export the complete record: ${route} export ${rootId}. To erase this entire record and its owned history: ${route} delete ${rootId} confirm. You may instead create a separate record from explicitly re-entered data.`);
+  return current + 1;
+}
+
 const id = v.pipe(v.string(), v.uuid());
 const integer = (max: number) => v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(max));
 const rev = integer(Number.MAX_SAFE_INTEGER);
@@ -140,8 +147,8 @@ function invalidate(c: Course, seeds: string[]) {
       if (u.prerequisites.some(p => affected.has(p))) affected.add(u.id);
     if (affected.size === before) break;
   }
-  for (const u of c.units)
-    if (affected.has(u.id)) u.revision++;
+  const changes = c.units.filter(u => affected.has(u.id)).map(u => ({u, revision: nextVersion(u.revision, "unit/evidence", c.id)}));
+  for (const {u, revision} of changes) u.revision = revision;
 }
 const envelope = (c: Course) => ({feature: metadata.id, version: 1, record: c});
 // Content stamps protect same-revision removals without changing persisted schema.
@@ -389,11 +396,11 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const [, key, uid, field] = m;
     return edit(key, c => {
       const u = getUnit(c, uid);
+      invalidate(c, [uid]);
       if (field === 'estimateSessions')
         u.estimateSessions = null;
       else
         u[field as 'label' | 'readinessTest'] = '';
-      invalidate(c, [uid]);
     }, 'remove');
   }
   if ((m = command.match(/^unit (\S+) remove (\S+) confirm$/))) {

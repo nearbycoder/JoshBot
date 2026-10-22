@@ -28,6 +28,13 @@ const assertStateVersion: typeof kitAssertStateVersion = (...args) =>
 const serializedBytes: typeof kitSerializedBytes = (...args) => checked(() => kitSerializedBytes(...args));
 
 const route = '/nobo-help agent practice-lab';
+// These versions identify retained evidence, so exhaustion must never reuse one.
+function nextVersion(current: number, subject: string, rootId: string): number {
+  if (current === Number.MAX_SAFE_INTEGER)
+    throw new CommandError(`This operation needs a new ${subject} version, but the finite history limit is exhausted. Saved data is unchanged; this removal/change was not applied. Export the complete record: ${route} export ${rootId}. To erase this entire record and its owned history: ${route} delete ${rootId} confirm. You may instead create a separate record from explicitly re-entered data.`);
+  return current + 1;
+}
+
 const id = v.pipe(v.string(), v.uuid()),
       rev = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const text = (bytes: number) => v.pipe(v.string(), v.check(s => {
@@ -374,14 +381,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const key = m[1], [task] = fields(m[2], [160]);
     return edit(key, d => {
       d.task = task;
-      d.rubricVersion++;
+      d.rubricVersion = nextVersion(d.rubricVersion, "rubric", d.id);
     });
   }
   if ((m = command.match(/^clear (\S+) task confirm$/))) {
     const key = m[1];
     return edit(key, d => {
       d.task = '';
-      d.rubricVersion++;
+      d.rubricVersion = nextVersion(d.rubricVersion, "rubric", d.id);
     }, 'remove');
   }
   if ((m = command.match(/^rubric (\S+) add ([\s\S]+)$/))) {
@@ -389,7 +396,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const result = await edit(key, d => {
       if (d.dimensions.length === 6) throw new CommandError('Maximum six dimensions; remove one first.');
       d.dimensions.push({id: newId, label, maxScore, description});
-      d.rubricVersion++;
+      d.rubricVersion = nextVersion(d.rubricVersion, "rubric", d.id);
     });
     return `Dimension ${newId} added.\n${result}`;
   }
@@ -398,7 +405,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
                        maxScore = number(max);
     return edit(key, d => {
       Object.assign(getDimension(d, did), {label, maxScore, description});
-      d.rubricVersion++;
+      d.rubricVersion = nextVersion(d.rubricVersion, "rubric", d.id);
     });
   }
   if ((m = command.match(/^rubric (\S+) clear (\S+) (label|maxScore|description) confirm$/))) {
@@ -409,15 +416,15 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         x.maxScore = null;
       else
         x[field as 'label' | 'description'] = '';
-      d.rubricVersion++;
+      d.rubricVersion = nextVersion(d.rubricVersion, "rubric", d.id);
     }, 'remove');
   }
   if ((m = command.match(/^rubric (\S+) remove (\S+) confirm$/))) {
     const [, key, did] = m;
     return edit(key, d => {
       getDimension(d, did);
+      d.rubricVersion = nextVersion(d.rubricVersion, "rubric", d.id);
       d.dimensions = d.dimensions.filter(x => x.id !== did);
-      d.rubricVersion++;
     }, 'remove');
   }
   if ((m = command.match(/^attempt (\S+)\s*\|([\s\S]*)$/))) {
@@ -444,8 +451,8 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     return edit(key, d => {
       const a = getAttempt(d, aid);
       a.response = response;
-      a.responseRevision++;
-      a.revision++;
+      a.responseRevision = nextVersion(a.responseRevision, "response/evidence", d.id);
+      a.revision = nextVersion(a.revision, "attempt", d.id);
     }, 'lifecycle');
   }
   if ((m = command.match(/^attempt (\S+) clear (\S+) response confirm$/))) {
@@ -453,8 +460,8 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     return edit(key, d => {
       const a = getAttempt(d, aid);
       a.response = '';
-      a.responseRevision++;
-      a.revision++;
+      a.responseRevision = nextVersion(a.responseRevision, "response/evidence", d.id);
+      a.revision = nextVersion(a.revision, "attempt", d.id);
     }, 'remove');
   }
   if ((m = command.match(/^attempt (\S+) remove (\S+) confirm$/))) {
@@ -468,8 +475,8 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const [, key, aid] = m;
     return edit(key, d => {
       const a = getAttempt(d, aid);
-      a.responseRevision++;
-      a.revision++;
+      a.responseRevision = nextVersion(a.responseRevision, "response/evidence", d.id);
+      a.revision = nextVersion(a.revision, "attempt", d.id);
     }, 'remove');
   }
   if ((m = command.match(/^score (\S+) (\S+)\s*\|([\s\S]*)$/))) {
@@ -485,7 +492,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         ...a.scores.filter(x => x.dimensionId !== dimensionId),
         {dimensionId, value, evidence, responseRevision: a.responseRevision}
       ];
-      a.revision++;
+      a.revision = nextVersion(a.revision, "attempt", d.id);
     }, 'lifecycle');
   }
   if ((m = command.match(/^unscore (\S+) (\S+) (\S+) confirm$/))) {
@@ -494,7 +501,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const a = getAttempt(d, aid);
       if (!a.scores.some(s => s.dimensionId === did)) throw new CommandError('Score not found.');
       a.scores = a.scores.filter(s => s.dimensionId !== did);
-      a.revision++;
+      a.revision = nextVersion(a.revision, "attempt", d.id);
     }, 'remove');
   }
   if ((m = command.match(/^feedback (\S+) (\S+)$/))) {
