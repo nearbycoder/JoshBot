@@ -51,6 +51,23 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function validSourceId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 200 && !!value.trim() && value.isWellFormed() && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
+/** Recognize only references emitted by recall; other strings remain literal IDs. */
+function referenceKind(reference: string): AgentContextKind | undefined {
+  const slash = reference.indexOf("/");
+  if (slash < 0) return undefined;
+  const kind = reference.slice(0, slash) as AgentContextKind;
+  if (!KINDS.includes(kind)) return undefined;
+  const encoded = reference.slice(slash + 1);
+  try {
+    const id = decodeURIComponent(encoded);
+    return validSourceId(id) && encodeURIComponent(id) === encoded ? kind : undefined;
+  } catch { return undefined; }
+}
+
 function clean(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/gu, " ").trim();
 }
@@ -160,7 +177,7 @@ function normalizeContext(raw: unknown, kinds: AgentContextKind[], formatter: In
     examined++;
     if (!record(item) || typeof item.kind !== "string") { invalid++; continue; }
     if (!kinds.includes(item.kind as AgentContextKind)) continue;
-    if (typeof item.id !== "string" || item.id.length > 200 || !item.id.trim() || !item.id.isWellFormed() || /[\u0000-\u001f\u007f]/u.test(item.id) || typeof item.title !== "string" || typeof item.text !== "string") { invalid++; continue; }
+    if (!validSourceId(item.id) || typeof item.title !== "string" || typeof item.text !== "string") { invalid++; continue; }
     const ref = `${item.kind}/${encodeURIComponent(item.id)}`;
     counts.set(ref, (counts.get(ref) ?? 0) + 1);
     const title = clean(item.title.slice(0, 200));
@@ -178,7 +195,7 @@ function normalizeContext(raw: unknown, kinds: AgentContextKind[], formatter: In
   }
   const duplicates = new Set([...counts].filter(([, count]) => count > 1).map(([ref]) => ref));
   const notes: string[] = [];
-  if (examined < raw.length) notes.push(`Context capped: examined ${examined} of ${raw.length} returned records (maximum ${MAX_ITEMS} records / ${MAX_TOTAL_TEXT.toLocaleString("en-US")} text characters). Narrow --kind to search a smaller snapshot.`);
+  if (examined < raw.length) notes.push(`Context capped: examined ${examined} of ${raw.length} returned records (maximum ${MAX_ITEMS} records / ${MAX_TOTAL_TEXT.toLocaleString("en-US")} text characters). Search with --kind for a smaller snapshot; qualified source references use that kind, still subject to these caps.`);
   if (invalid) notes.push(`Skipped ${invalid} malformed or empty source record(s).`);
   if (duplicates.size) notes.push(`Skipped ${duplicates.size} ambiguous duplicate source reference(s); the context adapter must supply unique IDs within each kind.`);
   if (shortened) notes.push(`Shortened ${shortened} source(s) to ${MAX_TEXT.toLocaleString("en-US")} text characters / 200 title characters; matches beyond these limits are unavailable.`);
@@ -302,12 +319,28 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     throw error;
   }
   if (context.signal?.aborted) return "Recall cancelled.";
-  const kinds = parsed.verb === "source" ? [...KINDS] : parsed.kinds;
+  const sourceKind = parsed.verb === "source" ? referenceKind(parsed.id) : undefined;
+  const kinds = parsed.verb === "source" ? (sourceKind ? [sourceKind] : [...KINDS]) : parsed.kinds;
   let snapshot: Snapshot;
   try {
     const raw: unknown = await context.services.readContext([...kinds]);
     if (context.signal?.aborted) return "Recall cancelled.";
     snapshot = normalizeContext(raw, kinds, formatter);
+    if (parsed.verb === "source" && sourceKind && !snapshot.sources.some(source => source.ref === parsed.id)) {
+      // An ID such as "note/raw" can also be an original ID in another kind.
+      // Preserve that exact literal fallback and cross-kind ambiguity detection,
+      // but never decode the reference into a different kind's original ID.
+      const fallbackRaw: unknown = await context.services.readContext([...KINDS]);
+      if (context.signal?.aborted) return "Recall cancelled.";
+      const fallback = normalizeContext(fallbackRaw, KINDS, formatter);
+      snapshot = {
+        sources: fallback.sources.filter(source => source.id === parsed.id),
+        notes: [
+          ...snapshot.notes.map(note => `Qualified ${sourceKind} lookup: ${note}`),
+          ...fallback.notes.map(note => `Original-ID fallback: ${note}`),
+        ],
+      };
+    }
   } catch {
     if (context.signal?.aborted) return "Recall cancelled.";
     return "Your personal context could not be read. Try recall again later; no source data was changed.";

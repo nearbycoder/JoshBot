@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import recall, { feature } from "../lib/agent-features/recall.js";
-import type { AgentContextItem, AgentContextKind, AgentFeatureServices } from "../lib/agent-features/types.js";
+import type { AgentContextItem, AgentContextKind, AgentFeature, AgentFeatureServices } from "../lib/agent-features/types.js";
+import type { Feature as ToolboxFeature } from "../lib/toolbox/core.js";
 import { createAgentTestContext } from "./agent-feature-test-utils.js";
 
 const kinds: AgentContextKind[] = ["note", "journal", "goal", "bookmark", "artifact", "memory", "follow-up"];
@@ -293,6 +296,60 @@ test("source references stay stable and round-trip spaces, slashes and long Unic
   assert.match(await h.run("source note/raw"), /\[goal\/note%2Fraw\]/);
 });
 
+test("qualified references request only their kind and preserve exact encoded IDs", async () => {
+  const h = setup([
+    source("a/b c?", { kind: "memory", text: "Slash identifier evidence." }),
+    source("a%2Fb c?", { kind: "memory", text: "Literal percent identifier evidence." }),
+    source("memory/a%2Fb%20c%3F", { kind: "note", text: "Raw-ID collision must not win." }),
+  ]);
+  assert.match(await h.run("source memory/a%2Fb%20c%3F"), /Slash identifier evidence/);
+  assert.deepEqual(h.calls.kinds, [["memory"]]);
+  assert.match(await h.run("source memory/a%252Fb%20c%3F"), /Literal percent identifier evidence/);
+  assert.deepEqual(h.calls.kinds[1], ["memory"]);
+  assert.match(await h.run("source note/a%2Fb%20c%3F"), /Source not found/);
+});
+
+test("missing qualified references retain literal raw-ID ambiguity across kinds", async () => {
+  const h = setup([source("note/raw", { kind: "goal" }), source("note/raw", { kind: "journal" })]);
+  assert.match(await h.run("source note/raw"), /multiple kinds/);
+  assert.deepEqual(h.calls.kinds, [["note"], kinds]);
+  h.setSources([source("note/raw", { kind: "goal", text: "Original literal ID." })]);
+  assert.match(await h.run("source note/raw"), /Original literal ID/);
+  h.setSources([source("raw", { kind: "note", text: "Exact reference wins." }), source("note/raw", { kind: "goal" })]);
+  const before = h.calls.read;
+  assert.match(await h.run("source note/raw"), /Exact reference wins/);
+  assert.equal(h.calls.read - before, 1);
+});
+
+test("malformed or unsupported qualifiers are literal original IDs, never decoded or broadened references", async () => {
+  for (const id of ["memory/", "memory/%ZZ", "memory/%", "memory/%2fsecret", "memory/%00", "memory/%ED%A0%80", "memory//secret", "Memory/secret", "reminder/secret", "note/a/b", `memory/${"x".repeat(201)}`]) {
+    const h = setup([source("secret", { kind: "memory", text: "Must not be matched by a malformed qualifier." })]);
+    assert.match(await h.run(`source ${id}`), /Source not found/);
+    assert.deepEqual(h.calls.kinds, [kinds]);
+  }
+  for (const id of ["memory/%ZZ", "reminder/secret", "note/a/b"]) {
+    const h = setup([source(id, { kind: "goal", text: "Valid literal original ID." })]);
+    assert.match(await h.run(`source ${id}`), /Valid literal original ID/);
+    assert.deepEqual(h.calls.kinds, [kinds]);
+  }
+});
+
+test("qualified source lookup retains same-kind caps, ambiguity notes and cancellation", async () => {
+  const h = setup(Array.from({ length: 100 }, (_, i) => source(String(i), { kind: "memory", text: "x".repeat(12_000) })));
+  const reply = await h.run("source memory/99");
+  assert.match(reply, /Source not found/);
+  assert.match(reply, /Context capped/);
+  assert.match(reply, /1,000,000 text characters/);
+  h.setSources([source("same", { kind: "memory" }), source("same", { kind: "memory" })]);
+  assert.match(await h.run("source memory/same"), /ambiguous duplicate source reference/);
+  const controller = new AbortController();
+  h.context.signal = controller.signal;
+  let reads = 0;
+  h.context.services.readContext = async () => { reads++; controller.abort(); return []; };
+  assert.equal(await h.run("source memory/missing"), "Recall cancelled.");
+  assert.equal(reads, 1, "cancellation must prevent the raw-ID fallback read");
+});
+
 test("source reads reflect edits and deletion; previous answers do not create stale saved copies", async () => {
   const h = setup([source("a")]);
   await h.run("ask Atlas");
@@ -391,4 +448,132 @@ test("abort signals stop reads or prevent late generation output from being retu
   h.context.signal = afterRead.signal;
   h.context.services.readContext = async () => { afterRead.abort(); return [source("a")]; };
   assert.equal(await h.run("ask Atlas"), "Recall cancelled.");
+});
+
+// Use local integrated modules after cherry-pick. An isolated feature worktree can
+// point at a read-only integration checkout without copying or editing shared code.
+async function productionFixture() {
+  const root = process.env.JOSHBOT_RECALL_CONTEXT_ROOT
+    ? pathToFileURL(`${resolve(process.env.JOSHBOT_RECALL_CONTEXT_ROOT)}/`)
+    : new URL("../", import.meta.url);
+  const load = (path: string) => import(new URL(path, root).href);
+  const [runtime, servicesModule, memory, toolbox, notes, journal, bookmarks] = await Promise.all([
+    load("lib/agent-features/runtime.ts"), load("lib/agent-features/services.ts"), load("lib/agent-features/memory-review.ts"),
+    load("lib/toolbox/core.ts"), load("lib/toolbox/notes.ts"), load("lib/toolbox/journal.ts"), load("lib/toolbox/bookmarks.ts"),
+  ]);
+  const owner = { teamId: "TRECALL", userId: "URECALL", channelId: "CRECALL" };
+  const now = new Date("2026-10-22T15:00:00Z"), older = new Date("2026-10-20T15:00:00Z");
+  const data = new Map<string, string>();
+  const reads: string[] = [], writes: string[] = [], requestedKinds: AgentContextKind[][] = [];
+  const backend = {
+    get: async (key: string) => { reads.push(key); return data.get(key) ?? null; },
+    compareSet: async (key: string, previous: string | null, next: string) => {
+      if ((data.get(key) ?? null) !== previous) return false;
+      assert.ok(Buffer.byteLength(next, "utf8") <= 512_000, "fixture state must respect the production byte quota");
+      data.set(key, next); writes.push(key); return true;
+    },
+  };
+  const toolKey = (tool: string) => `nobo:toolbox:v1:${owner.teamId}:${owner.userId}:${tool}`;
+  const services = (featureId: string, who = owner, at = now): AgentFeatureServices => {
+    const real: AgentFeatureServices = servicesModule.createAgentFeatureServices(backend, who, new AbortController().signal, {
+      now: at, timezone: "America/Chicago", featureId,
+    }, {
+      readOwnerIndex: async () => [],
+      authorizeChannel: async () => {},
+    });
+    return {
+      ...real,
+      readContext: async (requested) => { requestedKinds.push(requested ?? []); return real.readContext(requested); },
+      generate: async () => { assert.fail("No generation is permitted in source lookup regressions"); },
+      search: async () => { assert.fail("No web search is permitted in source lookup regressions"); },
+    };
+  };
+  const run = (command: string, who = owner, target: AgentFeature = feature, at = now): Promise<string> => runtime.runAgentFeature(target, command, who, {
+    backend, services: services(target.id, who, at), now: at, timezone: "America/Chicago",
+  });
+  const capture = async (who = owner, fact = "Atlas retained decision") => {
+    const reply = await run(`capture me | Atlas | ${fact} | Original planning notes`, who, memory.feature, older);
+    const id = reply.match(/mr_[a-f0-9-]{36}/)?.[0];
+    assert.ok(id, reply);
+    assert.match(await run(`confirm ${id} 1`, who, memory.feature, older), /confirmed/i);
+    return `memory-review:${id}`;
+  };
+  const runTool = (tool: ToolboxFeature, command: string): Promise<string> => toolbox.runFeature(tool, command, owner, undefined, backend, now);
+  const fillCapacity = async () => {
+    for (let i = 0; i < 49; i++) {
+      assert.match(await runTool(notes.notes, `add Note ${i} | ${"n".repeat(1_900)}`), /Updated:/);
+      const id: string = JSON.parse(data.get(toolKey("notes"))!).entries.at(-1).id;
+      for (let j = 0; j < 4; j++) assert.match(await runTool(notes.notes, `append ${id} | ${"n".repeat(1_950)}`), /Updated:/);
+    }
+    for (let i = 0; i < 85; i++) {
+      const day = new Date(Date.UTC(2026, 6, 1 + i)).toISOString().slice(0, 10);
+      assert.match(await runTool(journal.journal, `write ${day} | 4 | ${"w".repeat(1_400)} | ${"l".repeat(1_400)}`), /Mood:/);
+    }
+    for (let i = 0; i < 20; i++) assert.match(await runTool(bookmarks.bookmarks, `add Link ${i} | https://example.test/${i} | ${"b".repeat(2_800)}`), /Updated:/);
+    return Object.fromEntries(["notes", "journal", "bookmarks"].map(tool => [tool, Buffer.byteLength(data.get(toolKey(tool))!, "utf8")]));
+  };
+  return { owner, data, reads, writes, requestedKinds, run, services, capture, fillCapacity };
+}
+
+test("production context/runtime/store reopen qualified sources at valid toolbox capacity", async (t) => {
+  const f = await productionFixture();
+  const memoryId = await f.capture();
+  const sizes = await f.fillCapacity();
+  assert.deepEqual(sizes, { notes: 484_137, journal: 496_512, bookmarks: 117_017 });
+  const all = await f.services("recall").readContext(kinds);
+  assert.equal(all.length, 155);
+  assert.equal(all.at(-1)?.id, memoryId);
+  const normalizedChars = all.reduce((sum, item) => sum + item.title.slice(0, 200).length + item.text.replace(/\s+/gu, " ").trim().length, 0);
+  assert.ok(normalizedChars > 1_000_000, "fixture must exceed recall's unchanged broad text cap");
+  t.diagnostic(JSON.stringify({ namespaceBytes: sizes, records: all.length, normalizedChars }));
+  const before = [...f.data], writes = f.writes.length;
+  for (const [kind, query, evidence] of [
+    ["memory", "Atlas", "Atlas retained decision"], ["note", '"Note 48"', "Note 48"],
+    ["journal", '"2026-09-23"', "2026-09-23"], ["bookmark", '"Link 19"', "Link 19"],
+  ]) {
+    const found = await f.run(`search ${query} --kind ${kind}`);
+    const reference = found.match(new RegExp(`\\[(${kind}/[^\\]]+)\\]`))?.[1];
+    assert.ok(reference, found);
+    f.requestedKinds.length = 0;
+    f.reads.length = 0;
+    const opened = await f.run(`source ${reference}`);
+    assert.ok(opened.includes(evidence), opened);
+    assert.doesNotMatch(opened, /Source not found|Context capped/);
+    assert.deepEqual(f.requestedKinds, [[kind]], "a found reference must not read unrelated source kinds");
+    if (kind === "memory") assert.ok(f.reads.every(key => !key.includes(":toolbox:")));
+  }
+  // Raw IDs still use the broad snapshot. Do not hide that cap by raising budgets.
+  assert.match(await f.run(`source ${memoryId}`), /Source not found[\s\S]*Context capped/);
+  const note = all.find(item => item.kind === "note")!;
+  assert.match(await f.run(`source ${note.id}`), /Original ID: toolbox:notes:/);
+  assert.deepEqual([...f.data], before);
+  assert.equal(f.writes.length, writes);
+});
+
+test("production qualified references keep owner isolation, exact kind and original-ID semantics", async () => {
+  const f = await productionFixture();
+  const ownId = await f.capture();
+  const privateOwner = { ...f.owner, userId: "UPRIVATE" };
+  const privateId = await f.capture(privateOwner, "PRIVATE ONLY Atlas decision");
+  const ownReference = `memory/${encodeURIComponent(ownId)}`, privateReference = `memory/${encodeURIComponent(privateId)}`;
+  const before = [...f.data], writes = f.writes.length;
+  assert.match(await f.run(`source ${ownReference}`), /Atlas retained decision/);
+  assert.match(await f.run(`source ${ownId}`), /Atlas retained decision/);
+  assert.match(await f.run(`source ${privateReference}`, privateOwner), /PRIVATE ONLY/);
+  for (const command of [
+    `source ${privateReference}`, `source ${privateId}`, `source note/${encodeURIComponent(ownId)}`,
+    `source Memory/${encodeURIComponent(ownId)}`, `source memory/${encodeURIComponent(ownId)}%`,
+    `source memory/${ownId}`, `source memory/%ZZ`, `source memory/`,
+  ]) {
+    f.reads.length = 0;
+    const reply = await f.run(command);
+    assert.match(reply, /Source not found/);
+    assert.doesNotMatch(reply, /PRIVATE ONLY|Atlas retained decision/);
+    assert.ok(f.reads.every(key => !key.includes(":UPRIVATE:")), "references never become arbitrary storage keys");
+  }
+  for (const other of [privateOwner, { ...f.owner, teamId: "TOTHER" }]) {
+    assert.match(await f.run(`source ${ownReference}`, other), /Source not found/);
+  }
+  assert.deepEqual([...f.data], before);
+  assert.equal(f.writes.length, writes);
 });
