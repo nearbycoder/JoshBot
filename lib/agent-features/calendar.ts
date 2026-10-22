@@ -51,14 +51,30 @@ function intervals(events: CalendarEvent[], zone: string): Interval[] {
     .sort((a, b) => a.start - b.start || a.end - b.end || a.event.id.localeCompare(b.event.id));
 }
 
+function allDayRange(event: Extract<CalendarEvent, { allDay: true }>): string {
+  return `all day ${event.startDate} → ${event.endDate} (exclusive end)`;
+}
+
 function range(item: Interval, zone: string): string {
-  if (item.event.allDay) return `all day ${item.event.startDate} → ${item.event.endDate} (exclusive end)`;
+  if (item.event.allDay) return allDayRange(item.event);
   if (item.start === item.end) return `${displayInstant(item.start, zone)} (no duration; does not block)`;
   return `${displayInstant(item.start, zone)} → ${displayInstant(item.end, zone)}`;
 }
 
 function row(item: Interval, zone: string): string {
   return `${item.event.id} | ${safe(item.event.title)} | ${range(item, zone)}${item.event.busy ? "" : " | free/transparent"}`;
+}
+
+/** Lists must expose removal IDs even when an all-day midnight cannot resolve. */
+function listRows(events: CalendarEvent[], zone: string): string[] {
+  return events.map(event => ({
+    event,
+    localDate: event.allDay ? event.startDate : displayInstant(Date.parse(event.startAt), zone).slice(0, 10),
+  })).sort((a, b) => a.localDate.localeCompare(b.localDate)
+    || Number(b.event.allDay) - Number(a.event.allDay)
+    || (!a.event.allDay && !b.event.allDay ? a.event.startAt.localeCompare(b.event.startAt) : 0)
+    || a.event.id.localeCompare(b.event.id))
+    .map(({ event }) => `${event.id} | ${safe(event.title, 40)} | ${event.allDay ? allDayRange(event) : range(interval(event, zone), zone)}${event.busy ? "" : " | transparent"}`);
 }
 
 function now(context: AgentFeatureContext): string {
@@ -90,7 +106,7 @@ async function stage(raw: string, context: AgentFeatureContext): Promise<string>
   const zone = timezone(context.timezone);
   const createdAt = now(context);
   const parsed = parseCalendar(raw, zone, createdAt);
-  // Resolve all-day boundaries now too: do not stage an import that cannot be displayed safely.
+  // Check all-day interval boundaries in the import timezone before staging.
   intervals(parsed, zone);
   const id = randomUUID().replace(/-/g, "");
   const expiresAt = new Date(Date.parse(createdAt) + PREVIEW_TTL_MS).toISOString();
@@ -146,11 +162,19 @@ function touches(item: Interval, start: number, end: number): boolean {
   return item.start === item.end ? item.start >= start && item.start < end : item.start < end && item.end > start;
 }
 
+function dayIntervals(events: CalendarEvent[], day: string, zone: string, bounds: { start: number; end: number }): Interval[] {
+  // All-day dates have no stored timezone. A later viewing-zone change can
+  // make their endpoints ambiguous; unrelated civil dates must not resolve
+  // those endpoints. Relevant intervals still fail explicitly if unresolved.
+  const candidates = events.filter(event => !event.allDay || (event.startDate <= day && day < event.endDate));
+  return intervals(candidates, zone).filter(item => touches(item, bounds.start, bounds.end));
+}
+
 async function agenda(day: string, context: AgentFeatureContext): Promise<string> {
   const zone = timezone(context.timezone);
   const bounds = dayBounds(date(day), zone);
   const state = await readState(context.store);
-  const matches = intervals(state.events, zone).filter(item => touches(item, bounds.start, bounds.end));
+  const matches = dayIntervals(state.events, day, zone, bounds);
   return [`Agenda ${day} (${zone}) — ${matches.length} imported event(s).`,
     ...matches.map(item => row(item, zone)),
     ...(matches.length ? [] : ["No imported events on this date. Use import preview <ICS> to add your calendar snapshot."]),
@@ -162,7 +186,7 @@ async function free(day: string, duration: string, context: AgentFeatureContext)
   const zone = timezone(context.timezone);
   const bounds = dayBounds(date(day), zone);
   const state = await readState(context.store);
-  const busy = intervals(state.events, zone).filter(item => item.event.busy && item.start < item.end && touches(item, bounds.start, bounds.end));
+  const busy = dayIntervals(state.events, day, zone, bounds).filter(item => item.event.busy && item.start < item.end);
   const windows: { start: number; end: number }[] = [];
   let cursor = bounds.start;
   for (const item of busy) {
@@ -237,7 +261,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       const state = await readState(context.store);
       return [`Saved calendar: ${state.events.length}/${MAX_EVENTS} events (${zone}).`,
         `Storage: ${stateBytes(state)} UTF-8 JSON bytes; confirmed import budget ${MAX_CONFIRMED_STATE_BYTES}, preview budget ${MAX_IMPORT_STATE_BYTES}. At quota, cancel the preview or remove old events with confirmation.`,
-        ...intervals(state.events, zone).map(item => `${item.event.id} | ${safe(item.event.title, 40)} | ${range(item, zone)}${item.event.busy ? "" : " | transparent"}`),
+        ...listRows(state.events, zone),
         ...(!state.events.length ? ["No saved events. Paste a calendar using import preview <ICS>, then import confirm <preview-token>."] : []),
         ...(state.pending ? [`Pending preview ${state.pending.id}; expires ${state.pending.expiresAt}. It is not included in saved events.`] : []),
       ].join("\n");
@@ -268,6 +292,8 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
  * Throws on invalid/unavailable data; do not turn these errors into 'no events'.
  * Only confirmed events are exposed. metadata.startAt/endAt are half-open ISO
  * intervals; all-day dates are interpreted in the supplied viewing timezone.
+ * Unlike day-specific commands, this adapter must resolve the complete set:
+ * ambiguous/nonexistent all-day boundaries throw, never silently drop events.
  * Titles, locations, and UIDs remain untrusted user data, never instructions.
  */
 export async function readCalendarEventContext(store: AgentFeatureStore, suppliedTimezone: string): Promise<AgentContextItem[]> {

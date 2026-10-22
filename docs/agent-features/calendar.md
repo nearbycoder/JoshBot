@@ -57,6 +57,10 @@ Availability covers the **whole local day**, midnight to the next midnight, with
 
 All results use the runtime-supplied user timezone, and timed output includes UTC offsets. No server-local timezone fallback is used. An event ending exactly at midnight does not appear on the next day's agenda. Events with no duration appear on their start date.
 
+`list` renders all-day dates and removal IDs directly, without converting midnight to an instant. It orders events by local start date, with all-day entries first on each date. This keeps records discoverable and removable after a timezone preference change even if an all-day endpoint becomes ambiguous or nonexistent. For example, an all-day `2026-11-01` event imported in UTC remains listed after switching to `America/Havana`.
+
+`agenda` and `free` first filter all-day events by their stored civil-date range `[startDate, endDate)`, then resolve relevant intervals in the viewing timezone. That November event cannot break an unrelated October 23 query or a query on its exclusive end date. A requested day with ambiguous/nonexistent midnight, or a relevant event with an unresolved endpoint, still produces an explicit error. Whole-calendar `conflicts` and the complete context adapter remain strict and do not silently omit unresolved events.
+
 `remove` and `clear` without confirmation provide instructions and do not delete anything. Successful removal or clearing also invalidates any pending import, so a stale confirmation cannot restore a removed event. Normal commands refuse malformed saved state without changing it; `clear confirm` is the explicit destructive recovery option.
 
 ## Supported ICS subset
@@ -130,7 +134,7 @@ Keep your original ICS if you need an export/backup. There is no export command,
    | `location` | Imported location, possibly empty. |
    | `startDate`, `endDate` | Present only for all-day events; ISO dates with exclusive end. |
 
-   Pending previews are excluded. Up to 100 events are returned in chronological order; the caller filters its requested date/horizon. No context text or metadata should be treated as model instructions, executable commands, or proof of a live booking. Adapter failures propagate: report calendar unavailable instead of claiming an empty calendar or guaranteed availability.
+   Pending previews are excluded. Up to 100 events are returned in chronological order; the caller filters its requested date/horizon. No context text or metadata should be treated as model instructions, executable commands, or proof of a live booking. Unlike date-scoped commands, the adapter must resolve the complete interval set and throws if any saved event endpoint is ambiguous/nonexistent in the viewing timezone. Do not catch and drop individual busy events to produce partial context. Adapter failures propagate: report calendar unavailable instead of claiming an empty calendar or guaranteed availability; `list` and confirmed removal remain available for recovery.
 
 No contract, package, lockfile, provider, or service changes are required. No dependencies were added. Parent owns registration, private delivery, context wiring, and combined integration validation.
 
@@ -138,10 +142,14 @@ The feature uses **zero generation calls, zero searches, and zero owner-context 
 
 ## Targeted verification
 
+The actual-runtime regression imports the integrated sibling `runtime.ts` and `store.ts` by default, with an in-memory CAS backend and fake services. In this isolated feature worktree those parent-owned modules are deliberately absent; select the parent's runtime read-only with `JOSHBOT_CALENDAR_RUNTIME_PATH`. The runtime/store are imported in place, never copied or edited:
+
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-calendar.test.ts
+PATH=/tmp/joshbot-node24/bin:$PATH JOSHBOT_CALENDAR_RUNTIME_PATH=/home/nearby/Sites/JoshBot/lib/agent-features/runtime.ts node --import tsx --test tests/agent-calendar.test.ts
 PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
 git diff --check
 ```
 
-Tests use isolated JSON stores and fake services, including callback retries and a deletion/confirmation race. They cover import-to-confirm-to-delete flow, line folding/text decoding, timezone and all-day semantics, DST gaps/folds and unusual offsets, interval merging, input/state bounds, invalid-state recovery, storage failures, and adapter provenance. Unicode/JSON-escaping fixtures fill storage near quota, verify actual serialized byte usage and atomic rejection, and then exercise edit, confirmation, cancellation, removal, and clearing. Additional checks cover the shared command limit and abort propagation. No production services or live inference are exercised.
+After integration, omit the environment override to test the runtime/store in that checkout. The runtime regression covers UTC import followed by Havana fall-back/spring-forward and Apia skipped-date viewing, successful list/removal and unrelated/exclusive-end date queries, affected-date errors, strict complete context, unchanged persisted data, and ordinary 23/25-hour DST days.
+
+Tests also use isolated JSON stores and fake services, including callback retries and a deletion/confirmation race. They cover import-to-confirm-to-delete flow, line folding/text decoding, timezone and all-day semantics, DST gaps/folds and unusual offsets, interval merging, input/state bounds, invalid-state recovery, storage failures, and adapter provenance. Unicode/JSON-escaping fixtures fill storage near quota, verify actual serialized byte usage and atomic rejection, and then exercise edit, confirmation, cancellation, removal, and clearing. Additional checks cover the shared command limit and abort propagation. No production services or live inference are exercised.

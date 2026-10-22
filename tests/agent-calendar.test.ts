@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import calendar, { feature, readCalendarEventContext } from "../lib/agent-features/calendar.js";
 import { eventId, MAX_EVENTS, MAX_ICS_BYTES, parseCalendar } from "../lib/agent-features/calendar/ics.js";
 import { MAX_CONFIRMED_STATE_BYTES, MAX_IMPORT_STATE_BYTES, MAX_STATE_BYTES, PREVIEW_TTL_MS, STATE_KEY, type CalendarState } from "../lib/agent-features/calendar/state.js";
@@ -537,4 +538,103 @@ test("the runtime command limit and abort reasons are respected without late fea
   };
   await assert.rejects(feature.execute(`import ${ics(timed("new"))}`, { ...context, store: guardedStore, signal: duringWrite.signal }), error => error === reason);
   assert.deepEqual(await state(context), before, "runtime-guarded aborted writes must not be retried or disguised as success");
+});
+
+test("actual runtime: timezone changes isolate ambiguous/nonexistent all-day midnights to relevant queries", async t => {
+  // The isolated feature branch does not own runtime/store. On the integrated
+  // branch use the sibling modules; otherwise explicitly point at the parent's
+  // runtime. Always execute the actual runtime with an in-memory CAS backend.
+  const runtimeUrl = process.env.JOSHBOT_CALENDAR_RUNTIME_PATH
+    ? pathToFileURL(process.env.JOSHBOT_CALENDAR_RUNTIME_PATH)
+    : new URL("../lib/agent-features/runtime.ts", import.meta.url);
+  const { runAgentFeature } = await import(runtimeUrl.href);
+  const { createAgentFeatureStore } = await import(new URL("./store.ts", runtimeUrl).href);
+  const cases = [
+    { zone: "America/Havana", start: "20261101", end: "20261102", day: "2026-11-01", error: /ambiguous/ },
+    { zone: "America/Havana", start: "20260308", end: "20260309", day: "2026-03-08", error: /nonexistent/ },
+    { zone: "Pacific/Apia", start: "20111230", end: "20111231", day: "2011-12-30", error: /nonexistent/ },
+  ];
+  for (const scenario of cases) {
+    await t.test(`${scenario.zone} ${scenario.day}`, async () => {
+      const records = new Map<string, string>();
+      const backend = {
+        async get(key: string): Promise<string | null> { return records.get(key) ?? null; },
+        async compareSet(key: string, previous: string | null, next: string): Promise<boolean> {
+          if ((records.get(key) ?? null) !== previous) return false;
+          records.set(key, next);
+          return true;
+        },
+      };
+      const owner = { teamId: "TCALENDAR", userId: "UCALENDAR" };
+      const services = {
+        generate: async () => { throw new Error("Unexpected model call"); },
+        search: async () => { throw new Error("Unexpected search call"); },
+        readContext: async () => { throw new Error("Unexpected context call"); },
+      };
+      const store: AgentFeatureStore = createAgentFeatureStore(backend, owner, "calendar");
+      const run = (command: string, zone = scenario.zone): Promise<string> => runAgentFeature(feature, command, owner, {
+        backend, services, timezone: zone, now: new Date(NOW),
+      });
+      const staged = await run(`import preview ${ics(
+        event("transition", `DTSTART;VALUE=DATE:${scenario.start}\r\nDTEND;VALUE=DATE:${scenario.end}\r\nSUMMARY:Civil-date event`),
+        timed("ordinary", "Ordinary meeting"),
+      )}`, "UTC");
+      const token = /Confirm within 30 minutes: import confirm ([a-f0-9]{32})/.exec(staged)?.[1];
+      assert.ok(token, staged);
+      assert.match(await run(`import confirm ${token}`, "UTC"), /^Imported:/);
+      const before = await store.read<CalendarState>(STATE_KEY);
+      assert.ok(before);
+      const removalId = eventId("transition");
+
+      // Viewing timezone changes never prevent discovering the removal ID.
+      const listed = await run("list");
+      assert.match(listed, new RegExp(`${removalId}.*Civil-date event.*all day ${scenario.day}`));
+      assert.match(listed, /Ordinary meeting/);
+      assert.doesNotMatch(listed, /^Calendar:/);
+      const unrelatedAgenda = await run("agenda 2026-10-23");
+      assert.match(unrelatedAgenda, /^Agenda 2026-10-23/);
+      assert.doesNotMatch(unrelatedAgenda, /Civil-date event/);
+      const unrelatedFree = await run("free 2026-10-23 | 30");
+      assert.match(unrelatedFree, /^Free windows/);
+      assert.match(unrelatedFree, /24 elapsed hours/);
+      assert.doesNotMatch(unrelatedFree, /^Calendar:/);
+      const exclusiveEnd = `${scenario.end.slice(0, 4)}-${scenario.end.slice(4, 6)}-${scenario.end.slice(6, 8)}`;
+      const endDayAgenda = await run(`agenda ${exclusiveEnd}`);
+      assert.match(endDayAgenda, /^Agenda/);
+      assert.doesNotMatch(endDayAgenda, /Civil-date event/);
+      assert.match(await run(`free ${exclusiveEnd} | 30`), /^Free windows/);
+
+      // The same event remains usable in UTC; affected local queries must fail
+      // explicitly, and the full-context adapter must never omit busy data.
+      assert.match(await run(`agenda ${scenario.day}`, "UTC"), /Civil-date event/);
+      assert.match(await run(`free ${scenario.day} | 30`, "UTC"), /No matching free window/);
+      assert.match(await run(`agenda ${scenario.day}`), scenario.error);
+      assert.match(await run(`free ${scenario.day} | 30`), scenario.error);
+      const completeUtc = await readCalendarEventContext(store, "UTC");
+      assert.equal(completeUtc.length, 2);
+      assert.equal(completeUtc.find(item => item.metadata?.calendarEventId === removalId)?.metadata?.busy, true);
+      await assert.rejects(readCalendarEventContext(store, scenario.zone), scenario.error);
+      assert.match(await run("conflicts"), scenario.error);
+      assert.deepEqual(await store.read(STATE_KEY), before, "read queries must not rewrite or drop the unresolved event");
+
+      assert.match(await run(`remove ${removalId} confirm`), /^Removed/);
+      assert.doesNotMatch(await run("list"), /Civil-date event/);
+      const afterRemoval = await readCalendarEventContext(store, scenario.zone);
+      assert.deepEqual(afterRemoval.map(item => item.id), [`calendar:${eventId("ordinary")}`]);
+      assert.match(await run("agenda 2026-10-23"), /^Agenda/);
+      assert.match(await run("free 2026-10-23 | 30"), /^Free windows/);
+      if (scenario.day === "2026-11-01") {
+        const springDay = await run("free 2026-03-08 | 30", "America/Chicago");
+        assert.match(springDay, /23 elapsed hours/);
+        assert.match(springDay, /1380 minutes/);
+        const autumnDay = await run("free 2026-11-01 | 30", "America/Chicago");
+        assert.match(autumnDay, /25 elapsed hours/);
+        assert.match(autumnDay, /1500 minutes/);
+      }
+
+      // Query-day midnight ambiguity is intrinsic, even after the event is removed.
+      assert.match(await run(`free ${scenario.day} | 30`), scenario.error);
+      assert.ok([...records.values()].every(value => Buffer.byteLength(value, "utf8") < MAX_STATE_BYTES));
+    });
+  }
 });
