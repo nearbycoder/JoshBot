@@ -7,7 +7,7 @@ import { createAgentTestContext, createAgentTestStore } from "./agent-feature-te
 type Saved = {
   version: number; generation: string;
   snapshots: {
-    id: string; at: string; sources: { id: string; outcome: string; nextRunAt: string | null; issues: string[] }[];
+    id: string; at: string; sources: { id: string; title: string; purpose: string; schedule: string; destination: string; outcome: string; nextRunAt: string | null; issues: string[] }[];
     suggestions: { id: string; rule: string; sourceIds: string[]; evidence: string }[];
     skipped: number; omitted: number; omittedSuggestions: number;
   }[];
@@ -114,6 +114,57 @@ test("complete private review, inspect, dismiss, refresh, history and compare fl
   assert.match(await feature.execute("history", ctx), new RegExp(initial.id));
   assert.match(await feature.execute(`inspect reminder:late ${initial.id}`, ctx), /Last record edit: Jan 02, 2026/);
   assert.deepEqual(calls, { context: 3, generate: 0, search: 0 });
+});
+
+for (const variant of ["title", "purpose", "schedule", "destination", "purpose-from-text", "purpose-from-title"] as const) {
+  test(`clipped ${variant} remains valid through review, history, show and compare`, async () => {
+    const field = variant.startsWith("purpose-") ? "purpose" : variant as "title" | "purpose" | "schedule" | "destination";
+    const limit = { title: 160, purpose: 500, schedule: 160, destination: 120 }[field];
+    const boundary = `${"x".repeat(limit - 1)} y`;
+    const source = item("boundary");
+    const { ctx, calls, setItems } = setup([source]);
+    assert.match(await feature.execute("review", ctx), /Personal automation review audit-/);
+    const original = (await saved(ctx)).snapshots[0].id;
+    setItems([{
+      ...source,
+      ...(variant === "title" ? { title: boundary } : {}),
+      ...(variant === "purpose-from-text" ? { text: boundary } : {}),
+      ...(variant === "purpose-from-title" ? { title: boundary, text: "" } : {}),
+      ...(variant === "purpose" || variant === "schedule" || variant === "destination"
+        ? { metadata: { ...source.metadata, [variant]: boundary } } : {}),
+    }]);
+    ctx.now = new Date("2026-10-22T15:01:00Z");
+    assert.match(await feature.execute("review", ctx), /Personal automation review audit-/);
+    assert.match(await feature.execute("history", ctx), new RegExp(original));
+    const latest = (await saved(ctx)).snapshots[0];
+    assert.equal(latest.sources[0][field], "x".repeat(limit - 1), "clipping cannot leave trailing whitespace in persisted text");
+    assert.match(await feature.execute(`show ${latest.id}`, ctx), /Personal automation review audit-/);
+    assert.match(await feature.execute("inspect boundary", ctx), /Snapshot audit-/);
+    assert.match(await feature.execute("compare", ctx), new RegExp(`Changed boundary: ${field}:`));
+    assert.deepEqual(calls, { context: 2, generate: 0, search: 0 });
+  });
+}
+
+test("prospective snapshot validation fails before any write and preserves existing history and dismissals", async () => {
+  const { ctx } = setup([due()]);
+  await feature.execute("review", ctx);
+  await feature.execute(`dismiss ${(await saved(ctx)).snapshots[0].suggestions[0].id}`, ctx);
+  const before = await saved(ctx);
+  const backing = ctx.store;
+  let writes = 0;
+  ctx.store = {
+    read: key => backing.read(key),
+    update: (key, initial, transform) => { writes++; return backing.update(key, initial, transform); },
+  };
+  // A finite Date can still produce a capture timestamp outside the stored schema.
+  ctx.now = new Date("+010000-01-01T00:00:00.000Z");
+  const reply = await feature.execute("review", ctx);
+  assert.match(reply, /New review data could not be validated/);
+  assert.match(reply, /saved history and dismissals were left unchanged/);
+  assert.equal(writes, 0, "invalid prospective data must never enter an atomic store update");
+  assert.deepEqual(await saved(ctx), before);
+  assert.match(await feature.execute("history", ctx), new RegExp(before.snapshots[0].id));
+  assert.match(await feature.execute("show", ctx), /Personal automation review/);
 });
 
 test("unknown telemetry is not inferred to be failure, even when a last-run timestamp exists", async () => {

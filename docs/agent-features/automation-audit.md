@@ -89,6 +89,8 @@ Dismissals use deterministic IDs based on the rule, source IDs and relevant evid
 
 Provider failures preserve saved history and dismissals. Corrupt persisted shapes are rejected without being silently overwritten; `clear confirm` explicitly recovers the workspace. Snapshot appends and dismissals use atomic transforms with IDs/timestamps generated outside callbacks. Concurrent dismissals are merged with finishing reviews, a newer captured snapshot prevents an older delayed review from replacing it, and a history clear invalidates in-flight reviews. Reviews with identical capture times can both be retained in completion order. Cancellation detected before the storage update leaves history unchanged.
 
+Titles, purposes (including text/title fallbacks), schedule labels and destinations are trimmed again after clipping, so a cutoff at a word boundary cannot leave invalid trailing whitespace. Each new snapshot passes the same validation used for saved history before any storage update starts. A failed new-snapshot validation preserves existing history and dismissals and asks for the supplied metadata/capture time to be checked; it does not ask you to clear valid saved data.
+
 Each review makes one `readContext` call; all other commands use saved state. There are zero generation or search calls, within the parent's per-invocation limits of eight generations and six searches. The parent runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. No shared runtime/store files are copied into or modified by this feature.
 
 Targeted verification:

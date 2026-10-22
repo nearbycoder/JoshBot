@@ -49,7 +49,7 @@ function object(value: unknown): value is Record<string, unknown> {
 }
 
 function text(value: unknown, max: number): string {
-  return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max) : "";
+  return typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim() : "";
 }
 
 function zone(value: unknown): value is string {
@@ -93,6 +93,7 @@ function validSource(value: unknown): value is Source {
 }
 
 class InvalidState extends Error {}
+class InvalidReview extends Error {}
 class QuotaExceeded extends Error {}
 
 function bytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
@@ -115,28 +116,30 @@ function storageNotice(state: State): string {
   return `Storage: ${bytes(state).toLocaleString("en-US")} UTF-8 bytes. New reviews fit within 450,000 bytes, reserving space for dismissals below the 479,000-byte state limit. Oldest reviews expire as needed; clear confirm deletes all audit history and dismissals.`;
 }
 
+function validateSnapshot(s: unknown): asserts s is Snapshot {
+  if (!object(s) || typeof s.id !== "string" || !/^audit-[a-f0-9-]{36}$/.test(s.id)
+    || typeof s.at !== "string" || instant(s.at) !== s.at || !zone(s.timezone)
+    || !Array.isArray(s.sources) || s.sources.length > MAX_SOURCES || !s.sources.every(validSource)
+    || new Set(s.sources.map(v => v.id)).size !== s.sources.length
+    || !Array.isArray(s.suggestions) || s.suggestions.length > MAX_SUGGESTIONS
+    || ![s.skipped, s.omitted, s.omittedSuggestions].every(n => Number.isSafeInteger(n) && Number(n) >= 0)) throw new InvalidState();
+  const ids = new Set(s.sources.map(v => v.id));
+  for (const suggestion of s.suggestions) {
+    if (!object(suggestion) || typeof suggestion.id !== "string" || !/^s-[a-f0-9]{20}$/.test(suggestion.id)
+      || !RULES.includes(suggestion.rule as Rule) || !bounded(suggestion.evidence, 1200) || !bounded(suggestion.action, 400)
+      || !Array.isArray(suggestion.sourceIds) || suggestion.sourceIds.length < 1 || suggestion.sourceIds.length > 2
+      || !suggestion.sourceIds.every(id => typeof id === "string" && ids.has(id))
+      || new Set(suggestion.sourceIds).size !== suggestion.sourceIds.length) throw new InvalidState();
+  }
+  if (new Set(s.suggestions.map(v => v.id)).size !== s.suggestions.length) throw new InvalidState();
+}
+
 function parseState(value: unknown): State {
   if (value === null) return empty();
   if (!object(value) || value.version !== 1 || !bounded(value.generation, 50) || !value.generation
     || !Array.isArray(value.snapshots) || value.snapshots.length > MAX_SNAPSHOTS
     || !Array.isArray(value.dismissals) || value.dismissals.length > MAX_DISMISSALS) throw new InvalidState();
-  for (const s of value.snapshots) {
-    if (!object(s) || typeof s.id !== "string" || !/^audit-[a-f0-9-]{36}$/.test(s.id)
-      || typeof s.at !== "string" || instant(s.at) !== s.at || !zone(s.timezone)
-      || !Array.isArray(s.sources) || s.sources.length > MAX_SOURCES || !s.sources.every(validSource)
-      || new Set(s.sources.map(v => v.id)).size !== s.sources.length
-      || !Array.isArray(s.suggestions) || s.suggestions.length > MAX_SUGGESTIONS
-      || ![s.skipped, s.omitted, s.omittedSuggestions].every(n => Number.isSafeInteger(n) && Number(n) >= 0)) throw new InvalidState();
-    const ids = new Set(s.sources.map(v => v.id));
-    for (const suggestion of s.suggestions) {
-      if (!object(suggestion) || typeof suggestion.id !== "string" || !/^s-[a-f0-9]{20}$/.test(suggestion.id)
-        || !RULES.includes(suggestion.rule as Rule) || !bounded(suggestion.evidence, 1200) || !bounded(suggestion.action, 400)
-        || !Array.isArray(suggestion.sourceIds) || suggestion.sourceIds.length < 1 || suggestion.sourceIds.length > 2
-        || !suggestion.sourceIds.every(id => typeof id === "string" && ids.has(id))
-        || new Set(suggestion.sourceIds).size !== suggestion.sourceIds.length) throw new InvalidState();
-    }
-    if (new Set(s.suggestions.map(v => v.id)).size !== s.suggestions.length) throw new InvalidState();
-  }
+  for (const snapshot of value.snapshots) validateSnapshot(snapshot);
   if (new Set(value.snapshots.map(v => v.id)).size !== value.snapshots.length) throw new InvalidState();
   for (const dismissal of value.dismissals) {
     if (!object(dismissal) || typeof dismissal.id !== "string" || !/^s-[a-f0-9]{20}$/.test(dismissal.id)
@@ -376,6 +379,9 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const allSuggestions = audit(sources, now);
       const snapshot: Snapshot = { id, at, timezone, sources, suggestions: allSuggestions.slice(0, MAX_SUGGESTIONS),
         skipped: candidates.length - sources.length, omitted: Math.max(0, raw.length - MAX_SOURCES), omittedSuggestions: Math.max(0, allSuggestions.length - MAX_SUGGESTIONS) };
+      // New evidence must satisfy the exact schema used when reading saved history.
+      try { validateSnapshot(snapshot); }
+      catch (error) { if (error instanceof InvalidState) throw new InvalidReview(); throw error; }
       const saved = await ctx.store.update<unknown, { state: State; removed: number } | null>(KEY, empty(), current => {
         const latest = parseState(current);
         if (latest.generation !== state.generation || (latest.snapshots[0] && latest.snapshots[0].at > at)) return { value: latest, result: null };
@@ -414,6 +420,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     return output(renderSnapshot(snapshot, state, true));
   } catch (error) {
     if (error instanceof QuotaExceeded) return error.message;
+    if (error instanceof InvalidReview) return "New review data could not be validated; saved history and dismissals were left unchanged. Check the supplied metadata and capture time, then retry review.";
     return error instanceof InvalidState
       ? "Saved audit data could not be validated and was left unchanged. Use clear confirm to explicitly reset audit history and dismissals; jobs are unaffected."
       : "Could not load or save the automation review. Try again later; existing jobs were not changed.";
