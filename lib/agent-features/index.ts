@@ -22,10 +22,11 @@ export async function handleAgentCommand(
   validateAgentIdentity(owner);
   const navigation = parseAgentCatalogCommand(text);
   if (navigation) return navigation.error ?? formatAgentCatalog(agentFeatures, navigation.state);
-  const [, id, command = "help"] = text.trim().match(/^(\S+)(?:\s+([\s\S]*))?$/) ?? [];
+  // Strip routing syntax only; remaining command bytes belong to the feature.
+  const [, id, command = "help"] = text.trimStart().match(/^(\S+)(?:\s([\s\S]*))?$/) ?? [];
   const feature = agentFeatures.find((candidate) => candidate.id === id.toLowerCase());
   if (!feature) return "Unknown personal agent. Use /nobo-help agent for available features.";
-  if (command.trim().toLowerCase() === "help") return formatAgentFeatureHelp(feature);
+  if (!command.trim() || command.trim().toLowerCase() === "help") return formatAgentFeatureHelp(feature);
   if (command.length > 48_000) return "This command is too long. Use at most 48,000 characters.";
   const { runAgentFeature } = await import("./runtime.js");
   if (options) return runAgentFeature(feature, command, owner, options);

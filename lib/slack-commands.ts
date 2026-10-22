@@ -399,7 +399,7 @@ async function handleAdmittedSlackSlashCommandPayload(
 
   if (isPersonalAgent) {
     const output = await contextRead(personalAgentSignal, () => (options.handleAgentCommand ?? handleAgentCommand)(
-      payload.text.trim().replace(/^agent\s*/i, ""),
+      payload.text.trimStart().replace(/^agent(?:\s|$)/i, ""),
       { userId: payload.user_id, teamId: payload.team_id, channelId: payload.channel_id, requestId: payload.trigger_id },
       undefined,
       { timeoutSignal: () => personalAgentSignal! },

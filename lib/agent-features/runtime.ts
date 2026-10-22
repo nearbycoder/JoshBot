@@ -117,7 +117,7 @@ export async function runAgentFeature(
       },
     };
     try {
-      const result = await abortable(() => feature.execute(command.trim(), {
+      const result = await abortable(() => feature.execute(command, {
         ...owner,
         teamId: owner.teamId,
         userId: owner.userId,
