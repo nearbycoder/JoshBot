@@ -147,3 +147,86 @@ test("actual saved/report continuations recover complete data and reject edits, 
   assert.match(await f.run(issued[1]), /stale continuation rejected/);
   assert.match(await f.run(`show ${id} 1 rev invalid`), /Invalid revision token/);
 });
+
+test("finite composition preserves every exact source and rejects changes, omissions, framing and structure attacks", async () => {
+  let modify = (_output: any) => {}, sources: { ref: string; quote: string }[] = [], frameText = "";
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    const data = JSON.parse(input); sources = data.sources;
+    const frame = Object.keys(data.framing)[0]; frameText = data.framing[frame];
+    const output = { sections: sources.map(s => ({ ...s, text: s.quote })), framing: [frame], layout: "compact" };
+    modify(output); return JSON.stringify(output);
+  } } }), id = await create(f);
+  const a = await addAudience(f,id,100); await f.run(`lead ${id} | Pilot notes supplied by Maya`); await f.run(`ask ${id} | Approve a second group`); await f.run(`fact ${id} add Ten users completed onboarding, according to Maya | required`); await f.run(`fact ${id} add Two participants requested help, according to Noah | important`); await f.run(`fact ${id} add The outline is available | optional`);
+  const command = `polish ${id} ${a}`, raw = f.backend.data.get(f.key("state"));
+  const good = await f.run(command); assert.match(good, /unsaved suggestion/); assert.ok(good.includes(frameText));
+  for (const source of sources) assert.ok(good.includes(source.quote), source.ref);
+  const refs = sources.map(s => s.ref);
+  const attacks: ((o: any) => void)[] = [
+    o => { o.sections[0].ref = "unknown"; }, o => { o.sections[0].quote += " altered"; },
+    o => { o.sections[1] = o.sections[0]; }, o => { o.sections[0].attribution = "external audit"; },
+    o => { o.framing = ["unknown"]; }, o => { o.framing.push(o.framing[0]); },
+    o => { o.framing = "thanks"; }, o => { o.framing = ["__proto__"]; },
+    o => { o.layout = "approved commitment"; }, o => { o.layout = ["compact"]; },
+    o => { o.commitment = "I guarantee Monday delivery"; },
+  ];
+  for (const ref of refs) {
+    attacks.push(o => { o.sections.find((x: any) => x.ref === ref).text += " But I will work all weekend and Maya confirmed twenty users in an external audit on Tuesday."; });
+    attacks.push(o => { o.sections = o.sections.filter((x: any) => x.ref !== ref); });
+  }
+  for (modify of attacks) {
+    const calls = f.calls.generate, reply = await f.run(command);
+    assert.match(reply, /Optional assistance unavailable/); assert.equal(f.calls.generate, calls + 1);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+  // Ordering emitted by a provider cannot change roles or scope: the renderer owns it.
+  modify = o => { o.sections.reverse(); o.framing = []; o.layout = "spaced"; };
+  const spaced = await f.run(command); assert.match(spaced, /unsaved suggestion/);
+  for (const source of sources) assert.ok(spaced.includes(source.quote));
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.equal(f.calls.search, 0); assert.equal(f.calls.readContext, 0);
+});
+
+test("required exact composition refuses oversize before calling and never paginates unsaved output", async () => {
+  const f = createAgentFeatureFixture(feature), id = await create(f);
+  const a = await addAudience(f,id,1000); for (let i=0;i<6;i++) await f.run(`fact ${id} add ${i} ${"x".repeat(900)} | required`);
+  const raw = f.backend.data.get(f.key("state")), reply = await f.run(`polish ${id} ${a}`);
+  assert.match(reply, /complete exact content cannot fit/); assert.match(reply, /deterministic pages.*explicitly shorten/);
+  assert.ok(reply.length <= 3500); assert.doesNotMatch(reply, /Page \d/);
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("polish retains important facts and attributions; only explicitly optional facts may be omitted for budget", async () => {
+  let supplied: { ref: string; quote: string }[] = [];
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    supplied = JSON.parse(input).sources; return JSON.stringify({ sections: supplied.map(s => ({ ...s, text: s.quote })) });
+  } } }), id = await create(f), a = await addAudience(f,id,20);
+  await f.run(`fact ${id} add ${Array(21).fill("important").join(" ")} | important`);
+  const refused = await f.run(`polish ${id} ${a}`);
+  assert.match(refused, /Required\/important facts.*Increase.*Nothing was dropped.*No model called/);
+  assert.equal(f.calls.generate, 0);
+  const fid = (await record(f,id)).facts[0].id;
+  await f.run(`fact ${id} edit ${fid} | Ten users completed onboarding according to Maya | important`);
+  await f.run(`lead ${id} | Pilot result`); await f.run(`ask ${id} | Approve another group`);
+  await f.run(`fact ${id} add ${Array(21).fill("optional").join(" ")} | optional`);
+  const good = await f.run(`polish ${id} ${a}`);
+  assert.match(good, /unsaved suggestion/); assert.match(good, /optional; omitted for word budget/);
+  assert.ok(supplied.some(s => s.ref === fid && s.quote === "Ten users completed onboarding according to Maya"));
+  assert.ok(supplied.some(s => s.ref === "lead")); assert.ok(supplied.some(s => s.ref === "ask"));
+  const optional = (await record(f,id)).facts[1].id;
+  await f.run(`require ${id} ${a} | ${optional}`);
+  assert.match(await f.run(`polish ${id} ${a}`), /No model called/); assert.equal(f.calls.generate, 1);
+});
+
+test("finite composition discards a removal at the revision ceiling", async () => {
+  const entered = deferred<void>(), gate = deferred<void>();
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    entered.resolve(); await gate.promise; const { sources } = JSON.parse(input);
+    return JSON.stringify({ sections: sources.map((s: { ref: string; quote: string }) => ({ ...s, text: s.quote })) });
+  } } }), id = await create(f);
+  const a = await addAudience(f,id); await f.run(`fact ${id} add Ten users according to Maya | required`);
+  const state = await f.store().read<any>("state"); state.records[0].revision = 999_999_999;
+  f.backend.data.set(f.key("state"), JSON.stringify(state));
+  const pending = f.run(`polish ${id} ${a}`); await entered.promise;
+  assert.match(await f.run(`clear ${id} title confirm`), /^Saved/);
+  const raw = f.backend.data.get(f.key("state")); gate.resolve();
+  assert.match(await pending, /stale result was discarded/); assert.equal(f.backend.data.get(f.key("state")), raw);
+});
