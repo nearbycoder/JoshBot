@@ -12,7 +12,7 @@ type Disposition = { itemId: string; state: "reviewed" | "not-affected"; reason:
 type Change = { id: string; sourceId: string; sourceSnapshot: Item; description: string; graphId: string; graphRevision: number; fingerprint: string; affected: string[]; dispositions: Disposition[]; status: "open" | "closed" };
 type RecordData = { id: string; title: string; revision: number; createdAt: string; updatedAt: string; graphId: string; items: Item[]; edges: Edge[]; changes: Change[] };
 type State = { version: 1; records: RecordData[] };
-function validItem(i: unknown): asserts i is Item { object(i, ["id", "label", "type", "ownerLabel"]); validId(i.id); validText(i.label, 160, true); enumValue(i.type, TYPES); validText(i.ownerLabel, 96, true); }
+function validItem(i: unknown): asserts i is Item { object(i, ["id", "label", "type", "ownerLabel"]); validId(i.id, "item"); validText(i.label, 160, true); enumValue(i.type, TYPES); validText(i.ownerLabel, 96, true); }
 function item(r: RecordData, id: string): Item { const i = r.items.find(x => x.id === id); if (!i) fail("Item not found in this map."); return i; }
 function edge(r: RecordData, id: string): Edge { const e = r.edges.find(x => x.id === id); if (!e) fail("Edge not found in this map."); return e; }
 function change(r: RecordData, id: string): Change { const c = r.changes.find(x => x.id === id); if (!c) fail("Change not found in this map."); return c; }
@@ -31,13 +31,13 @@ function paths(r: RecordData, source: string): Map<string, Path> {
 }
 function snapshot(r: RecordData, sourceId: string, description: string, id: string): Change { return { id, sourceId, sourceSnapshot: structuredClone(item(r, sourceId)), description, graphId: r.graphId, graphRevision: r.revision, fingerprint: fingerprint(r), affected: [...paths(r, sourceId).keys()], dispositions: [], status: "open" }; }
 function validateRecord(v: unknown): asserts v is RecordData {
-  object(v, ["id", "title", "revision", "createdAt", "updatedAt", "graphId", "items", "edges", "changes"]); validBase(v); validId(v.graphId); array(v.items, 40); v.items.forEach(validItem); unique(v.items.map((i: Item) => i.id)); array(v.edges, 80);
-  for (const e of v.edges) { object(e, ["id", "dependent", "prerequisite", "reason"]); validId(e.id); validId(e.dependent); validId(e.prerequisite); validText(e.reason, 160); if (!v.items.some((i: Item) => i.id === e.dependent) || !v.items.some((i: Item) => i.id === e.prerequisite)) throw new Error("Dangling edge."); }
+  object(v, ["id", "title", "revision", "createdAt", "updatedAt", "graphId", "items", "edges", "changes"]); validBase(v); validId(v.graphId, "graph"); array(v.items, 40); v.items.forEach(validItem); unique(v.items.map((i: Item) => i.id)); array(v.edges, 80);
+  for (const e of v.edges) { object(e, ["id", "dependent", "prerequisite", "reason"]); validId(e.id, "edge"); validId(e.dependent, "item"); validId(e.prerequisite, "item"); validText(e.reason, 160); if (!v.items.some((i: Item) => i.id === e.dependent) || !v.items.some((i: Item) => i.id === e.prerequisite)) throw new Error("Dangling edge."); }
   unique(v.edges.map((e: Edge) => e.id)); unique(v.edges.map((e: Edge) => `${e.dependent}/${e.prerequisite}`)); array(v.changes, 5); unique(v.changes.map((c: Change) => c.id));
   for (const c of v.changes) {
-    object(c, ["id", "sourceId", "sourceSnapshot", "description", "graphId", "graphRevision", "fingerprint", "affected", "dispositions", "status"]); validId(c.id); validId(c.sourceId); validId(c.graphId); validNumber(c.graphRevision, 1, MAX_REVISION); validItem(c.sourceSnapshot); validText(c.description, 400); enumValue(c.status, ["open", "closed"]); array(c.affected, 39); c.affected.forEach(validId); unique(c.affected); array(c.dispositions, 39);
+    object(c, ["id", "sourceId", "sourceSnapshot", "description", "graphId", "graphRevision", "fingerprint", "affected", "dispositions", "status"]); validId(c.id, "change"); validId(c.sourceId, "item"); validId(c.graphId, "graph"); validNumber(c.graphRevision, 1, v.revision); validItem(c.sourceSnapshot); validText(c.description, 400); enumValue(c.status, ["open", "closed"]); array(c.affected, 39); c.affected.forEach((id: unknown) => validId(id, "item")); unique(c.affected); array(c.dispositions, 39);
     if (typeof c.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(c.fingerprint) || c.sourceSnapshot.id !== c.sourceId || c.affected.includes(c.sourceId) || !v.items.some((i: Item) => i.id === c.sourceId)) throw new Error("Invalid change provenance.");
-    for (const d of c.dispositions) { object(d, ["itemId", "state", "reason"]); validId(d.itemId); enumValue(d.state, ["reviewed", "not-affected"]); validText(d.reason, 96); if (!c.affected.includes(d.itemId)) throw new Error("Disposition outside captured queue."); }
+    for (const d of c.dispositions) { object(d, ["itemId", "state", "reason"]); validId(d.itemId, "item"); enumValue(d.state, ["reviewed", "not-affected"]); validText(d.reason, 96); if (!c.affected.includes(d.itemId)) throw new Error("Disposition outside captured queue."); }
     unique(c.dispositions.map((d: Disposition) => d.itemId)); if (c.status === "closed" && c.dispositions.length !== c.affected.length) throw new Error("Closed queue has unresolved items.");
     if (c.graphId === v.graphId && (c.fingerprint !== fingerprint(v as RecordData) || JSON.stringify(c.affected) !== JSON.stringify([...paths(v as RecordData, c.sourceId).keys()]) || JSON.stringify(c.sourceSnapshot) !== JSON.stringify(item(v as RecordData, c.sourceId)))) throw new Error("Invalid current graph snapshot.");
   }
@@ -92,6 +92,7 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
   fail("Unknown command. Use help for exact grammar.");
 }
 
+const ROOT_PREFIX = "map";
 const ROUTE = `/nobo-help agent ${metadata.id}`;
 const MAX_REVISION = 999_999_999;
 const EMPTY: State = { version: 1, records: [] };
@@ -129,8 +130,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix = ROOT_PREFIX): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);

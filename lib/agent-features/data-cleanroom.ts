@@ -40,16 +40,16 @@ function csvText(g: Grid, spreadsheet = false): string {
 }
 function validGrid(g: unknown): asserts g is Grid {
   object(g, ["columns", "rows", "keys"]); array(g.columns, 8); if (!g.columns.length) throw new Error("Missing columns."); array(g.rows, 40); array(g.keys, 8);
-  for (const c of g.columns) { object(c, ["id", "name", "type"]); validId(c.id); validText(c.name, 160); enumValue(c.type, KINDS); }
+  for (const c of g.columns) { object(c, ["id", "name", "type"]); validId(c.id, "col"); validText(c.name, 160); enumValue(c.type, KINDS); }
   unique(g.columns.map((c: Column) => c.id)); unique(g.columns.map((c: Column) => c.name.trim()));
   let units = g.columns.reduce((n: number, c: Column) => n + c.name.length, 0);
-  for (const r of g.rows) { object(r, ["id", "cells"]); validId(r.id); array(r.cells, 8); if (r.cells.length !== g.columns.length) throw new Error("Invalid row width."); for (const v of r.cells) { validText(v, 16000, true, 6000); units += v.length; } }
-  if (units > 6000) throw new Error("Excess source content."); unique(g.rows.map((r: Row) => r.id)); unique(g.keys); g.keys.forEach((id: unknown) => { validId(id); if (!g.columns.some((c: Column) => c.id === id)) throw new Error("Unknown key."); });
+  for (const r of g.rows) { object(r, ["id", "cells"]); validId(r.id, "row"); array(r.cells, 8); if (r.cells.length !== g.columns.length) throw new Error("Invalid row width."); for (const v of r.cells) { validText(v, 16000, true, 6000); units += v.length; } }
+  if (units > 6000) throw new Error("Excess source content."); unique(g.rows.map((r: Row) => r.id)); unique(g.keys); g.keys.forEach((id: unknown) => { validId(id, "col"); if (!g.columns.some((c: Column) => c.id === id)) throw new Error("Unknown key."); });
 }
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "original", "current", "preview", "undo"]); validBase(v); validGrid(v.original); validGrid(v.current); if (v.undo !== null) validGrid(v.undo);
-  if (v.preview !== null) { const p = v.preview; object(p, ["id", "baseRevision", "fingerprint", "operation", "output"]); validId(p.id); validNumber(p.baseRevision, 1, MAX_REVISION); enumValue(p.operation, ["trim", "dedupe", "convert"]); validGrid(p.output);
+  if (v.preview !== null) { const p = v.preview; object(p, ["id", "baseRevision", "fingerprint", "operation", "output"]); validId(p.id, "preview"); validNumber(p.baseRevision, 1, MAX_REVISION); enumValue(p.operation, ["trim", "dedupe", "convert"]); validGrid(p.output);
     if (p.baseRevision !== v.revision || typeof p.fingerprint !== "string" || p.fingerprint !== digest(v.current)) throw new Error("Invalid preview binding.");
   }
   // Immutable column/row provenance: transformations never invent source IDs.
@@ -131,6 +131,7 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
   fail("Unknown command. Use help for exact grammar.");
 }
 
+const ROOT_PREFIX = "table";
 const ROUTE = `/nobo-help agent ${metadata.id}`;
 const MAX_REVISION = 999_999_999;
 const EMPTY: State = { version: 1, records: [] };
@@ -168,8 +169,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix = ROOT_PREFIX): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);

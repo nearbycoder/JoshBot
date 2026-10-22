@@ -22,7 +22,7 @@ function unit(value: unknown): string {
   return value;
 }
 function validateCheck(c: unknown): asserts c is Check {
-  object(c, ["id", "operation", "operands", "claim", "tolerance", "unit"]); validId(c.id);
+  object(c, ["id", "operation", "operands", "claim", "tolerance", "unit"]); validId(c.id, "check");
   enumValue(c.operation, ["sum", "percent-change", "weighted-average"]); unit(c.unit); decimal(c.claim); decimal(c.tolerance, true); array(c.operands, 20);
   if (!c.operands.length || (c.operation === "percent-change" && c.operands.length !== 2)) fail("Checks need 1–20 operands; percent-change needs exactly before,after.");
   for (const o of c.operands) { object(o, ["value", "unit", "weight"]); decimal(o.value); unit(o.unit); if (c.operation === "weighted-average") decimal(o.weight, true); else if (o.weight !== null) fail("Weights belong only to weighted-average."); }
@@ -99,6 +99,7 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
   fail("Unknown command. Use help for exact grammar.");
 }
 
+const ROOT_PREFIX = "audit";
 const ROUTE = `/nobo-help agent ${metadata.id}`;
 const MAX_REVISION = 999_999_999;
 const EMPTY: State = { version: 1, records: [] };
@@ -136,8 +137,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix = ROOT_PREFIX): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);

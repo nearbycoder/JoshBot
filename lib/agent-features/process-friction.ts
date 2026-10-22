@@ -17,15 +17,15 @@ function minutes(v: string): number {
   const [whole, fractional = ""] = v.split("."), n = Number(whole) * 1000 + Number(fractional.padEnd(3, "0")); if (!Number.isSafeInteger(n) || n > 1_000_000_000) fail("Minutes exceed 1000000."); return n;
 }
 const fmt = (n: number) => `${Math.trunc(n / 1000)}.${String(Math.abs(n % 1000)).padStart(3, "0")}`.replace(/\.?0+$/, "");
-function validStep(s: unknown): asserts s is Step { object(s, ["id", "label", "active", "wait", "ownerLabel", "requiredReason"]); validId(s.id); validText(s.label, 160, true); validText(s.ownerLabel, 128, true); validText(s.requiredReason, 320, true); validNumber(s.active, 0, 1_000_000_000); validNumber(s.wait, 0, 1_000_000_000); }
+function validStep(s: unknown): asserts s is Step { object(s, ["id", "label", "active", "wait", "ownerLabel", "requiredReason"]); validId(s.id, "step"); validText(s.label, 160, true); validText(s.ownerLabel, 128, true); validText(s.requiredReason, 320, true); validNumber(s.active, 0, 1_000_000_000); validNumber(s.wait, 0, 1_000_000_000); }
 function validTotals(t: unknown): asserts t is Totals {
   object(t, ["active", "wait", "handoffs", "stepCount", "repetitions", "largestWait", "largestStep"]); validNumber(t.stepCount, 0, 24); validNumber(t.repetitions, 1, 10000); validNumber(t.handoffs, 0, Math.max(0, t.stepCount - 1)); validNumber(t.active, 0, t.stepCount * 1_000_000_000); validNumber(t.wait, 0, t.stepCount * 1_000_000_000); validNumber(t.largestWait, 0, 1_000_000_000);
   if (t.stepCount === 0 ? t.largestStep !== null || t.largestWait !== 0 : typeof t.largestStep !== "string") throw new Error("Invalid largest-wait snapshot.");
-  if (t.largestStep !== null) validId(t.largestStep);
+  if (t.largestStep !== null) validId(t.largestStep, "step");
   if (t.largestWait > t.wait || t.largestWait * t.stepCount < t.wait) throw new Error("Invalid wait accounting.");
 }
 function validScenario(s: unknown): asserts s is Scenario {
-  object(s, ["id", "name", "baselineId", "baselineRevision", "fingerprint", "assumption", "before", "after"]); validId(s.id); validId(s.baselineId); validNumber(s.baselineRevision, 1, MAX_REVISION); validText(s.name, 160, true);
+  object(s, ["id", "name", "baselineId", "baselineRevision", "fingerprint", "assumption", "before", "after"]); validId(s.id, "scenario"); validId(s.baselineId, "base"); validNumber(s.baselineRevision, 1, MAX_REVISION); validText(s.name, 160, true);
   if (typeof s.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(s.fingerprint)) throw new Error("Invalid snapshot fingerprint.");
   object(s.assumption, ["step", "field", "value"]); validStep(s.assumption.step); enumValue(s.assumption.field, ["active", "wait", "owner", "remove"]); validText(s.assumption.value, 320, true);
   if (s.assumption.field === "active" || s.assumption.field === "wait") minutes(s.assumption.value);
@@ -36,14 +36,16 @@ function validScenario(s: unknown): asserts s is Scenario {
   if (!before.stepCount || after.repetitions !== before.repetitions || after.stepCount !== before.stepCount - (a.field === "remove" ? 1 : 0) || before.active < a.step.active || before.wait < a.step.wait) throw new Error("Invalid historic comparison counts.");
   const active = before.active + (a.field === "active" ? minutes(a.value) - a.step.active : a.field === "remove" ? -a.step.active : 0);
   const wait = before.wait + (a.field === "wait" ? minutes(a.value) - a.step.wait : a.field === "remove" ? -a.step.wait : 0);
-  if (after.active !== active || after.wait !== wait) throw new Error("Invalid historic comparison arithmetic.");
+  if (((a.field === "active" || a.field === "wait") && after.handoffs !== before.handoffs) || Math.abs(after.handoffs - before.handoffs) > 2 || after.active !== active || after.wait !== wait) throw new Error("Invalid historic comparison arithmetic.");
 }
 function validateRecord(v: unknown): asserts v is RecordData {
-  object(v, ["id", "title", "revision", "createdAt", "updatedAt", "baselineId", "repetitions", "steps", "scenarios", "pending"]); validBase(v); validId(v.baselineId); validNumber(v.repetitions, 1, 10000); array(v.steps, 24); v.steps.forEach(validStep); unique(v.steps.map((s: Step) => s.id)); array(v.scenarios, 3); v.scenarios.forEach(validScenario); unique(v.scenarios.map((s: Scenario) => s.id));
-  if (v.pending !== null) { const p = v.pending; object(p, ["token", "replaces", "scenario"]); validId(p.token); validScenario(p.scenario); if (p.replaces !== null) { validId(p.replaces); if (!v.scenarios.some((s: Scenario) => s.id === p.replaces) || p.scenario.id !== p.replaces) throw new Error("Invalid replacement target."); } else if (v.scenarios.some((s: Scenario) => s.id === p.scenario.id) || v.scenarios.length === 3) throw new Error("No scenario slot.");
+  object(v, ["id", "title", "revision", "createdAt", "updatedAt", "baselineId", "repetitions", "steps", "scenarios", "pending"]); validBase(v); validId(v.baselineId, "base"); validNumber(v.repetitions, 1, 10000); array(v.steps, 24); v.steps.forEach(validStep); unique(v.steps.map((s: Step) => s.id)); array(v.scenarios, 3); v.scenarios.forEach(validScenario); unique(v.scenarios.map((s: Scenario) => s.id));
+  if (v.pending !== null) { const p = v.pending; object(p, ["token", "replaces", "scenario"]); validId(p.token, "preview"); validScenario(p.scenario); if (p.replaces !== null) { validId(p.replaces, "scenario"); if (!v.scenarios.some((s: Scenario) => s.id === p.replaces) || p.scenario.id !== p.replaces) throw new Error("Invalid replacement target."); } else if (v.scenarios.some((s: Scenario) => s.id === p.scenario.id) || v.scenarios.length === 3) throw new Error("No scenario slot.");
     if (p.scenario.baselineId !== v.baselineId || p.scenario.fingerprint !== fingerprint(v as RecordData)) throw new Error("Invalid pending binding.");
   }
-  for (const s of [...v.scenarios, ...(v.pending ? [v.pending.scenario] : [])] as Scenario[]) if (s.baselineId === v.baselineId) {
+  for (const s of [...v.scenarios, ...(v.pending ? [v.pending.scenario] : [])] as Scenario[]) {
+    if (s.baselineRevision > v.revision) throw new Error("Invalid future baseline revision.");
+    if (s.baselineId !== v.baselineId) continue;
     const st = v.steps.find((x: Step) => x.id === s.assumption.step.id);
     if (!st || JSON.stringify(st) !== JSON.stringify(s.assumption.step) || s.fingerprint !== fingerprint(v as RecordData) || JSON.stringify(s.before) !== JSON.stringify(totals(v.steps, v.repetitions)) || JSON.stringify(s.after) !== JSON.stringify(totals(changed(v.steps, s.assumption), v.repetitions))) throw new Error("Invalid current scenario comparison.");
   }
@@ -117,6 +119,7 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
   fail("Unknown command. Use help for exact grammar.");
 }
 
+const ROOT_PREFIX = "process";
 const ROUTE = `/nobo-help agent ${metadata.id}`;
 const MAX_REVISION = 999_999_999;
 const EMPTY: State = { version: 1, records: [] };
@@ -154,8 +157,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix = ROOT_PREFIX): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);

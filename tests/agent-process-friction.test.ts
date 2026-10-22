@@ -38,7 +38,7 @@ test("count maxima, malformed current/historic counts and enums, and legacy aggr
  const f=createAgentFeatureFixture(feature),id=await setup(f);for(let i=0;i<24;i++)assert.match(await f.run(`step ${id} add S${i} | 0 | 0 | Me | none`),/Saved privately/);assert.match(await f.run(`step ${id} add Overflow | 0 | 0 | Me | none`),/Maximum 24/);
  const g=createAgentFeatureFixture(feature);for(let i=0;i<12;i++)await setup(g);assert.match(await g.run(CREATE),/Maximum 12/);
  const h=createAgentFeatureFixture(feature),hid=await setup(h);await populate(h,hid);let r=(await state(h)).records[0];const token=uid(await h.run(`what-if ${hid} ${r.steps[0].id} | wait | 30`),'preview');await h.run(`save-scenario ${hid} ${token} | Old`);await h.run(`step ${hid} edit ${r.steps[0].id} | label | Updated`);const raw=h.backend.data.get(h.key('state'))!;
- for(const change of [(r:any)=>r.scenarios[0].before.handoffs=30,(r:any)=>r.scenarios[0].after.wait=1,(r:any)=>r.scenarios[0].assumption.field=['wait'],(r:any)=>r.steps[0].active='0']){const s=JSON.parse(raw);change(s.records[0]);const bad=JSON.stringify(s);h.backend.data.set(h.key('state'),bad);assert.match(await h.run(`delete ${hid} confirm`),/preserved/);assert.equal(h.backend.data.get(h.key('state')),bad);}
+ for(const change of [(r:any)=>r.scenarios[0].baselineRevision=r.revision+1,(r:any)=>r.scenarios[0].after.handoffs=1,(r:any)=>r.scenarios[0].before.handoffs=30,(r:any)=>r.scenarios[0].after.wait=1,(r:any)=>r.scenarios[0].assumption.field=['wait'],(r:any)=>r.steps[0].active='0']){const s=JSON.parse(raw);change(s.records[0]);const bad=JSON.stringify(s);h.backend.data.set(h.key('state'),bad);assert.match(await h.run(`delete ${hid} confirm`),/preserved/);assert.equal(h.backend.data.get(h.key('state')),bad);}
  const s=JSON.parse(raw);for(let i=1;i<12;i++)s.records.push({...structuredClone(s.records[0]),id:`process-${randomUUID()}`});const legacy=JSON.stringify(s);assert.ok(Buffer.byteLength(legacy)>49152);h.backend.data.set(h.key('state'),legacy);assert.match(await h.run(`edit ${hid} | title | Ordinary`),/quota/);for(const x of s.records)assert.match(await h.run(`delete ${x.id} confirm`),/Deleted privately/);
 });
 test("stale preview replacement and saved-scenario CAS intent reject concurrent child changes",async()=>{
@@ -76,7 +76,7 @@ test("whole-root schema failures preserve bytes; owner and workspace scopes stay
     assert.match(await f.run(`show ${id}`, { owner }), /not found/i);
     assert.match(await f.run(`delete ${id} confirm`, { owner }), /not found/i);
   }
-  for (const corrupt of ['null', '{broken', JSON.stringify({ version: 2, records: [] }), JSON.stringify({ version: 1, records: [{ ...JSON.parse(original).records[0], revision: "1" }] })]) {
+  for (const corrupt of [JSON.stringify({ version: 1, records: [{ ...JSON.parse(original).records[0], id: `unexpectedprefix-${randomUUID()}` }] }), 'null', '{broken', JSON.stringify({ version: 2, records: [] }), JSON.stringify({ version: 1, records: [{ ...JSON.parse(original).records[0], revision: "1" }] })]) {
     f.backend.data.set(f.key("state"), corrupt);
     assert.match(await f.run(`delete ${id} confirm`), /saved data|preserved|read safely/i);
     assert.equal(f.backend.data.get(f.key("state")), corrupt);
@@ -120,11 +120,15 @@ test("real CAS conflicts retry unrelated records but reject same-target edits an
 test("ceiling refuses writes, permits exact removals and rejects old content-stamped continuation", async () => {
   const f = createAgentFeatureFixture(feature), id = await setup(f); await populate(f, id);
   const s = await state(f); s.records[0].revision = 999999999; f.backend.data.set(f.key("state"), JSON.stringify(s));
+  assert.match(await f.run(`what-if ${id} ${s.records[0].steps[0].id} | wait | 0`), /Revision limit/);
+  const other = await setup(f); assert.match(await f.run(`edit ${other} | title | Unrelated record remains editable`), /Saved privately/);
   const before = await f.run(`show ${id}`), continuation = /Next: (\/nobo-help agent [^\n]+)/.exec(before)?.[1]; assert.ok(continuation, before);
   assert.match(await f.run(`edit ${id} | title | Refuse`), /Revision limit/);
   const reply = await f.run(`clear ${id} title confirm`); assert.match(reply, /Saved privately/);
   assert.equal((await state(f)).records[0].revision, 999999999);
   assert.match(await f.run(continuation.slice(route.length)), /stale continuation/i);
   assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
+  assert.equal((await state(f)).records.length, 1);
+  assert.match(await f.run(`delete ${other} confirm`), /Deleted privately/);
   assert.equal((await state(f)).records.length, 0);
 });

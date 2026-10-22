@@ -11,7 +11,7 @@ type State = { version: 1; records: RecordData[] };
 const VAGUE = ["check", "review", "ensure", "handle", "manage", "validate"];
 function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "applicability", "steps"]); validBase(v); validText(v.applicability, 1000, true); array(v.steps, 30);
-  for (const s of v.steps) { object(s, ["id", "action", "verification", "stopCondition", "prerequisites"]); validId(s.id); for (const field of [s.action, s.verification, s.stopCondition]) validText(field, 500, true); array(s.prerequisites, 30); s.prerequisites.forEach(validId); unique(s.prerequisites); }
+  for (const s of v.steps) { object(s, ["id", "action", "verification", "stopCondition", "prerequisites"]); validId(s.id, "step"); for (const field of [s.action, s.verification, s.stopCondition]) validText(field, 500, true); array(s.prerequisites, 30); s.prerequisites.forEach((id: unknown) => validId(id, "step")); unique(s.prerequisites); }
   unique(v.steps.map((s: Step) => s.id));
   if (v.steps.reduce((n: number, s: Step) => n + s.prerequisites.length, 0) > 60 || v.steps.some((s: Step) => s.prerequisites.some(id => !v.steps.some((t: Step) => t.id === id)))) throw new Error("Invalid prerequisite graph.");
 }
@@ -62,6 +62,7 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
   fail("Unknown command. Use help for exact grammar.");
 }
 
+const ROOT_PREFIX = "review";
 const ROUTE = `/nobo-help agent ${metadata.id}`;
 const MAX_REVISION = 999_999_999;
 const EMPTY: State = { version: 1, records: [] };
@@ -99,8 +100,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix = ROOT_PREFIX): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);
