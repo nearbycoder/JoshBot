@@ -312,7 +312,127 @@ test("untrusted text is inert, replies stay bounded, and storage failures are ha
   await ctx.store.update<unknown, void>("itineraries", {}, () => ({ value: dense, result: undefined }));
   const output = await execute(ctx, `show ${tripId}`);
   assert.ok(output.length < 28000);
-  assert.match(output, /Output shortened/);
+  assert.doesNotMatch(output, /Output shortened/);
+  for (const entry of dense.trips[0].entries) assert.ok(output.includes(entry.id));
+});
+
+test("all forty maximum-length legs remain retrievable through compact IDs, pages, and entry details", async () => {
+  const ctx = createAgentTestContext();
+  const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const fullText = (prefix: string, length: number, fill = "&") => prefix + fill.repeat(length - prefix.length);
+  const day = (i: number) => new Date(Date.UTC(2027, 0, 1 + i)).toISOString().slice(0, 10);
+  const tripTitle = fullText("Trip 界🧳 ", 100), constraints = "&".repeat(800);
+  assert.match(await execute(ctx, `trip ${tripTitle} | America/Chicago | 60 | ${constraints}`), /Created trip/);
+  const tripId = (await saved(ctx)).trips[0].id;
+  const inputs = Array.from({ length: 40 }, (_, i) => ({
+    title: fullText(`Leg ${String(i).padStart(2, "0")} 界🧳 `, 100),
+    from: fullText(`From ${i} 界 `, 100, "<"), to: fullText(`To ${i} 🧳 `, 100, ">"),
+    note: fullText(`Confirmation note ${i} 界🧳 `, 300),
+    start: `${day(i)}T01:00+13:00`, end: `${day(i - 1)}T12:00-10:00`,
+  }));
+  // Deliberately insert in reverse date order. Local arrival dates precede departure dates.
+  for (const input of [...inputs].reverse()) {
+    assert.match(await execute(ctx, `add-leg ${tripId} | ${input.title} | ${input.from} | ${input.to} | ${input.start} | Pacific/Auckland | ${input.end} | Pacific/Honolulu | ${input.note}`), /Added leg/);
+  }
+  const labels = Array.from({ length: 40 }, (_, i) => fullText(`Item ${i} 界🧳 `, 100));
+  assert.match(await execute(ctx, `packing ${tripId} add | ${labels.join(" | ")}`), /0\/40 packed/);
+  const before = await saved(ctx);
+  const expected = inputs.map((input) => before.trips[0].entries.find((e) => e.title === input.title)!);
+  assert.equal(before.trips[0].entries[0].id, expected[39].id);
+  const underCap = (output: string) => {
+    assert.ok(output.length < 28_000, `response was ${output.length} characters after escaping`);
+    assert.doesNotMatch(output, /Output shortened/);
+  };
+  const overview = await execute(ctx, `show ${tripId}`);
+  underCap(overview);
+  assert.match(overview, /all 40 IDs, ordered by actual start \(UTC\)/);
+  assert.ok(overview.includes(escape(tripTitle)));
+  assert.ok(overview.includes(escape(constraints)));
+  assert.deepEqual([...overview.matchAll(/^\d+\. LEG \S+ \[([0-9a-f-]{36})\] — /gm)].map((m) => m[1]), expected.map((e) => e.id));
+  assert.ok(overview.includes(`timeline ${tripId} 1`));
+  assert.ok(overview.includes(`entry ${tripId} <entry-id>`));
+
+  const checkDetails = (output: string, index: number) => {
+    const e = expected[index];
+    assert.ok(output.includes(e.id));
+    for (const text of [e.title, e.from, e.to, e.note]) assert.ok(output.includes(escape(text)), `missing full field for leg ${index}`);
+    assert.ok(output.includes(`${day(index)}T01:00 UTC+13:00 [Pacific/Auckland]`));
+    assert.ok(output.includes(`${day(index - 1)}T12:00 UTC-10:00 [Pacific/Honolulu]`));
+    assert.ok(output.includes(`Start in your timezone: ${day(index - 1)}T06:00:00 [America/Chicago]`));
+    assert.match(output, /600 min elapsed/);
+  };
+  const retrievedIds: string[] = [];
+  for (let page = 1; page <= 8; page++) {
+    const output = await execute(ctx, `timeline ${tripId} ${page}`);
+    underCap(output);
+    assert.ok(output.includes(`page ${page}/8; entries ${(page - 1) * 5 + 1}–${page * 5} of 40`));
+    const pageIds = [...output.matchAll(/^LEG .*? \[([0-9a-f-]{36})\] — /gm)].map((m) => m[1]);
+    assert.deepEqual(pageIds, expected.slice((page - 1) * 5, page * 5).map((e) => e.id));
+    retrievedIds.push(...pageIds);
+    for (let i = (page - 1) * 5; i < page * 5; i++) checkDetails(output, i);
+    if (page < 8) assert.ok(output.includes(`Next: timeline ${tripId} ${page + 1}`));
+    else assert.doesNotMatch(output, /Next: timeline/);
+    if (page > 1) assert.ok(output.includes(`Previous: timeline ${tripId} ${page - 1}`));
+  }
+  assert.deepEqual(retrievedIds, expected.map((e) => e.id));
+  assert.equal(await execute(ctx, `timeline ${tripId}`), await execute(ctx, `timeline ${tripId} 1`));
+  for (let i = 0; i < expected.length; i++) {
+    const output = await execute(ctx, `entry ${tripId} ${expected[i].id}`);
+    underCap(output);
+    checkDetails(output, i);
+  }
+  const packingOutput = await execute(ctx, `packing ${tripId}`);
+  underCap(packingOutput);
+  for (const label of labels) assert.ok(packingOutput.includes(escape(label)));
+  assert.deepEqual(await saved(ctx), before, "all retrieval is read-only");
+  assert.match(await execute(ctx, "help"), /timeline <trip-id> \[page\]/);
+  assert.match(await execute(ctx, "help"), /entry <trip-id> <entry-id>/);
+
+  const otherTripId = await create(ctx, "Other trip");
+  await execute(ctx, activity(otherTripId));
+  const withOtherTrip = await saved(ctx), foreignId = withOtherTrip.trips[1].entries[0].id;
+  const missing = "00000000-0000-4000-8000-000000000000";
+  const errors: [string, RegExp][] = [
+    [`timeline ${tripId} 9`, /Page 9 is unavailable.*8 timeline page/],
+    ...["0", "-1", "1.5", "nope", "9007199254740992"].map((page): [string, RegExp] => [`timeline ${tripId} ${page}`, /positive whole page number/]),
+    [`timeline ${tripId} 1 extra`, /Use timeline/],
+    [`entry ${tripId}`, /Use entry/],
+    [`entry ${tripId} ${expected[0].id} extra`, /Use entry/],
+    [`entry ${tripId} ${expected[0].id.slice(0, 8)}`, /full stable ID/],
+    [`entry ${tripId} ${missing}`, /Entry not found in this trip/],
+    [`entry ${tripId} ${foreignId}`, /Entry not found in this trip/],
+    [`entry ${missing} ${expected[0].id}`, /Trip not found/],
+  ];
+  for (const [command, error] of errors) assert.match(await execute(ctx, command), error);
+  assert.deepEqual(await saved(ctx), withOtherTrip);
+
+  assert.match(await execute(ctx, `archive ${tripId}`), /Archived/);
+  const archivedEntry = await execute(ctx, `entry ${tripId} ${expected[39].id}`);
+  underCap(archivedEntry);
+  checkDetails(archivedEntry, 39);
+  assert.match(await execute(ctx, `archive ${tripId} undo`), /Reopened/);
+  for (const entry of expected.slice(35)) assert.match(await execute(ctx, `trip remove-entry ${tripId} | ${entry.id}`), /Removed entry/);
+  assert.match(await execute(ctx, `timeline ${tripId} 8`), /Page 8 is unavailable.*7 timeline page/);
+  const shortened = await execute(ctx, `show ${tripId}`);
+  underCap(shortened);
+  assert.match(shortened, /all 35 IDs/);
+  for (const entry of expected.slice(35)) {
+    assert.ok(!shortened.includes(entry.id));
+    assert.match(await execute(ctx, `entry ${tripId} ${entry.id}`), /Entry not found in this trip/);
+  }
+  checkDetails(await execute(ctx, `entry ${tripId} ${expected[34].id}`), 34);
+  assert.match(await execute(ctx, `trip delete ${tripId} confirm`), /Deleted trip/);
+  assert.match(await execute(ctx, `entry ${tripId} ${expected[34].id}`), /Trip not found/);
+});
+
+test("empty timeline pages and empty entry index offer useful recovery", async () => {
+  const ctx = createAgentTestContext(), tripId = await create(ctx);
+  const before = await saved(ctx);
+  assert.match(await execute(ctx, `show ${tripId}`), /No dated entries yet/);
+  assert.match(await execute(ctx, `timeline ${tripId} 1`), /No dated entries yet/);
+  assert.match(await execute(ctx, `timeline ${tripId} 2`), /Page 2 is unavailable/);
+  assert.match(await execute(ctx, `entry ${tripId} 00000000-0000-4000-8000-000000000000`), /Entry not found in this trip/);
+  assert.deepEqual(await saved(ctx), before);
 });
 
 const encodedBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");

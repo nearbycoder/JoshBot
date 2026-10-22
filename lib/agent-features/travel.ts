@@ -4,6 +4,8 @@ import type { AgentFeature, AgentFeatureContext } from "./types.js";
 
 const KEY = "itineraries";
 const STATE_BYTE_BUDGET = 470_000;
+// Five complete rows fit with the overview even after maximum Slack escaping.
+const TIMELINE_PAGE_SIZE = 5;
 const LIMIT = { trips: 10, entries: 40, packing: 40, title: 100, note: 300, constraints: 800 };
 type Moment = { at: string; zone: string };
 type Entry = {
@@ -42,7 +44,10 @@ trip delete <trip-id> confirm
 add-leg <trip-id> | <title> | <from> | <to> | <departure> | <departure IANA zone> | <arrival> | <arrival IANA zone> [| <confirmation note>]
 add-stay <trip-id> | <title> | <location> | <check-in> | <IANA zone> | <check-out> [| <confirmation note>]
 add-activity <trip-id> | <title> | <location> | <start> | <IANA zone> | <end> [| <confirmation note>]
-timeline <trip-id> / check <trip-id> / show <trip-id> [brief]
+show <trip-id> — overview and compact chronological index of every entry ID
+timeline <trip-id> [page] — complete details/notes, five entries per page; default 1
+entry <trip-id> <entry-id> — complete details/notes for one saved entry
+check <trip-id> / show <trip-id> brief
 packing <trip-id> [add | <item> | <item> ...]
 packing <trip-id> done|undo|remove <packing-id>
 archive <trip-id> [undo]
@@ -255,12 +260,38 @@ const chronological = (trip: Trip): Entry[] => [...trip.entries].sort((a, b) => 
 const dateLabel = (m: Moment): string => `${wall(m.at, m.zone).replace(/:00$/, "")} UTC${offsetText(offset(m))} [${m.zone}]`;
 const entryRef = (e: Entry): string => `${display(e.title)} [${e.id}]`;
 
-function timeline(trip: Trip, viewerZone: string): string {
-  if (!trip.entries.length) return "No dated entries yet. Use add-leg, add-stay, or add-activity; help shows the fields.";
-  return `Timeline — ordered by actual start instant. Home: ${trip.zone}; your supplied timezone: ${viewerZone}.\n` + chronological(trip).map((e) => {
-    const route = e.kind === "leg" ? `${display(e.from)} → ${display(e.to)}` : display(e.from);
-    return `${e.kind.toUpperCase()} ${entryRef(e)} — ${route}\n  ${dateLabel(e.start)} → ${dateLabel(e.end)} (${(Date.parse(e.end.at) - Date.parse(e.start.at)) / 60000} min elapsed)\n  Start in your timezone: ${wall(e.start.at, viewerZone)} [${viewerZone}]${e.note ? `\n  User confirmation note (unverified): ${display(e.note)}` : ""}`;
-  }).join("\n\n");
+function entryDetails(e: Entry, viewerZone: string): string {
+  const route = e.kind === "leg" ? `${display(e.from)} → ${display(e.to)}` : display(e.from);
+  return `${e.kind.toUpperCase()} ${entryRef(e)} — ${route}\n  ${dateLabel(e.start)} → ${dateLabel(e.end)} (${(Date.parse(e.end.at) - Date.parse(e.start.at)) / 60000} min elapsed)\n  Start in your timezone: ${wall(e.start.at, viewerZone)} [${viewerZone}]\n  User confirmation note (unverified): ${e.note ? display(e.note) : "none recorded"}`;
+}
+
+function entryIndex(trip: Trip): string {
+  const entries = chronological(trip);
+  if (!entries.length) return "No dated entries yet. Use add-leg, add-stay, or add-activity; help shows the fields.";
+  return `Entry index — all ${entries.length} IDs, ordered by actual start (UTC). Titles are previews.\n` + entries.map((e, i) => {
+    const title = Array.from(e.title.replace(/\s+/g, " "));
+    const preview = title.slice(0, 30).join("") + (title.length > 30 ? "…" : "");
+    return `${i + 1}. ${e.kind.toUpperCase()} ${e.start.at} [${e.id}] — ${display(preview)}`;
+  }).join("\n") + `\nFull details and notes: timeline ${trip.id} 1 (five entries/page), or entry ${trip.id} <entry-id>.`;
+}
+
+function timeline(trip: Trip, viewerZone: string, rawPage = "1"): string {
+  if (!/^[1-9]\d*$/.test(rawPage) || !Number.isSafeInteger(Number(rawPage))) {
+    throw new InputError(`Use a positive whole page number, e.g. timeline ${trip.id} 1.`);
+  }
+  const page = Number(rawPage), entries = chronological(trip);
+  const pages = Math.max(1, Math.ceil(entries.length / TIMELINE_PAGE_SIZE));
+  if (page > pages) throw new InputError(`Page ${page} is unavailable. This trip has ${pages} timeline page(s). Use timeline ${trip.id} 1 or show ${trip.id} for all current entry IDs.`);
+  if (!entries.length) return "No dated entries yet. Use add-leg, add-stay, or add-activity; help shows the fields.";
+  const start = (page - 1) * TIMELINE_PAGE_SIZE;
+  const rows = entries.slice(start, start + TIMELINE_PAGE_SIZE);
+  const navigation = [
+    ...(page > 1 ? [`Previous: timeline ${trip.id} ${page - 1}`] : []),
+    ...(page < pages ? [`Next: timeline ${trip.id} ${page + 1}`] : []),
+    `All entry IDs: show ${trip.id}; one entry: entry ${trip.id} <entry-id>.`,
+  ].join("\n");
+  return `Timeline — page ${page}/${pages}; entries ${start + 1}–${start + rows.length} of ${entries.length}, ordered by actual start instant. Home: ${trip.zone}; your supplied timezone: ${viewerZone}.\n` +
+    rows.map((e) => entryDetails(e, viewerZone)).join("\n\n") + `\n\n${navigation}`;
 }
 
 function checks(trip: Trip): string[] {
@@ -356,13 +387,20 @@ async function run(command: string, ctx: AgentFeatureContext): Promise<string> {
     const s = await read(ctx);
     return s.trips.length ? s.trips.map((t) => `${display(t.title)} [${t.id}] — ${t.archived ? "archived" : "active"}, ${t.entries.length} entries, ${t.zone}`).join("\n") + `\nTravel storage: ${budgetedBytes(s).toLocaleString("en-US")}/470,000 UTF-8 bytes budgeted (includes packing/archive reserve). Archive retains data; use trip delete <trip-id> confirm to free space.` : "No trips yet. Try: trip Japan visit | America/Chicago | 90 | Carry-on only";
   }
-  if (["show", "timeline", "check"].includes(verb)) {
+  if (["show", "timeline", "check", "entry"].includes(verb)) {
     const tokens = args.split(/\s+/);
-    if (tokens.length !== 1 && !(verb === "show" && tokens.length === 2 && tokens[1] === "brief")) throw new InputError(`Use ${verb} <trip-id>${verb === "show" ? " [brief]" : ""}.`);
+    const valid = verb === "entry" ? tokens.length === 2 : tokens.length === 1 ||
+      (tokens.length === 2 && (verb === "timeline" || (verb === "show" && tokens[1] === "brief")));
+    if (!valid) throw new InputError(`Use ${verb} <trip-id>${verb === "show" ? " [brief]" : verb === "timeline" ? " [page]" : verb === "entry" ? " <entry-id>" : ""}.`);
     const trip = find(await read(ctx), tokens[0]);
-    if (verb === "timeline") return `${overview(trip)}\n\n${timeline(trip, zone(ctx.timezone))}`;
+    if (verb === "timeline") return `${overview(trip)}\n\n${timeline(trip, zone(ctx.timezone), tokens[1])}`;
+    if (verb === "entry") {
+      const wanted = id(tokens[1]), entry = trip.entries.find((e) => e.id === wanted);
+      if (!entry) throw new InputError(`Entry not found in this trip. Use show ${trip.id} for all current entry IDs.`);
+      return `${overview(trip)}\n\n${entryDetails(entry, zone(ctx.timezone))}`;
+    }
     if (verb === "check") return `${display(trip.title)} — itinerary checks\n${checkReport(trip)}`;
-    return tokens[1] === "brief" ? brief(trip, ctx) : `${overview(trip)}\n\n${timeline(trip, zone(ctx.timezone))}\n\n${packing(trip)}`;
+    return tokens[1] === "brief" ? brief(trip, ctx) : `${overview(trip)}\n\n${entryIndex(trip)}\n\nPacking list: packing ${trip.id}. Preparation: show ${trip.id} brief.`;
   }
   // Time and all random IDs are computed before update callbacks, which may retry.
   const now = ctx.now.toISOString();
@@ -394,7 +432,7 @@ async function run(command: string, ctx: AgentFeatureContext): Promise<string> {
       id(tripId); id(entryId);
       return mutate(ctx, (s) => {
         const trip = find(s, tripId, true);
-        if (!trip.entries.some((e) => e.id === entryId)) throw new InputError("Entry not found in this trip. Use timeline to find its ID.");
+        if (!trip.entries.some((e) => e.id === entryId)) throw new InputError("Entry not found in this trip. Use show <trip-id> to find all current entry IDs.");
         trip.entries = trip.entries.filter((e) => e.id !== entryId);
         trip.updatedAt = now;
         return `Removed entry ${entryId}. Add a replacement with corrected dates if needed.`;
@@ -462,7 +500,7 @@ async function run(command: string, ctx: AgentFeatureContext): Promise<string> {
       return `${archived ? "Archived" : "Reopened"} ${display(trip.title)} [${trip.id}].${archived ? " It remains readable; archive <trip-id> undo reopens it. Use trip delete <trip-id> confirm for permanent removal." : ""}`;
     });
   }
-  throw new InputError("Unknown travel command. Use help for trip, add-leg, add-stay, add-activity, timeline, check, packing, show, and archive.");
+  throw new InputError("Unknown travel command. Use help for trip, add-leg, add-stay, add-activity, timeline, entry, check, packing, show, and archive.");
 }
 
 export const feature: AgentFeature = {
@@ -473,7 +511,7 @@ export const feature: AgentFeature = {
   async execute(command, ctx) {
     try {
       const result = await run(command, ctx);
-      return result.length <= 27000 ? result : `${result.slice(0, 26700)}\n[Output shortened. Use timeline, check, or packing separately for focused views.]`;
+      return result.length <= 27000 ? result : `${result.slice(0, 26700)}\n[Output shortened. Use show <trip-id> for every entry ID; timeline <trip-id> <page> or entry <trip-id> <entry-id> for complete entry details; packing <trip-id> for the packing list.]`;
     } catch (error) {
       if (error instanceof InputError || error instanceof SavedDataError) return error.message;
       return "Travel storage or runtime is unavailable. No external action was taken. Check show before retrying a change; a storage write may have completed.";

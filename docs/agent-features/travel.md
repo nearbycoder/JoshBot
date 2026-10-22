@@ -44,7 +44,8 @@ add-leg <trip-id> | <title> | <from> | <to> | <departure> | <departure IANA zone
 add-stay <trip-id> | <title> | <location> | <check-in> | <IANA zone> | <check-out> [| <confirmation note>]
 add-activity <trip-id> | <title> | <location> | <start> | <IANA zone> | <end> [| <confirmation note>]
 
-timeline <trip-id>
+timeline <trip-id> [page]
+entry <trip-id> <entry-id>
 check <trip-id>
 show <trip-id>
 show <trip-id> brief
@@ -59,7 +60,18 @@ archive <trip-id>
 archive <trip-id> undo
 ```
 
-`trip` and bare `show` list active and archived trips. `show <id>` includes the itinerary, notes, constraints, and packing list. Use full UUIDs from the output. To correct a dated entry, remove it and add a replacement. New records receive new IDs; existing IDs remain stable. The trip title, home timezone, and individual packing labels are fixed after creation; remove/recreate the relevant record if necessary. Titles beginning with `constraints `, `remove-entry `, or `delete ` are reserved by the `trip` subcommands.
+`trip` and bare `show` list active and archived trips. `show <trip-id>` includes the trip overview, full constraints, packing counts, and a compact chronological index of **every saved entry ID**, with UTC start times and shortened title previews. Use full UUIDs from the output. To correct a dated entry, remove it and add a replacement. New records receive new IDs; existing IDs remain stable. The trip title, home timezone, and individual packing labels are fixed after creation; remove/recreate the relevant record if necessary. Titles beginning with `constraints `, `remove-entry `, or `delete ` are reserved by the `trip` subcommands.
+
+`timeline <trip-id>` defaults to page 1. Each page shows up to **five complete entries**, including full titles, locations, endpoint dates/timezones, elapsed durations, and confirmation notes. The header gives the page count; navigation provides exact previous/next commands. For example, a 40-entry trip has pages 1–8:
+
+```text
+show <trip-id>
+timeline <trip-id> 8
+entry <trip-id> <entry-id-from-the-index>
+packing <trip-id>
+```
+
+`entry <trip-id> <entry-id>` retrieves one complete entry and its note directly, including for archived trips. The compact index, each full timeline page, and individual entry views fit below 28,000 characters even with maximum-length text and Slack escaping. No saved entry details depend on a truncated summary. Page numbers start at 1; invalid/unavailable pages or unknown entry IDs return guidance without changing data. Pages are recalculated in actual chronological order on each read, so adding/removing entries can change page positions and counts; use stable entry IDs when revisiting a particular record. `packing <trip-id>` retrieves the full packing list separately.
 
 For example:
 
@@ -86,7 +98,7 @@ The brief shows the next or ongoing saved entry relative to the supplied current
 
 ## Retention and integration
 
-State is bounded to 10 trips total, including archived trips, with 40 dated entries and 40 packing items per trip. Titles/locations/packing labels allow 100 characters, confirmation notes 300, and constraints 800. Commands allow 8,000 characters. Replies are capped below 28,000 characters and explicitly indicate truncation; use focused `timeline`, `check`, or `packing` views for large records. No records are silently evicted.
+State is bounded to 10 trips total, including archived trips, with 40 dated entries and 40 packing items per trip. Titles/locations/packing labels allow 100 characters, confirmation notes 300, and constraints 800. Commands allow 8,000 characters. Replies are capped below 28,000 characters after Slack escaping. Long check/preparation summaries may explicitly indicate truncation; all saved IDs and details remain available through the compact `show` index, paginated `timeline`, individual `entry`, and separate `packing` views. No records are silently evicted.
 
 The shared `itineraries` value also has a **470,000-byte UTF-8 budget**, measured from serialized JSON on every atomic update. Unicode and JSON escaping count at their actual encoded size, so this budget can be reached before the record-count limits. The budget reserves one byte per `true` packing/archive flag for its possible change to `false`; accepted records can still be marked packed/unpacked and archived/reopened at capacity. This keeps new state below the 480,000-byte feature safety threshold and the runtime's 512,000-byte hard limit. Content growth, including longer constraint notes, must fit the budget.
 
