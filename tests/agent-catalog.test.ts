@@ -20,9 +20,10 @@ const noStartup = {
 };
 test("registry contains every completed module once with exact new catalog metadata and real help", async () => {
   validateAgentCatalog(agentFeatures);
-  assert.equal(agentFeatures.length, 69);
-  const proposed = JSON.parse(await readFile(new URL("../docs/personal-agent-50-catalog.json", import.meta.url), "utf8")) as AgentFeatureMetadata[];
-  const completed = proposed.filter(entry => entry.id !== "change-impact");
+  assert.equal(agentFeatures.length, 70);
+  const completed = JSON.parse(await readFile(new URL("../docs/personal-agent-50-catalog.json", import.meta.url), "utf8")) as AgentFeatureMetadata[];
+  assert.equal(existingAgentMetadata.length, 20);
+  assert.equal(completed.length, 50);
   assert.deepEqual(new Set(agentFeatures.map(entry => entry.id)), new Set([...existingAgentMetadata, ...completed].map(entry => entry.id)));
   for (const entry of completed) {
     const registered = agentFeatures.find(feature => feature.id === entry.id)!;
@@ -76,7 +77,7 @@ test("every complete catalog and group page reconstructs a stable, unique regist
   assert.deepEqual(global, expected);
   assert.deepEqual(groups, expected);
   const first = await handleAgentCommand("", owner, undefined, noStartup);
-  assert.match(first, /1–10 of 69 · page 1\/7/);
+  assert.match(first, /1–10 of 70 · page 1\/7/);
   for (const group of agentCatalogGroups) assert.ok(first.includes(group.slug));
 });
 

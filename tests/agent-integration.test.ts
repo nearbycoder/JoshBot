@@ -27,7 +27,7 @@ function fixture() {
 test("registered personal agents have unique IDs and discoverable help", async () => {
   const { owner } = fixture();
   assert.equal(new Set(agentFeatures.map((feature) => feature.id)).size, agentFeatures.length);
-  assert.equal(agentFeatures.length, 69);
+  assert.equal(agentFeatures.length, 70);
   assert.match(formatAgentHelp(), /calendar —/);
   for (const feature of agentFeatures) {
     assert.ok((await handleAgentCommand(`${feature.id} help`, owner)).length > 20);

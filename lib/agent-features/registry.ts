@@ -6,6 +6,7 @@ import blockerLabMetadata from "./blocker-lab.metadata.js";
 import boundaryScriptMetadata from "./boundary-script.metadata.js";
 import capacityForecastMetadata from "./capacity-forecast.metadata.js";
 import changeDigestMetadata from "./change-digest.metadata.js";
+import changeImpactMetadata from "./change-impact.metadata.js";
 import checklistLintMetadata from "./checklist-lint.metadata.js";
 import claimCheckMetadata from "./claim-check.metadata.js";
 import conceptLinksMetadata from "./concept-links.metadata.js";
@@ -82,6 +83,7 @@ export const agentFeatures: readonly AgentFeature[] = [
   lazyAgentFeature(boundaryScriptMetadata, () => import("./boundary-script.js")),
   lazyAgentFeature(capacityForecastMetadata, () => import("./capacity-forecast.js")),
   lazyAgentFeature(changeDigestMetadata, () => import("./change-digest.js")),
+  lazyAgentFeature(changeImpactMetadata, () => import("./change-impact.js")),
   lazyAgentFeature(checklistLintMetadata, () => import("./checklist-lint.js")),
   lazyAgentFeature(claimCheckMetadata, () => import("./claim-check.js")),
   lazyAgentFeature(conceptLinksMetadata, () => import("./concept-links.js")),
