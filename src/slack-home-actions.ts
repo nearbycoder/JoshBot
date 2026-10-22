@@ -1,5 +1,6 @@
 import type { App } from "@slack/bolt";
 import { toolboxView } from "./slack-toolbox.js";
+import { formatAgentHelp } from "../lib/agent-features/registry.js";
 import type { ViewsOpenArguments } from "@slack/web-api";
 import {
   plain,
@@ -180,6 +181,8 @@ export function registerSlackHomeActions(
         );
       } else if (selected === "toolbox") {
         await show(toolboxView());
+      } else if (selected === "agents") {
+        await show(modal("Personal agents", textBlocks(escapeSlack(formatAgentHelp()))));
       } else if (selected === "reminders") {
         const items = await getUserScheduleDashboardItems(body.user.id, 10);
         const blocks = items.flatMap((item) => [
