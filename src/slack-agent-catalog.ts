@@ -165,7 +165,8 @@ export function registerSlackAgentCatalogActions(bolt: App, dependencies: Catalo
     if (!notice && (actionId === namespace + "group" || actionId === namespace + "page")) {
       const inputId = previous?.blocks.find(block => block.type === "input" && block.block_id?.startsWith(searchBlock + "_"))?.block_id;
       const draft = inputId ? previous?.state?.values?.[inputId]?.[searchAction]?.value : undefined;
-      if (typeof draft === "string" && draft.length <= 100 && draft.isWellFormed() && !/[\u0000-\u001f\u007f]/u.test(draft)) {
+      // Slack sends null for an explicitly cleared input; missing/malformed state is not a clear.
+      if (draft === null || (typeof draft === "string" && draft.length <= 100 && draft.isWellFormed() && !/[\u0000-\u001f\u007f]/u.test(draft))) {
         for (const block of nextView.blocks) if (block.type === "input" && "element" in block && block.element.type === "plain_text_input") {
           block.element.initial_value = draft || undefined;
         }

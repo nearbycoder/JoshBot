@@ -195,6 +195,58 @@ test("reset respects missing/stale hashes and closed views without replacing the
   }
 });
 
+for (const kind of ["page", "group"] as const) test(`cleared null search draft survives ${kind} until explicit Search across repeated back/reset flows`, async () => {
+  const h = harness(); await h.open();
+  const navigate = () => h.action(kind === "page"
+    ? { action_id: "nobo_agent_catalog_page", value: "2" }
+    : { action_id: "nobo_agent_catalog_group", selected_option: { value: "capture" } });
+  for (let round = 0; round < 3; round++) {
+    await h.submit("private"); h.editQuery(null);
+    const beforeIds = h.view.blocks.filter((block: any) => block.block_id).map((block: any) => block.block_id);
+    await navigate();
+    assert.equal(state(h.view).query, "private", "navigation must keep the applied filter until Search");
+    assert.equal(h.visibleQuery, "", "Slack's null is an explicitly cleared, unsubmitted draft");
+    const input = h.view.blocks.find((block: any) => block.type === "input");
+    assert.equal(input.element.initial_value, undefined);
+    assert.ok(h.view.blocks.every((block: any) => !block.block_id || !beforeIds.includes(block.block_id)));
+    checkBounds(h.view);
+    const id = helpRows(h.view)[0].accessory.value;
+    const applied = state(h.view);
+    await h.action({ action_id: "nobo_agent_catalog_help", value: id });
+    await h.action({ action_id: "nobo_agent_catalog_back", value: "back" });
+    assert.deepEqual(state(h.view), applied); assert.equal(h.visibleQuery, "private", "Back restores the applied filters");
+    h.editQuery(null); await navigate(); assert.equal(h.visibleQuery, "");
+    const ack = await h.submit(null);
+    assert.equal(ack.response_action, "update"); assert.equal(ack.view.submit.text, "Search");
+    assert.deepEqual(state(h.view), { ...(kind === "group" ? { group: "capture" } : {}), page: 1 });
+    assert.equal(h.visibleQuery, ""); checkBounds(h.view);
+    await h.action({ action_id: "nobo_agent_catalog_reset", value: "reset" });
+    assert.deepEqual(state(h.view), { page: 1 }); assert.equal(h.visibleQuery, ""); assert.equal(h.visibleGroup, "all");
+  }
+  assert.equal(h.opens.length, 1);
+});
+
+test("absent or malformed drafts restore the applied filter rather than acting as an explicit clear", async () => {
+  for (const malformed of [undefined, 123, {}, "x".repeat(101), "\ud800", "x\0y"]) {
+    const h = harness(); await h.open(); await h.submit("private");
+    if (malformed === undefined) h.view.state.values = {}; else h.editQuery(malformed);
+    await h.action({ action_id: "nobo_agent_catalog_page", value: "2" });
+    assert.equal(h.visibleQuery, "private"); assert.equal(state(h.view).query, "private"); checkBounds(h.view);
+  }
+});
+
+test("null drafts keep supplied-hash concurrency for missing, stale and closed views", async () => {
+  for (const failure of ["missing", "hash_conflict", "view_not_found"]) {
+    const h = harness(); await h.open(); await h.submit("private"); h.editQuery(null);
+    const before = h.view;
+    if (failure === "missing") h.view.hash = undefined; else h.updateError = failure;
+    await h.action({ action_id: "nobo_agent_catalog_page", value: "2" });
+    assert.equal(h.view, before); assert.equal(h.visibleQuery, "");
+    assert.deepEqual(state(h.view), { query: "private", page: 1 });
+    assert.equal(h.opens.length, 1); assert.equal(h.updates.length, failure === "missing" ? 0 : 1);
+  }
+});
+
 test("invalid action values or metadata safely reset without executing or trusting identity", async () => {
   for (const raw of ["garbage", "[]", "null", "x".repeat(801), JSON.stringify({ page: 0 }), JSON.stringify({ page: 1, query: "x".repeat(101) }), JSON.stringify({ page: 1, group: "bogus" }), JSON.stringify({ page: 1, featureId: "does-not-exist" }), JSON.stringify({ page: 1, owner: "UOTHER", channel: "COTHER" })]) {
     assert.ok(parseAgentCatalogViewState(raw).notice);
@@ -222,7 +274,13 @@ test("explicit search validates length, preserves group and renders untrusted te
   assert.doesNotMatch(JSON.stringify(h.view), /&lt;|&amp;/);
   assert.match(JSON.stringify(h.view), /No agents match/); checkBounds(h.view);
   await h.submit("漢".repeat(100)); assert.equal(state(h.view).query.length, 100);
-  for (const invalid of ["x".repeat(101), "\ud800", 123, "x\0y"]) assert.equal((await h.submit(invalid)).response_action, "errors");
+  for (const invalid of ["x".repeat(101), "\ud800", 123, "x\0y"]) {
+    const before = state(h.view), inputId = h.view.blocks.find((block: any) => block.type === "input").block_id;
+    const ack = await h.submit(invalid);
+    assert.equal(ack.response_action, "errors"); assert.deepEqual(Object.keys(ack.errors), [inputId]);
+    assert.ok(typeof ack.errors[inputId] === "string" && ack.errors[inputId].length <= 150 && ack.errors[inputId].isWellFormed());
+    assert.deepEqual(state(h.view), before, "a form error must not apply an invalid filter");
+  }
   assert.equal(h.opens.length, 1);
 });
 
