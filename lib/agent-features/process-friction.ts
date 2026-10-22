@@ -24,6 +24,70 @@ function validTotals(t: unknown): asserts t is Totals {
   if (t.largestStep !== null) validId(t.largestStep, "step");
   if (t.largestWait > t.wait || t.largestWait * t.stepCount < t.wait) throw new Error("Invalid wait accounting.");
 }
+/** Check whether the sparse snapshot admits any position for its retained step.
+ * No historical graph is reconstructed or required. Other steps share the same
+ * total wait, maximum and first maximum on both sides of the assumption. */
+function possibleHistoricalComparison(a: Assumption, before: Totals, after: Totals): boolean {
+  const count = before.stepCount, others = count - 1, step = a.step;
+  if (before.active - step.active > others * 1_000_000_000) return false;
+  const remainingWait = before.wait - step.wait;
+  const nextWait = a.field === "wait" ? minutes(a.value) : step.wait;
+  const removed = a.field === "remove";
+  if (!others) {
+    return before.active === step.active && before.wait === step.wait && before.largestStep === step.id && before.largestWait === step.wait
+      && (removed ? after.largestStep === null : after.largestStep === step.id && after.largestWait === nextWait);
+  }
+  if (removed && after.largestStep === step.id) return false;
+  // The unchanged other steps have one common maximum/winner. If both summaries
+  // name an other step, they must name the same first maximum, including ties.
+  if (before.largestStep !== step.id && after.largestStep !== step.id && before.largestStep !== after.largestStep) return false;
+  let low = Math.ceil(remainingWait / others), high = Math.min(1_000_000_000, remainingWait);
+  for (const [summary, knownWait, present] of [[before, step.wait, true], [after, nextWait, !removed]] as const) {
+    if (present && summary.largestStep === step.id) {
+      if (summary.largestWait !== knownWait) return false;
+      high = Math.min(high, knownWait);
+    } else {
+      if (present && summary.largestWait < knownWait) return false;
+      low = Math.max(low, summary.largestWait); high = Math.min(high, summary.largestWait);
+    }
+  }
+  if (low > high) return false;
+  // Only equality with a known wait changes tie ordering; interval endpoints
+  // and their neighboring known values cover every distinct possibility.
+  const maxima = [...new Set([low, high, step.wait, nextWait, step.wait - 1, nextWait - 1, step.wait + 1, nextWait + 1])].filter(m => m >= low && m <= high);
+  const nextOwner = a.field === "owner" ? a.value.trim() : step.ownerLabel;
+  // Two distinct anonymous nonempty labels suffice for every adjacent equality
+  // pattern; symbols cannot collide with a supplied owner label.
+  const labels = [...new Set(["", step.ownerLabel, nextOwner, Symbol("other"), Symbol("another")])];
+  const handoff = (x: string | symbol, y: string | symbol) => Number(x !== "" && y !== "" && x !== y);
+  for (let position = 0; position < count; position++) {
+    const possibleWait = maxima.some(maximum => {
+      let firstOtherBefore = false, firstOtherAfter = false;
+      for (const [summary, knownWait, present] of [[before, step.wait, true], [after, nextWait, !removed]] as const) {
+        if (present && knownWait === maximum) {
+          if (summary.largestStep === step.id) firstOtherAfter = true; else firstOtherBefore = true;
+        }
+      }
+      if (firstOtherBefore && (firstOtherAfter || position === 0)) return false;
+      // If the changed step wins a tie, all preceding other steps must have
+      // strictly less wait. Their integer thousandths constrain the total too.
+      if (firstOtherAfter && (position === others || remainingWait > others * maximum - position)) return false;
+      return true;
+    });
+    if (!possibleWait) continue;
+    const leftCount = position, rightCount = count - position - 1;
+    for (const left of leftCount ? labels : [""]) for (const right of rightCount ? labels : [""]) {
+      const oldEdges = handoff(left, step.ownerLabel) + handoff(step.ownerLabel, right);
+      const newEdges = removed ? handoff(left, right) : handoff(left, nextOwner) + handoff(nextOwner, right);
+      const unaffected = before.handoffs - oldEdges;
+      // Each outside path has one known endpoint. An empty endpoint forces its
+      // incident edge to zero; every remaining count from zero to this cap fits.
+      const outsideCap = Math.max(0, leftCount - 1 - Number(left === "")) + Math.max(0, rightCount - 1 - Number(right === ""));
+      if (unaffected >= 0 && unaffected <= outsideCap && after.handoffs === unaffected + newEdges) return true;
+    }
+  }
+  return false;
+}
 function validScenario(s: unknown): asserts s is Scenario {
   object(s, ["id", "name", "baselineId", "baselineRevision", "fingerprint", "assumption", "before", "after"]); validId(s.id, "scenario"); validId(s.baselineId, "base"); validNumber(s.baselineRevision, 1, MAX_REVISION); validText(s.name, 160, true);
   if (typeof s.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(s.fingerprint)) throw new Error("Invalid snapshot fingerprint.");
@@ -32,11 +96,12 @@ function validScenario(s: unknown): asserts s is Scenario {
   if (s.assumption.field === "owner") validText(s.assumption.value, 128);
   if (s.assumption.field === "remove" && s.assumption.step.requiredReason && !s.assumption.value.trim()) throw new Error("Required removal lacks rationale.");
   validTotals(s.before); validTotals(s.after);
-  const a = s.assumption, before = s.before as Totals, after = s.after as Totals;
+  const a = s.assumption as Assumption, before = s.before as Totals, after = s.after as Totals;
   if (!before.stepCount || after.repetitions !== before.repetitions || after.stepCount !== before.stepCount - (a.field === "remove" ? 1 : 0) || before.active < a.step.active || before.wait < a.step.wait) throw new Error("Invalid historic comparison counts.");
   const active = before.active + (a.field === "active" ? minutes(a.value) - a.step.active : a.field === "remove" ? -a.step.active : 0);
   const wait = before.wait + (a.field === "wait" ? minutes(a.value) - a.step.wait : a.field === "remove" ? -a.step.wait : 0);
   if (((a.field === "active" || a.field === "wait") && after.handoffs !== before.handoffs) || Math.abs(after.handoffs - before.handoffs) > 2 || after.active !== active || after.wait !== wait) throw new Error("Invalid historic comparison arithmetic.");
+  if (!possibleHistoricalComparison(a, before, after)) throw new Error("Impossible sparse historical comparison.");
 }
 function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "baselineId", "repetitions", "steps", "scenarios", "pending"]); validBase(v); validId(v.baselineId, "base"); validNumber(v.repetitions, 1, 10000); array(v.steps, 24); v.steps.forEach(validStep); unique(v.steps.map((s: Step) => s.id)); array(v.scenarios, 3); v.scenarios.forEach(validScenario); unique(v.scenarios.map((s: Scenario) => s.id));

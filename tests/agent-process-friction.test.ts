@@ -132,3 +132,78 @@ test("ceiling refuses writes, permits exact removals and rejects old content-sta
   assert.match(await f.run(`delete ${other} confirm`), /Deleted privately/);
   assert.equal((await state(f)).records.length, 0);
 });
+
+async function historicalScenario(owners: string[], waits: number[], field: string, value: string, changedIndex = 0) {
+  const f = createAgentFeatureFixture(feature), id = await setup(f), steps: string[] = [];
+  for (const [i, owner] of owners.entries()) {
+    const sid = uid(await f.run(`step ${id} add S${i} | 20 | ${waits[i]} | ${owner || "temporary"} | none`), "step");
+    if (!owner) assert.match(await f.run(`step ${id} clear ${sid} ownerLabel confirm`), /Saved privately/);
+    steps.push(sid);
+  }
+  const preview = uid(await f.run(`what-if ${id} ${steps[changedIndex]} | ${field} | ${value}`), "preview");
+  const scenario = uid(await f.run(`save-scenario ${id} ${preview} | Historical`), "scenario");
+  assert.match(await f.run(`edit ${id} | title | New baseline`), /Saved privately/);
+  const raw = f.backend.data.get(f.key("state"))!;
+  assert.match(await f.run(`analyze ${id}`), /STALE historical/);
+  assert.deepEqual(JSON.parse(await f.run(`export ${id}`)).record, JSON.parse(raw).records[0]);
+  return { f, id, scenario, steps, raw };
+}
+for (const entry of [
+  { name: "owner no-op handoffs", field: "owner", value: "Alice", change: (s: any) => { s.after.handoffs = 0; } },
+  { name: "active-only largest wait", field: "active", value: "10", change: (s: any) => { s.after.largestWait = 75000; } },
+  { name: "active-only largest step", field: "active", value: "10", change: (s: any) => { s.after.largestStep = `step-${randomUUID()}`; } },
+  { name: "owner-only largest step", field: "owner", value: "Bob", change: (s: any) => { s.after.largestStep = `step-${randomUUID()}`; } },
+  { name: "wait no-op largest identity", field: "wait", value: "100", change: (s: any) => { s.after.largestStep = `step-${randomUUID()}`; } },
+  { name: "changed-step exceeds recorded maximum", field: "active", value: "10", change: (s: any) => { s.before.largestWait = s.after.largestWait = 75000; } },
+  { name: "known maximum identity contradicts its time", field: "active", value: "10", change: (s: any) => { s.assumption.step.wait = 75000; } },
+  { name: "remaining active total exceeds known step capacity", field: "owner", value: "Alice", change: (s: any) => { s.before.active = s.after.active = 1_000_020_001; } },
+  { name: "unchanged other largest identity", field: "wait", value: "10", change: (s: any) => { s.before.largestStep = s.after.largestStep; s.before.largestWait = 100000; s.assumption.step.wait = 50000; s.after.wait = 110000; s.after.largestWait = 100000; s.after.largestStep = `step-${randomUUID()}`; } },
+]) test(`historical sparse rejection: ${entry.name} preserves raw bytes on read/rename/remove/delete`, async () => {
+  const { f, id, scenario, raw } = await historicalScenario(["Alice", "Bob"], [100, 50], entry.field, entry.value);
+  const corrupt = JSON.parse(raw); entry.change(corrupt.records[0].scenarios[0]);
+  const bad = ` \n${JSON.stringify(corrupt, null, 1)}\t\n`; f.backend.data.set(f.key("state"), bad);
+  const writes = f.backend.calls.compareSets;
+  for (const command of [`show ${id}`, `export ${id}`, `analyze ${id}`, `scenario-name ${id} ${scenario} | Rename`, `scenario-remove ${id} ${scenario} confirm`, `delete ${id} confirm`]) {
+    assert.match(await f.run(command), /preserved|read safely/i, command);
+    assert.equal(f.backend.data.get(f.key("state")), bad, command);
+    assert.equal(f.backend.calls.compareSets, writes, command);
+  }
+});
+
+test("sparse history accepts real ties, changed/removed/unknown owners, no-ops and absent current steps", async () => {
+  for (const [owners, waits, field, value, index] of [
+    [["A", "B"], [100, 100], "wait", "100", 0],
+    [["A", "B"], [100, 100], "wait", "100", 1],
+    [["A", "B"], [100, 50], "wait", "50", 0],
+    [["A", "B"], [100, 50], "wait", "100", 1],
+    [["A", "B"], [100, 50], "wait", "101", 1],
+    [["A", "B"], [100, 50], "active", "20", 0],
+    [["A", "B"], [0, 0], "owner", "B", 0],
+    [["A", "B", "A"], [0, 0, 0], "owner", "A", 1],
+    [["A", "", "B"], [10, 100, 10], "owner", "C", 1],
+    [["A", "", "B"], [10, 100, 10], "remove", "explicit removal", 1],
+    [["A", "C", "B"], [10, 100, 10], "remove", "explicit removal", 1],
+    [["A", "C", "A"], [100, 100, 100], "remove", "explicit removal", 1],
+    [[""], [0], "remove", "explicit removal", 0],
+  ] as const) {
+    const { f, id, scenario, steps } = await historicalScenario([...owners], [...waits], field, value, index);
+    for (const sid of steps) assert.match(await f.run(`step ${id} remove ${sid} confirm`), /Saved privately/);
+    assert.match(await f.run(`analyze ${id}`), /STALE historical/);
+    assert.match(await f.run(`scenario-name ${id} ${scenario} | Still valid`), /Saved privately/);
+    assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
+  }
+});
+
+test("sparse maxima, known zero-owner boundaries and removal cannot invent impossible comparisons", async () => {
+  for (const entry of [
+    { owners: ["A", "B"], waits: [100, 50], field: "remove", value: "remove", index: 1, corrupt: (s: any) => { s.after.largestStep = s.assumption.step.id; } },
+    { owners: ["A", "C", "B"], waits: [100, 0, 0], field: "remove", value: "remove", index: 1, corrupt: (s: any) => { s.before.handoffs = 0; s.after.handoffs = 1; } },
+    { owners: ["A", "", "B"], waits: [100, 0, 0], field: "owner", value: "C", index: 1, corrupt: (s: any) => { s.before.handoffs = 2; } },
+    { owners: ["A", "B", "A"], waits: [0, 0, 0], field: "owner", value: "A", index: 1, corrupt: (s: any) => { s.before.largestStep = s.after.largestStep = s.assumption.step.id; } },
+    { owners: ["A", "B"], waits: [100, 100], field: "wait", value: "100", index: 1, corrupt: (s: any) => { s.after.largestStep = s.assumption.step.id; } },
+  ]) {
+    const { f, id, raw } = await historicalScenario(entry.owners, entry.waits, entry.field, entry.value, entry.index);
+    const corrupt = JSON.parse(raw); entry.corrupt(corrupt.records[0].scenarios[0]); const bad = `\n${JSON.stringify(corrupt)}  `;
+    f.backend.data.set(f.key("state"), bad); assert.match(await f.run(`delete ${id} confirm`), /preserved|read safely/); assert.equal(f.backend.data.get(f.key("state")), bad);
+  }
+});
