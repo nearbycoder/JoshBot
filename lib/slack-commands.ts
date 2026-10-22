@@ -1,5 +1,7 @@
 import { handleToolbox } from "./toolbox/index.js";
 import { handleAgentCommand } from "./agent-features/index.js";
+import { contextRead } from "./agent-features/context/shared.js";
+import { getSlackAgentRun } from "./slack-agent-runs.js";
 import { parseXPostId, X_MEDIA_HELP, XMediaError, type XMediaRequest } from "./x-media.js";
 import { buildXMediaModal } from "./x-media-modal.js";
 import {
@@ -246,13 +248,21 @@ export async function handleSlackSlashCommandPayload(
     return handleAdminSlashCommand(payload);
   }
 
-  const access = await (options.evaluateAccess ?? evaluateNoboAccess)({
+  const isPersonalAgent = command === "/nobo-help" && /^agent(?:\s|$)/i.test(payload.text.trim());
+  let personalAgentSignal: AbortSignal | undefined;
+  if (isPersonalAgent) {
+    // The invocation budget includes policy Redis reads, before agent startup.
+    const deadline = AbortSignal.timeout(120_000);
+    const runSignal = getSlackAgentRun()?.controller.signal;
+    personalAgentSignal = runSignal ? AbortSignal.any([runSignal, deadline]) : deadline;
+  }
+  const access = await contextRead(personalAgentSignal, () => (options.evaluateAccess ?? evaluateNoboAccess)({
     userId: payload.user_id,
     channelId: payload.channel_id,
     teamId: payload.team_id,
     action: command,
     surface: "slash-command"
-  });
+  }));
 
   if (!access.allowed) {
     return immediate(ephemeral(formatNoboAccessDenied(access)));
@@ -376,11 +386,13 @@ export async function handleSlackSlashCommandPayload(
     );
   }
 
-  if (/^agent(?:\s|$)/i.test(payload.text.trim())) {
-    const output = await (options.handleAgentCommand ?? handleAgentCommand)(
+  if (isPersonalAgent) {
+    const output = await contextRead(personalAgentSignal, () => (options.handleAgentCommand ?? handleAgentCommand)(
       payload.text.trim().replace(/^agent\s*/i, ""),
       { userId: payload.user_id, teamId: payload.team_id, channelId: payload.channel_id, requestId: payload.trigger_id },
-    );
+      undefined,
+      { timeoutSignal: () => personalAgentSignal! },
+    ));
     return immediate({ response_type: "ephemeral", text: output, mrkdwn: false });
   }
 
