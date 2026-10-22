@@ -132,6 +132,33 @@ function shiftDay(day: string, amount: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + amount * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Calendar adapters keep civil dates alongside normalized midnight instants. */
+function allDayDates(metadata: Record<string, unknown>, start: SourceDate | undefined,
+  end: SourceDate | undefined, callerFormat: Intl.DateTimeFormat): { start: SourceDate; end: SourceDate } | undefined {
+  const { startDate, endDate } = metadata;
+  if (typeof startDate !== "string" || typeof endDate !== "string" ||
+      !validDay(startDate) || !validDay(endDate) || endDate <= startDate) return undefined;
+  try {
+    // Validate the optional absolute representation in its declared zone, never
+    // the server zone. Civil dates still govern display in the caller's day.
+    const zone = metadata.timezone ?? callerFormat.resolvedOptions().timeZone;
+    if (typeof zone !== "string" || !zone || zone.length > 100) return undefined;
+    const normalizedFormat = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    });
+    const matches = (boundary: SourceDate | undefined, civil: string): boolean => {
+      if (!boundary) return true;
+      if (boundary.instant === undefined) return boundary.day === civil;
+      return dateInZone(boundary.instant, normalizedFormat) === civil && boundary.instant % 1_000 === 0 &&
+        normalizedFormat.formatToParts(boundary.instant)
+          .filter((part) => ["hour", "minute", "second"].includes(part.type)).every((part) => part.value === "00");
+    };
+    if (!matches(start, startDate) || !matches(end, endDate)) return undefined;
+    return { start: { day: startDate }, end: { day: endDate } };
+  } catch { return undefined; }
+}
+
 function sourceFrom(value: unknown, formatter: Intl.DateTimeFormat): Source | undefined {
   if (!object(value) || !isKind(value.kind) || typeof value.id !== "string" || !value.id || value.id.length > 160 ||
       /[\s\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>\[\]&`]/u.test(value.id) ||
@@ -144,10 +171,19 @@ function sourceFrom(value: unknown, formatter: Intl.DateTimeFormat): Source | un
   let end = parseDate(rawEnd, formatter);
   let invalidDate = (rawStart !== undefined && !start) || (rawEnd !== undefined && !end);
   if (value.kind === "event" && ((rawEnd !== undefined && !start) ||
-      (metadata.allDay === true && start?.instant !== undefined) ||
       (start && end && ((start.instant === undefined) !== (end.instant === undefined) ||
         (start.instant === undefined ? end.day <= start.day : end.instant! <= start.instant))))) {
     invalidDate = true;
+  }
+  if (value.kind === "event" && metadata.allDay === true) {
+    if (metadata.startDate !== undefined || metadata.endDate !== undefined) {
+      const civil = allDayDates(metadata, start, end, formatter);
+      if (civil) { start = civil.start; end = civil.end; }
+      else invalidDate = true;
+    } else if (start?.instant !== undefined) {
+      // Without civil dates, an absolute timestamp alone cannot identify an all-day date.
+      invalidDate = true;
+    }
   }
   // An invalid event range must not become a confident agenda or overlap claim.
   if (value.kind === "event" && invalidDate) { start = undefined; end = undefined; }

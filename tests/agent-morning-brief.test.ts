@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { existsSync } from "node:fs";
+import test, { type TestContext } from "node:test";
+import { pathToFileURL } from "node:url";
 import feature, { feature as namedFeature } from "../lib/agent-features/morning-brief.js";
-import type { AgentContextItem, AgentContextKind, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
+import type { AgentContextItem, AgentContextKind, AgentFeature, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
 
 function source(id: string, kind: AgentContextKind, title: string, extra: Partial<AgentContextItem> = {}): AgentContextItem {
@@ -22,6 +24,36 @@ function fixture(items: AgentContextItem[] = [], overrides: Partial<AgentFeature
 }
 
 const priorityLines = (result: string) => result.split("\n").filter((line) => /^\d+\. /u.test(line));
+
+type CalendarIntegration = {
+  feature: AgentFeature;
+  readCalendarEventContext(store: AgentFeatureStore, timezone: string): Promise<AgentContextItem[]>;
+};
+
+async function actualCalendar(t: TestContext): Promise<CalendarIntegration | undefined> {
+  // Parent integration uses the local module; isolated feature branches can point
+  // at a read-only checkout or a temporary git-show export of the actual calendar.
+  const configured = process.env.MORNING_BRIEF_CALENDAR_MODULE;
+  const moduleUrl = configured ? pathToFileURL(configured) : new URL("../lib/agent-features/calendar.ts", import.meta.url);
+  if (!existsSync(moduleUrl)) {
+    if (configured) assert.fail(`Calendar integration module does not exist: ${configured}`);
+    t.skip("Calendar is absent from this isolated checkout; set MORNING_BRIEF_CALENDAR_MODULE to its actual calendar.ts.");
+    return undefined;
+  }
+  return await import(moduleUrl.href) as CalendarIntegration;
+}
+
+async function importAllDay(calendar: CalendarIntegration, startDate: string, endDate: string, timezone: string) {
+  const context = createAgentTestContext({ timezone });
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:morning-brief-all-day",
+    `DTSTART;VALUE=DATE:${startDate.replaceAll("-", "")}`, `DTEND;VALUE=DATE:${endDate.replaceAll("-", "")}`,
+    "SUMMARY:Imported day off", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  const preview = await calendar.feature.execute(`import preview ${ics}`, context);
+  const token = /import confirm ([a-f0-9]{32})/u.exec(preview)?.[1];
+  assert.ok(token, preview);
+  assert.match(await calendar.feature.execute(`import confirm ${token}`, context), /^Imported:/u);
+  return context;
+}
 
 test("exports the assigned feature and provides help and settings without context access", async () => {
   assert.equal(feature, namedFeature);
@@ -150,6 +182,104 @@ test("imported ranges handle multi-day events, exclusive midnight endings and el
   assert.doesNotMatch(output, /Already ended at midnight|All-day exclusive ending|Cancelled meeting|Overdue ·/u);
   assert.match(output, /Today's imported events \(3\)/u);
   assert.match(output, /1 completed\/inactive records, 2 past events/u);
+});
+
+test("actual calendar all-day import appears in the morning agenda with its source ID", async (t) => {
+  const calendar = await actualCalendar(t);
+  if (!calendar) return;
+  const imported = await importAllDay(calendar, "2026-10-22", "2026-10-23", "America/Chicago");
+  const items = await calendar.readCalendarEventContext(imported.store, "America/Chicago");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].dueAt, "2026-10-22T05:00:00.000Z");
+  assert.equal(items[0].metadata?.startDate, "2026-10-22");
+  assert.equal(items[0].metadata?.endDate, "2026-10-23");
+  assert.equal(items[0].metadata?.allDay, true);
+  const output = await fixture(items).run("brief");
+  assert.match(output, /Today · Imported day off — starts 2026-10-22/u);
+  assert.match(output, /Today's imported events \(1\)/u);
+  assert.match(output, /all-day → 2026-10-23 \(exclusive end\) · Imported day off/u);
+  assert.ok(output.includes(`[event ${items[0].id}]`));
+  assert.doesNotMatch(output, /date invalid|Undated ·|; ended/u);
+});
+
+test("actual calendar all-day dates follow the caller's day across timezones and exclusive midnight", async (t) => {
+  const calendar = await actualCalendar(t);
+  if (!calendar) return;
+  const imported = await importAllDay(calendar, "2026-10-22", "2026-10-24", "Asia/Tokyo");
+  const importZoneItems = await calendar.readCalendarEventContext(imported.store, imported.timezone);
+  for (const timezone of ["America/Chicago", "Pacific/Honolulu"]) {
+    const callerItems = await calendar.readCalendarEventContext(imported.store, timezone);
+    assert.notEqual(callerItems[0].dueAt, importZoneItems[0].dueAt);
+    const start = Date.parse(callerItems[0].dueAt!);
+    const end = Date.parse(callerItems[0].metadata!.endAt as string);
+    // Civil dates remain correct even if an adapter normalized timestamps in its
+    // original timezone. Its timezone metadata validates that representation.
+    for (const items of [callerItems, importZoneItems]) {
+      const before = await fixture(items, { timezone, now: new Date(start - 1) }).run("brief");
+      assert.match(before, /Later · Imported day off/u);
+      assert.match(before, /Today's imported events \(0\)/u);
+      for (const instant of [start, end - 1]) {
+        const output = await fixture(items, { timezone, now: new Date(instant) }).run("brief");
+        assert.match(output, /Today · Imported day off/u);
+        assert.match(output, /Today's imported events \(1\)/u);
+        assert.match(output, /all-day.*2026-10-24 \(exclusive end\) · Imported day off/u);
+        assert.doesNotMatch(output, /date invalid|; ended|; in progress/u);
+      }
+      const after = await fixture(items, { timezone, now: new Date(end) }).run("brief");
+      assert.match(after, /Today's imported events \(0\)/u);
+      assert.match(after, /1 past events/u);
+      assert.doesNotMatch(after, /Imported day off/u);
+    }
+  }
+});
+
+test("actual calendar all-day DST ranges retain civil dates on 23-hour and 25-hour days", async (t) => {
+  const calendar = await actualCalendar(t);
+  if (!calendar) return;
+  for (const [day, nextDay, hours] of [["2026-03-08", "2026-03-09", 23], ["2026-11-01", "2026-11-02", 25]] as const) {
+    const imported = await importAllDay(calendar, day, nextDay, "UTC");
+    const items = await calendar.readCalendarEventContext(imported.store, "America/Chicago");
+    const start = Date.parse(items[0].dueAt!);
+    const end = Date.parse(items[0].metadata!.endAt as string);
+    assert.equal(end - start, hours * 3_600_000);
+    for (const instant of [start, end - 1]) {
+      const output = await fixture(items, { now: new Date(instant) }).run("brief");
+      assert.ok(output.includes(`Morning brief — ${day}`));
+      assert.match(output, /Today · Imported day off/u);
+      assert.match(output, /Today's imported events \(1\)/u);
+      assert.ok(output.includes(`all-day → ${nextDay} (exclusive end)`));
+      assert.doesNotMatch(output, /date invalid|; ended/u);
+    }
+    const after = await fixture(items, { now: new Date(end) }).run("brief");
+    assert.match(after, /Today's imported events \(0\)/u);
+    assert.match(after, /1 past events/u);
+  }
+});
+
+test("all-day civil metadata does not conceal invalid or contradictory event ranges", async () => {
+  const good = source("all-day", "event", "Imported day off", {
+    dueAt: "2026-10-22T05:00:00.000Z",
+    metadata: { allDay: true, startDate: "2026-10-22", endDate: "2026-10-23", endAt: "2026-10-23T05:00:00.000Z", timezone: "America/Chicago" },
+  });
+  const badMetadata = [
+    { startDate: "2026-02-30" }, { endDate: "2026-10-21" }, { endDate: "2026-10-22" },
+    { endDate: undefined }, { endAt: "2026-10-21T05:00:00Z" }, { endAt: "invalid" },
+    { endAt: "2026-10-23T05:00:00.001Z" }, { endAt: "2026-10-23T06:00:00Z" },
+    { startDate: "2026-10-21" }, { timezone: "Not/AZone" }, { timezone: 3 },
+  ];
+  const badSources = [
+    ...badMetadata.map((patch) => ({ ...good, metadata: { ...good.metadata, ...patch } })),
+    { ...good, dueAt: "2026-10-22T09:00:00" },
+    { ...good, dueAt: "2026-10-22T06:00:00Z" },
+    { ...good, metadata: { allDay: true, endAt: "2026-10-23T05:00:00Z" } },
+  ];
+  for (const item of badSources) {
+    const output = await fixture([item]).run("brief");
+    assert.match(output, /Undated · Imported day off — date invalid; timing unknown/u, JSON.stringify(item));
+    assert.match(output, /Today's imported events \(0\)/u);
+  }
+  const civilOnly = { ...good, dueAt: undefined, metadata: { allDay: true, startDate: "2026-10-22", endDate: "2026-10-23" } };
+  assert.match(await fixture([civilOnly]).run("brief"), /Today · Imported day off/u);
 });
 
 test("empty and disabled sources are disclosed without claiming a clear calendar", async () => {
