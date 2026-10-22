@@ -196,7 +196,7 @@ export async function spawnWorker(script, args, { cwd, home, timeoutMs = 45000, 
   });
 }
 
-export async function prepareBuild(root, dependencies = '/home/nearby/Sites/JoshBot/node_modules') {
+export async function prepareBuild(root, dependencies = join(root, 'node_modules')) {
   assert.equal(process.versions.node.split('.')[0], '24', 'Use Node 24');
   const directory = await mkdtemp(join(tmpdir(), 'joshbot-release-'));
   try {

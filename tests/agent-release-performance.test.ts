@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, readlink, realpath, symlink, writeFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -106,6 +107,35 @@ test("gates fail on a worst sample, missing counts, profiles, and nonfinite metr
   assert.equal(harness.releaseGate([{ type: "sample", ...runtime }]).passed, false, "one sample cannot be final approval");
   const feature = history.find((e: { mode: string; status: string }) => e.mode === "meeting-prep" && e.status === "complete");
   assert.ok(harness.sampleFailures({ ...feature, active: { eventLoopMaxMs: 150.001 } }).includes("Active feature event loop exceeds 150 ms"));
+});
+
+test("release builds use checkout dependencies by default and retain explicit overrides without a home fallback", { timeout: 60000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), "release-checkout-test-"));
+  const checkout = join(directory, "checkout"), dependencies = await realpath(resolve("node_modules"));
+  try {
+    execFileSync("git", ["clone", "--local", "--shared", "--quiet", process.cwd(), checkout]);
+    // Exercise this working-tree harness even before its fix is committed.
+    await copyFile(resolve("scripts/bench-agent-release.mjs"), join(checkout, "scripts/bench-agent-release.mjs"));
+    const checkoutDependencies = join(checkout, "node_modules");
+    await symlink(dependencies, checkoutDependencies, "dir");
+    const build = await harness.prepareBuild(checkout);
+    try {
+      assert.equal(await readlink(join(build.directory, "node_modules")), checkoutDependencies);
+      assert.equal(build.build.status, "complete");
+      t.diagnostic(`Default dependency link uses the supplied temporary checkout: ${checkoutDependencies}`);
+    } finally { await build.cleanup(); }
+    assert.equal(existsSync(build.directory), false);
+
+    await rm(checkoutDependencies);
+    await assert.rejects(() => harness.prepareBuild(checkout), /Cannot find package 'vite'/,
+      "Missing checkout dependencies must fail rather than fall back to an author's home");
+    const overridden = await harness.prepareBuild(checkout, dependencies);
+    try {
+      assert.equal(await readlink(join(overridden.directory, "node_modules")), dependencies);
+      assert.equal(overridden.build.status, "complete");
+    } finally { await overridden.cleanup(); }
+    assert.equal(existsSync(overridden.directory), false);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("production Vite entrypoints verify catalog parity, real policy siblings and full CSV retrieval", { timeout: 60000 }, async t => {
