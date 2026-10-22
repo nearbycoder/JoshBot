@@ -58,11 +58,29 @@ export interface AgentFeatureContext {
   services: AgentFeatureServices;
 }
 
-export interface AgentFeature {
+/** Optional per-invocation limits; integers >= 0 may only lower the defaults. */
+export interface AgentFeatureResourceBudgets {
+  generations?: number;
+  searches?: number;
+  contextReads?: number;
+  storeReads?: number;
+  /** Logical updates, independent of the store's internal CAS retry limit. */
+  storeUpdates?: number;
+}
+
+/** Literal catalog data. Import with `import type`; never initialize services here. */
+export interface AgentFeatureMetadata {
   id: string;
   title: string;
   description: string;
   /** Command syntax and at least one realistic example. */
   help: string;
+  group?: string;
+  keywords?: readonly string[];
+  example?: string;
+  resourceBudgets?: AgentFeatureResourceBudgets;
+}
+
+export interface AgentFeature extends AgentFeatureMetadata {
   execute(command: string, context: AgentFeatureContext): Promise<string>;
 }
