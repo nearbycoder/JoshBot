@@ -94,7 +94,7 @@ Provider failures preserve saved history and dismissals. Corrupt persisted shape
 
 Titles, purposes (including text/title fallbacks), schedule labels and destinations are trimmed again after clipping, so a cutoff at a word boundary cannot leave invalid trailing whitespace. Each new snapshot passes the same validation used for saved history before any storage update starts. A failed new-snapshot validation preserves existing history and dismissals and asks for the supplied metadata/capture time to be checked; it does not ask you to clear valid saved data.
 
-Each review makes one `readContext` call; all other commands use saved state. There are zero generation or search calls, within the runtime's per-invocation limits of eight generations and six searches. The shared runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. The feature uses the shared runtime and store directly.
+A full review makes three sequential `readContext` calls (reminder, monitor, digest); a scoped `review --kind` makes one. All other commands use saved state. There are zero generation or search calls, within the runtime's per-invocation limits of eight generations and six searches. The shared runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. The feature uses the shared runtime and store directly.
 
 Targeted verification:
 
