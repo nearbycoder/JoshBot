@@ -1,8 +1,6 @@
-import { Exa } from "exa-js";
-import { createPersonalAgentText } from "../ai.js";
-import { evaluateNoboAccess } from "../access-controls.js";
+import type { evaluateNoboAccess } from "../access-controls.js";
 import { getRedisClient } from "../redis.js";
-import { readAgentOwnedContext, type AgentContextAdapters, type AgentContextRequest } from "./context.js";
+import type { AgentContextAdapters, AgentContextRequest } from "./context.js";
 import { contextRead } from "./context/shared.js";
 import type { AgentStateBackend } from "./store.js";
 import type { AgentFeatureServices } from "./types.js";
@@ -28,7 +26,7 @@ export function createProductionContextAdapters(dependencies: {
       return ids;
     },
     async authorizeChannel(owner, signal) {
-      const access = await contextRead(signal, () => (dependencies.evaluateAccess ?? evaluateNoboAccess)({
+      const access = await contextRead(signal, async () => (dependencies.evaluateAccess ?? (await import("../access-controls.js")).evaluateNoboAccess)({
         ...owner, action: "personal_agent_context", surface: "slack-command",
       }));
       if (!access.allowed) throw new Error("Access to personal context in this channel is denied.");
@@ -44,19 +42,26 @@ export function createAgentFeatureServices(
   adapters: AgentContextAdapters = createProductionContextAdapters(),
 ): AgentFeatureServices {
   return {
-    generate: ({ instructions, input }) => createPersonalAgentText({ ...owner, instructions, input, signal }),
+    generate: async ({ instructions, input }) => {
+      const { createPersonalAgentText } = await contextRead(signal, () => import("../ai.js"));
+      return contextRead(signal, () => createPersonalAgentText({ ...owner, instructions, input, signal }));
+    },
     search: async (query, limit = 5) => {
       signal.throwIfAborted();
       if (!process.env.EXA_API_KEY) throw new Error("Web search requires the configured Exa integration.");
+      const { Exa } = await contextRead(signal, () => import("exa-js"));
       const exa = new Exa(process.env.EXA_API_KEY);
       const count = Number.isFinite(limit) ? Math.max(1, Math.min(8, Math.floor(limit))) : 5;
-      const response = await exa.search(query, { type: "auto", numResults: count, contents: { highlights: true } });
+      const response = await contextRead(signal, () => exa.search(query, { type: "auto", numResults: count, contents: { highlights: true } }, { signal }));
       signal.throwIfAborted();
       return response.results.slice(0, count).map((result) => ({
         title: result.title ?? result.url, url: result.url,
         text: (result.highlights ?? []).join("\n"), publishedAt: result.publishedDate,
       }));
     },
-    readContext: (kinds) => readAgentOwnedContext(backend, owner, { ...request, signal }, adapters, kinds),
+    readContext: async (kinds) => {
+      const { readAgentOwnedContext } = await contextRead(signal, () => import("./context.js"));
+      return contextRead(signal, () => readAgentOwnedContext(backend, owner, { ...request, signal }, adapters, kinds));
+    },
   };
 }

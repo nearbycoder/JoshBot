@@ -1,5 +1,7 @@
+import { resolveAgentBudgets } from "./budgets.js";
+import { contextRead } from "./context/shared.js";
 import { getRedisClient } from "../redis.js";
-import type { AgentFeatureStore } from "./types.js";
+import type { AgentFeatureStore, AgentFeatureResourceBudgets } from "./types.js";
 
 export interface AgentStateBackend {
   get(key: string): Promise<string | null>;
@@ -46,8 +48,11 @@ export function createAgentFeatureStore(
   owner: { teamId: string; userId: string },
   featureId: string,
   signal?: AbortSignal,
+  limits?: Pick<AgentFeatureResourceBudgets, "storeReads" | "storeUpdates">,
 ): AgentFeatureStore {
   const prefix = agentStorePrefix(owner, featureId);
+  const budgets = resolveAgentBudgets(limits);
+  let reads = 0, updates = 0;
   const scopedKey = (key: string) => {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(key)) throw new Error("Invalid personal agent storage key.");
     return prefix + key;
@@ -59,15 +64,18 @@ export function createAgentFeatureStore(
   return {
     async read<T>(key: string) {
       signal?.throwIfAborted();
-      const raw = await backend.get(scopedKey(key));
+      if (++reads > budgets.storeReads) throw new Error(`This command reached its limit of ${budgets.storeReads} state reads.`);
+      const raw = await contextRead(signal, () => backend.get(scopedKey(key)));
       signal?.throwIfAborted();
       return raw === null ? null : parse<T>(raw);
     },
     async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      signal?.throwIfAborted();
+      if (++updates > budgets.storeUpdates) throw new Error(`This command reached its limit of ${budgets.storeUpdates} state updates.`);
       const fullKey = scopedKey(key);
       for (let attempt = 0; attempt < 32; attempt++) {
         signal?.throwIfAborted();
-        const previous = await backend.get(fullKey);
+        const previous = await contextRead(signal, () => backend.get(fullKey));
         signal?.throwIfAborted();
         const current = parse<T>(previous ?? JSON.stringify(initial));
         const next = transform(current);
@@ -77,7 +85,7 @@ export function createAgentFeatureStore(
           throw new Error("Personal agent storage is full. Export or remove older entries first.");
         }
         signal?.throwIfAborted();
-        if (encoded === previous || await backend.compareSet(fullKey, previous, encoded)) return next.result;
+        if (encoded === previous || await contextRead(signal, () => backend.compareSet(fullKey, previous, encoded))) return next.result;
       }
       throw new Error("Your data changed repeatedly while saving. Please retry this command.");
     },

@@ -86,3 +86,27 @@ test("a denied policy stays private and prevents agent initialization", async ()
   assert.equal(result.response.response_type, "ephemeral");
   assert.match(result.response.text, /access denied/i);
 });
+
+test("policy admission holds cancelled raw reads and rejects overload before access or receipts", async (t) => {
+  const policies = [deferred<{ allowed: boolean }>(), deferred<{ allowed: boolean }>()];
+  const entered = deferred<void>();
+  const controllers = [new AbortController(), new AbortController()];
+  let deadlines = 0, calls = 0, features = 0;
+  t.mock.method(AbortSignal, "timeout", () => controllers[deadlines++]?.signal ?? new AbortController().signal);
+  const options = {
+    evaluateAccess: () => { const policy = policies[calls++]; if (calls === 2) entered.resolve(); return policy.promise; },
+    handleAgentCommand: async () => { features++; return "done"; },
+  };
+  const pending = [1, 2].map(() => handleSlackSlashCommandPayload(payload, options));
+  const rejected = pending.map(p => assert.rejects(p, /abort/i));
+  await entered.promise; controllers.forEach(c => c.abort()); await Promise.all(rejected);
+  const busy = await handleSlackSlashCommandPayload(payload, options);
+  assert.equal(busy.response.response_type, "ephemeral"); assert.match(busy.response.text, /busy/);
+  assert.equal(calls, 2); assert.equal(deadlines, 2); assert.equal(features, 0);
+  policies.forEach(p => p.resolve({ allowed: true })); await new Promise(resolve => setImmediate(resolve));
+  // Resolved policy and the inner agent route reuse this one permit.
+  const allowed = await handleSlackSlashCommandPayload(payload, {
+    evaluateAccess: async () => ({ allowed: true }), handleAgentCommand: async () => "finished",
+  });
+  assert.equal(allowed.response.text, "finished");
+});

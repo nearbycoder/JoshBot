@@ -1,3 +1,4 @@
+import { AGENT_BUSY_MESSAGE, agentInvocationSignal, withAgentAdmission } from "./agent-features/admission.js";
 import { handleToolbox } from "./toolbox/index.js";
 import { handleAgentCommand } from "./agent-features/index.js";
 import { contextRead } from "./agent-features/context/shared.js";
@@ -237,6 +238,18 @@ export async function handleSlackSlashCommandPayload(
   payload: SlackSlashCommandPayload,
   options: SlackSlashCommandOptions = {}
 ): Promise<SlackSlashCommandResult> {
+  if (payload.command.trim().toLowerCase() === "/nobo-help" && /^agent(?:\s|$)/i.test(payload.text.trim())) {
+    return withAgentAdmission({ teamId: payload.team_id, userId: payload.user_id },
+      () => handleAdmittedSlackSlashCommandPayload(payload, options),
+      () => immediate(ephemeral(AGENT_BUSY_MESSAGE)));
+  }
+  return handleAdmittedSlackSlashCommandPayload(payload, options);
+}
+
+async function handleAdmittedSlackSlashCommandPayload(
+  payload: SlackSlashCommandPayload,
+  options: SlackSlashCommandOptions,
+): Promise<SlackSlashCommandResult> {
   const command = payload.command.trim().toLowerCase();
   const text = payload.text.trim().toLowerCase();
 
@@ -252,9 +265,7 @@ export async function handleSlackSlashCommandPayload(
   let personalAgentSignal: AbortSignal | undefined;
   if (isPersonalAgent) {
     // The invocation budget includes policy Redis reads, before agent startup.
-    const deadline = AbortSignal.timeout(120_000);
-    const runSignal = getSlackAgentRun()?.controller.signal;
-    personalAgentSignal = runSignal ? AbortSignal.any([runSignal, deadline]) : deadline;
+    personalAgentSignal = agentInvocationSignal(getSlackAgentRun()?.controller.signal);
   }
   const access = await contextRead(personalAgentSignal, () => (options.evaluateAccess ?? evaluateNoboAccess)({
     userId: payload.user_id,

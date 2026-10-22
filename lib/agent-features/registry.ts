@@ -1,31 +1,29 @@
-import morningBrief from "./morning-brief.js";
-import weeklyReview from "./weekly-review.js";
-import inbox from "./inbox.js";
-import dayPlanner from "./day-planner.js";
-import meetingPrep from "./meeting-prep.js";
-import replyCoach from "./reply-coach.js";
-import relationships from "./relationships.js";
-import readLater from "./read-later.js";
-import research from "./research.js";
-import projectBriefs from "./project-briefs.js";
-import recall from "./recall.js";
-import memoryReview from "./memory-review.js";
-import playbooks from "./playbooks.js";
-import workflows from "./workflows.js";
-import learning from "./learning.js";
-import decisionCoach from "./decision-coach.js";
-import handoffs from "./handoffs.js";
-import calendar from "./calendar.js";
-import travel from "./travel.js";
-import automationAudit from "./automation-audit.js";
+import { existingAgentMetadata } from "./catalog-metadata.js";
+import { lazyAgentFeature } from "./lazy.js";
 import type { AgentFeature } from "./types.js";
 
-/** Private, on-demand tools; registration does not start background work. */
+/** Extend with literal metadata + an explicit dynamic import; never eager modules. */
 export const agentFeatures: readonly AgentFeature[] = [
-  morningBrief, weeklyReview, inbox, dayPlanner, meetingPrep,
-  replyCoach, relationships, readLater, research, projectBriefs,
-  recall, memoryReview, playbooks, workflows, learning,
-  decisionCoach, handoffs, calendar, travel, automationAudit,
+  lazyAgentFeature(existingAgentMetadata[0], () => import("./morning-brief.js")),
+  lazyAgentFeature(existingAgentMetadata[1], () => import("./weekly-review.js")),
+  lazyAgentFeature(existingAgentMetadata[2], () => import("./inbox.js")),
+  lazyAgentFeature(existingAgentMetadata[3], () => import("./day-planner.js")),
+  lazyAgentFeature(existingAgentMetadata[4], () => import("./meeting-prep.js")),
+  lazyAgentFeature(existingAgentMetadata[5], () => import("./reply-coach.js")),
+  lazyAgentFeature(existingAgentMetadata[6], () => import("./relationships.js")),
+  lazyAgentFeature(existingAgentMetadata[7], () => import("./read-later.js")),
+  lazyAgentFeature(existingAgentMetadata[8], () => import("./research.js")),
+  lazyAgentFeature(existingAgentMetadata[9], () => import("./project-briefs.js")),
+  lazyAgentFeature(existingAgentMetadata[10], () => import("./recall.js")),
+  lazyAgentFeature(existingAgentMetadata[11], () => import("./memory-review.js")),
+  lazyAgentFeature(existingAgentMetadata[12], () => import("./playbooks.js")),
+  lazyAgentFeature(existingAgentMetadata[13], () => import("./workflows.js")),
+  lazyAgentFeature(existingAgentMetadata[14], () => import("./learning.js")),
+  lazyAgentFeature(existingAgentMetadata[15], () => import("./decision-coach.js")),
+  lazyAgentFeature(existingAgentMetadata[16], () => import("./handoffs.js")),
+  lazyAgentFeature(existingAgentMetadata[17], () => import("./calendar.js")),
+  lazyAgentFeature(existingAgentMetadata[18], () => import("./travel.js")),
+  lazyAgentFeature(existingAgentMetadata[19], () => import("./automation-audit.js")),
 ];
 
 const contextCoverage = "Available context: your private toolbox, confirmed calendar imports, and approved memory cards. Reminders, monitors, digests and follow-ups cover only your records in the channel where you run the command. Saved artifacts and legacy personal memory are not connected.";

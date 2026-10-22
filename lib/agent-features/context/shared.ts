@@ -1,11 +1,13 @@
+import { trackAgentWork } from "../admission.js";
+
 /** Run read-only work with an active cancellation guard, including hung providers. */
 export async function contextRead<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
   signal?.throwIfAborted();
-  if (!signal) return work();
+  if (!signal) return trackAgentWork(work);
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    const abort = () => { signal.removeEventListener("abort", abort); reject(signal.reason); };
     signal.addEventListener("abort", abort, { once: true });
-    Promise.resolve().then(() => { signal.throwIfAborted(); return work(); }).then(
+    Promise.resolve().then(() => { signal.throwIfAborted(); return trackAgentWork(work); }).then(
       value => { signal.removeEventListener("abort", abort); signal.aborted ? reject(signal.reason) : resolve(value); },
       error => { signal.removeEventListener("abort", abort); reject(signal.aborted ? signal.reason : error); },
     );
