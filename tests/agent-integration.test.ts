@@ -19,7 +19,7 @@ function fixture() {
     },
   };
   const services = createAgentTestContext().services;
-  const options = { backend, services, timezone: "America/Chicago" };
+  const options = { backend, services, timezone: "America/Chicago", now: new Date("2026-10-22T15:00:00Z") };
   const owner = { teamId: "TINTEGRATION", userId: "UINTEGRATION", channelId: "CINTEGRATION" };
   return { data, options, owner };
 }
@@ -27,6 +27,7 @@ function fixture() {
 test("registered personal agents have unique IDs and discoverable help", async () => {
   const { owner } = fixture();
   assert.equal(new Set(agentFeatures.map((feature) => feature.id)).size, agentFeatures.length);
+  assert.equal(agentFeatures.length, 20);
   assert.match(formatAgentHelp(), /inbox:/);
   for (const feature of agentFeatures) {
     assert.ok((await handleAgentCommand(`${feature.id} help`, owner)).length > 20);
@@ -34,6 +35,72 @@ test("registered personal agents have unique IDs and discoverable help", async (
   assert.match(await handleAgentCommand("", owner), /Personal agents/);
   assert.match(await handleAgentCommand("missing help", owner), /Unknown personal agent/);
   await assert.rejects(() => handleAgentCommand("inbox help", {}), /signed Slack/);
+});
+
+const PRIVATE_MARKER = "PrivateIntegrationEvidence";
+const privateFlows = [
+  ["morning-brief", `settings focus ${PRIVATE_MARKER}`, "show"],
+  ["weekly-review", "review", "show latest"],
+  ["day-planner", `add ${PRIVATE_MARKER} | 30 | normal`, "tasks"],
+  ["reply-coach", `style approve ${PRIVATE_MARKER}`, "style show"],
+  ["relationships", `add ${PRIVATE_MARKER} | 30 | Met at an event`, "list"],
+  ["read-later", `add https://example.org/reading | ${PRIVATE_MARKER} | 5 | Read supplied text.`, "list"],
+  ["research", `research What supports ${PRIVATE_MARKER}?`, "list"],
+  ["project-briefs", `create ${PRIVATE_MARKER} | Prepare a useful launch brief`, "list"],
+  ["memory-review", `capture me | work-city | ${PRIVATE_MARKER} | My update today`, "list"],
+  ["playbooks", `create ${JSON.stringify({ title: PRIVATE_MARKER, goal: "Summarize {{topic}}", inputs: { topic: "text" }, steps: ["Draft a short summary of {{topic}}."] })}`, "list"],
+  ["workflows", `create ${PRIVATE_MARKER} | Supplied launch notes | Draft a summary`, "list"],
+  ["learning", `create ${PRIVATE_MARKER} | My class notes | DNS translates names to IP addresses.`, "list"],
+  ["decision-coach", `create ${PRIVATE_MARKER} | Compare convenience and reliability`, "show"],
+  ["handoffs", `capture ${PRIVATE_MARKER} | done: Read the notes | next: Review the draft`, "list all"],
+  ["travel", `trip ${PRIVATE_MARKER} | America/Chicago | 60`, "trip"],
+  ["automation-audit", "review", "show latest"],
+] as const;
+
+for (const [id, command, inspect] of privateFlows) {
+  test(`${id} persists privately through Slack routing and suppresses repeated delivery`, async () => {
+    const { options, owner, data } = fixture();
+    options.services.readContext = async (kinds) => [
+      { id: "note:private", kind: "note" as const, title: PRIVATE_MARKER, text: "Review launch notes", updatedAt: options.now.toISOString() },
+      { id: "reminder:private", kind: "reminder" as const, title: PRIVATE_MARKER, text: "Prepare detailed project notes", status: "active", dueAt: "2026-10-23T15:00:00Z" },
+    ].filter((item) => !kinds || kinds.includes(item.kind));
+    options.services.search = async () => [{ title: "Evidence", url: "https://example.org/evidence", text: "The pilot ran for two days." }];
+    options.services.generate = async ({ input }) => {
+      assert.equal(id, "research", "other setup commands should be deterministic");
+      const sources = JSON.parse(input).sources as { id: string }[];
+      return JSON.stringify({ findings: [{ text: "The pilot ran for two days.", sourceIds: [sources[0].id] }], uncertainties: ["Limited supplied excerpt."] });
+    };
+    const payload = { command: "/nobo-help", text: `agent ${id} ${command}`, team_id: owner.teamId, user_id: owner.userId, channel_id: owner.channelId, trigger_id: `flow-${id}` };
+    const dependencies = { evaluateAccess: async () => ({ allowed: true }), handleAgentCommand: (text: string, caller: Parameters<typeof handleAgentCommand>[1]) => handleAgentCommand(text, caller, options) };
+    const first = await handleSlackSlashCommandPayload(payload, dependencies);
+    assert.equal(first.response.response_type, "ephemeral");
+    assert.equal(first.response.mrkdwn, false);
+    assert.equal(first.task, undefined);
+    assert.match(await handleAgentCommand(`${id} ${inspect}`, owner, options), new RegExp(PRIVATE_MARKER), first.response.text);
+    const saved = [...data];
+    const repeated = await handleSlackSlashCommandPayload(payload, dependencies);
+    assert.match(repeated.response.text, /already received/);
+    assert.deepEqual([...data], saved, "redelivery must preserve state and receipts");
+    for (const other of [{ ...owner, userId: "UOTHER" }, { ...owner, teamId: "TOTHER" }]) {
+      assert.doesNotMatch(await handleAgentCommand(`${id} ${inspect}`, other, options), new RegExp(PRIVATE_MARKER));
+    }
+    const ownKeys = [...data.keys()].filter((key) => key.startsWith(`nobo:agents:v1:${owner.teamId}:${owner.userId}:`));
+    assert.ok(ownKeys.length > 0);
+    assert.ok(ownKeys.every((key) => key.startsWith(`nobo:agents:v1:${owner.teamId}:${owner.userId}:${id}:`)));
+  });
+}
+
+test("calendar multiline import remains private and requires the saved preview token", async () => {
+  const { options, owner } = fixture();
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:integration@example.test", "DTSTART:20261023T140000Z", "DTEND:20261023T150000Z", `SUMMARY:${PRIVATE_MARKER}`, "END:VEVENT", "END:VCALENDAR"].join("\n");
+  const preview = await handleAgentCommand(`calendar import preview ${ics}`, owner, options);
+  const confirmation = preview.match(/import confirm (\S+)/)?.[0];
+  assert.ok(confirmation, preview);
+  assert.match(await handleAgentCommand(`calendar ${confirmation}`, owner, options), /confirm|import/i);
+  assert.match(await handleAgentCommand("calendar list", owner, options), new RegExp(PRIVATE_MARKER));
+  assert.doesNotMatch(await handleAgentCommand("calendar list", { ...owner, teamId: "TOTHER" }, options), new RegExp(PRIVATE_MARKER));
+  await handleAgentCommand("calendar clear confirm", owner, options);
+  assert.doesNotMatch(await handleAgentCommand("calendar list", owner, options), new RegExp(PRIVATE_MARKER));
 });
 
 test("inbox completes its reviewed workflow through the scoped runtime", async () => {
