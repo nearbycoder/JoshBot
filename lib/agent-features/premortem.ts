@@ -8,7 +8,7 @@ import { normalizeInstant } from "./feature-kit/civil-time.js";
 const route = "/nobo-help agent premortem";
 const text = (max: number) => v.pipe(v.string(), v.check(s => { try { return boundedText(s, { label: "Text", maxBytes: max }) === s; } catch { return false; } }));
 const instant = v.pipe(v.string(), v.check(s => { try { return normalizeInstant(s) === s; } catch { return false; } }));
-const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f-]{36}$/));
+const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/));
 const rating = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(5));
 const revision = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const riskSchema = v.strictObject({ id: idSchema, failure: text(768), likelihood: rating, impact: rating, trigger: v.nullable(text(768)), mitigation: v.nullable(text(768)), ownerLabel: v.nullable(text(120)), status: v.picklist(["open", "mitigating", "monitoring", "closed"]), residual: v.nullable(v.strictObject({ likelihood: rating, impact: rating, reason: text(256), at: instant })) });
