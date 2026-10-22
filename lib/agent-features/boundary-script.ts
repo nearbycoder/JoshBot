@@ -14,7 +14,7 @@ function validateRecord(value: unknown): asserts value is RecordData {
   object(value, ["id", "title", "revision", "createdAt", "updatedAt", "constraint", "stance", "offer", "date", "scope", "avoid"]); validBase(value);
   for (const [key, limit] of Object.entries(FIELD_LIMITS)) validText(value[key], limit, true);
   if (value.date !== "") civilDate(value.date);
-  if (value.stance !== null && !["decline", "defer", "reduce"].includes(String(value.stance))) throw new Error("Invalid stance.");
+  if (value.stance !== null && (typeof value.stance !== "string" || !["decline", "defer", "reduce"].includes(value.stance))) throw new Error("Invalid stance.");
   if (!Array.isArray(value.avoid) || value.avoid.length > 20) throw new Error("Invalid prohibited commitments.");
   for (const entry of value.avoid) { object(entry, ["id", "text"]); validId(entry.id); validText(entry.text, 1000); }
   unique(value.avoid.map(e => e.id));

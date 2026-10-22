@@ -26,3 +26,5 @@ Malformed state, quota failures and invalid optional output preserve bytes. CAS 
 Acceptance evidence: `tests/agent-delegation-brief.test.ts` covers the exact first example/workflow, boundary completeness, user-recorded acceptance, all field/entry edits and removal, Unicode pagination and quota completion, reference/quote/output rejection, stale optional work, CAS contention and private isolation with the real runtime/scoped store and fake services. Run with Node 24: `node --import tsx --test --test-concurrency=1 tests/agent-delegation-brief.test.ts`. Parent owns lazy registration, integration review and deployment; these checks do not approve release.
 
 Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.
+
+Persisted enum fields require exact strings: arrays, nested arrays and coercible objects are malformed. Reads, rendering, edits and even confirmed deletion preserve corrupt raw bytes for scoped recovery.

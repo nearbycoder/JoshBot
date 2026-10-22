@@ -15,7 +15,7 @@ function validateRecord(value: unknown): asserts value is RecordData {
   object(value, ["id", "title", "revision", "createdAt", "updatedAt", "lead", "ask", "facts", "audiences"]); validBase(value);
   validText(value.lead, 1000, true); validText(value.ask, 1000, true);
   if (!Array.isArray(value.facts) || value.facts.length > 20 || !Array.isArray(value.audiences) || value.audiences.length > 5) throw new Error("Invalid facts/audiences.");
-  for (const f of value.facts) { object(f, ["id", "text", "importance"]); validId(f.id); validText(f.text, 1000); if (!["required", "important", "optional"].includes(String(f.importance))) throw new Error("Invalid importance."); }
+  for (const f of value.facts) { object(f, ["id", "text", "importance"]); validId(f.id); validText(f.text, 1000); if ((typeof f.importance !== "string" || !["required", "important", "optional"].includes(f.importance))) throw new Error("Invalid importance."); }
   unique(value.facts.map(f => f.id));
   for (const a of value.audiences) {
     object(a, ["id", "name", "needs", "wordBudget", "requiredFactIds"]); validId(a.id); validText(a.name, 160); validText(a.needs, 1000); validNumber(a.wordBudget, 20, 1000);

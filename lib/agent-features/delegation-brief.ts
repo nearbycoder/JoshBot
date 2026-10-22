@@ -19,7 +19,7 @@ function validateRecord(value: unknown): asserts value is RecordData {
   if (!Array.isArray(value.entries) || value.entries.length > 20) throw new Error("Invalid entries.");
   for (const entry of value.entries) {
     object(entry, ["id", "kind", "date", "text"]); validId(entry.id); validText(entry.text, 1000);
-    if (!["in", "out", "resource", "checkpoint"].includes(String(entry.kind))) throw new Error("Invalid boundary kind.");
+    if ((typeof entry.kind !== "string" || !["in", "out", "resource", "checkpoint"].includes(entry.kind))) throw new Error("Invalid boundary kind.");
     if (entry.kind === "checkpoint") civilDate(entry.date); else if (entry.date !== "") throw new Error("Unexpected date.");
   }
   unique(value.entries.map(e => e.id));

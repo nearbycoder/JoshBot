@@ -26,3 +26,5 @@ CAS validation is synchronous; IDs/time are allocated before it. Malformed state
 Tests in `tests/agent-boundary-script.test.ts` exercise the catalog first example, exact-once alternative, missing date/scope, all edits/removal, lexical heuristics, Unicode quota and full final-child retrieval, optional schema failures, stale output and owner isolation through the real runtime/scoped store. Parent owns registration, independent integration review and release.
 
 Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.
+
+Persisted enum fields require exact strings: arrays, nested arrays and coercible objects are malformed. Reads, rendering, edits and even confirmed deletion preserve corrupt raw bytes for scoped recovery.

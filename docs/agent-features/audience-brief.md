@@ -28,3 +28,5 @@ Pure synchronous transforms validate current schema, references and quota on eve
 `tests/agent-audience-brief.test.ts` covers the exact first example/workflow, exact fact preservation, required overflow, audience selection/coverage, full editing/removal, maximum final fact/audience retrieval, Unicode quota recovery, optional references/quotes/word-budget checks, stale output and a genuine CAS conflict deleting a referenced fact. It uses the real runtime/scoped store and fake providers. Parent owns lazy registration, independent review and rollout.
 
 Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.
+
+Persisted enum fields require exact strings: arrays, nested arrays and coercible objects are malformed. Reads, rendering, edits and even confirmed deletion preserve corrupt raw bytes for scoped recovery.

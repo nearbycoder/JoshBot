@@ -86,3 +86,18 @@ test("mutation intent rejects same-record races, preserves deletions, and retrie
     assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
   }
 });
+
+test("coercible persisted enums reject reads, renders, mutations and confirmed deletion without changing raw bytes", async () => {
+  const f = createAgentFeatureFixture(feature), id = await create(f);
+
+  const original = await f.store().read<any>("state");
+  for (const bad of [["decline"], [["decline"]], { toString: "decline" }, 1, true, "unknown"]) {
+    const state = structuredClone(original), r = state.records[0]; r.stance = bad;
+    const raw = JSON.stringify(state); f.backend.data.set(f.key("state"), raw);
+    for (const command of [`show ${id}`, `export ${id}`, "list", `draft ${id}`, `edit ${id} | title | Replacement`, `delete ${id} confirm`]) {
+      assert.match(await f.run(command), /could not be read safely.*preserved/);
+      assert.equal(f.backend.data.get(f.key("state")), raw);
+    }
+  }
+  assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
