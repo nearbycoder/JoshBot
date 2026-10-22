@@ -7,6 +7,18 @@ import { runAgentFeature } from "../lib/agent-features/runtime.js";
 import { handleAgentCommand } from "../lib/agent-features/index.js";
 import { createAgentTestContext } from "./agent-feature-test-utils.js";
 import type { AgentFeature } from "../lib/agent-features/types.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+test("fresh-process direct discovery and Home rendering load no implementations, services or Redis", async () => {
+  const { stdout } = await promisify(execFile)(process.execPath, ["--max-old-space-size=1024", "--import", "tsx", new URL("./helpers/agent-catalog-import-trace.mjs", import.meta.url).pathname], { timeout: 30_000, maxBuffer: 100_000 });
+  const report = JSON.parse(stdout.trim());
+  assert.equal(report.registered, agentFeatures.length);
+  assert.ok(report.routes > agentFeatures.length * 2);
+  assert.equal(report.implementationLoads, 0);
+  assert.equal(report.forbiddenLoads, 0);
+  assert.equal(report.startup, 0);
+});
 
 const owner = { teamId: "TPERF", userId: "UPERF" };
 function gate<T>() {

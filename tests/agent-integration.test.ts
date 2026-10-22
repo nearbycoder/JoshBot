@@ -27,8 +27,8 @@ function fixture() {
 test("registered personal agents have unique IDs and discoverable help", async () => {
   const { owner } = fixture();
   assert.equal(new Set(agentFeatures.map((feature) => feature.id)).size, agentFeatures.length);
-  assert.equal(agentFeatures.length, 20);
-  assert.match(formatAgentHelp(), /inbox:/);
+  assert.equal(agentFeatures.length, 67);
+  assert.match(formatAgentHelp(), /calendar —/);
   for (const feature of agentFeatures) {
     assert.ok((await handleAgentCommand(`${feature.id} help`, owner)).length > 20);
   }
@@ -41,6 +41,57 @@ test("registered personal agents have unique IDs and discoverable help", async (
 });
 
 const PRIVATE_MARKER = "PrivateIntegrationEvidence";
+for (const scenario of [
+  { id: "task-breakdown", prefix: "work", create: `create ${PRIVATE_MARKER} | Readers can install the app | 30`,
+    change: (id: string) => `step ${id} add Test installation | 20 | A clean installation succeeds`, inspect: (id: string) => `check ${id}`, expected: /remaining 20 minutes/ },
+  { id: "number-audit", prefix: "audit", create: `create ${PRIVATE_MARKER}`,
+    change: (id: string) => `check ${id} add sum | 15,25,10 | 55 | 0 | minutes`, inspect: (id: string) => `run ${id}`, expected: /MISMATCH: result 50/ },
+]) test(`${scenario.id} mutation, computed view and deletion use the private slash dispatcher with tenant isolation`, async () => {
+  const { data, options, owner } = fixture();
+  options.services.generate = async () => assert.fail("deterministic workflow called model");
+  options.services.search = async () => assert.fail("deterministic workflow called search");
+  options.services.readContext = async () => assert.fail("input-only workflow read sources");
+  let delivery = 0;
+  const dispatch = async (command: string, caller = owner) => {
+    const result = await handleSlackSlashCommandPayload({ command: "/nobo-help", text: `agent ${scenario.id} ${command}`, team_id: caller.teamId, user_id: caller.userId, channel_id: caller.channelId, trigger_id: `new-feature-${scenario.id}-${++delivery}` }, {
+      evaluateAccess: async () => ({ allowed: true }),
+      handleAgentCommand: (text, signed) => handleAgentCommand(text, signed, options),
+    });
+    assert.equal(result.response.response_type, "ephemeral"); assert.equal(result.response.mrkdwn, false); assert.equal(result.task, undefined);
+    return result.response.text;
+  };
+  const created = await dispatch(scenario.create), id = created.match(new RegExp(`${scenario.prefix}-[a-f0-9-]{36}`))?.[0];
+  assert.ok(id, created);
+  assert.match(await dispatch(scenario.change(id)), /Saved privately/);
+  assert.match(await dispatch(scenario.inspect(id)), scenario.expected);
+  assert.match(await dispatch(`show ${id}`), new RegExp(PRIVATE_MARKER));
+  for (const foreign of [{ ...owner, userId: "UOTHER" }, { ...owner, teamId: "TOTHER" }]) {
+    const before = [...data];
+    const response = await dispatch(`delete ${id} confirm`, foreign);
+    assert.doesNotMatch(response, new RegExp(PRIVATE_MARKER));
+    const owned = before.filter(([key]) => key.startsWith(`nobo:agents:v1:${owner.teamId}:${owner.userId}:`));
+    assert.deepEqual([...data].filter(([key]) => key.startsWith(`nobo:agents:v1:${owner.teamId}:${owner.userId}:`)), owned);
+    assert.match(await dispatch(`show ${id}`), new RegExp(PRIVATE_MARKER));
+  }
+  assert.match(await dispatch(`delete ${id} confirm`), /Deleted privately/);
+  assert.doesNotMatch(await dispatch("list"), new RegExp(PRIVATE_MARKER));
+  assert.ok(!JSON.stringify([...data.values()]).includes(PRIVATE_MARKER), "receipts must not retain deleted input");
+});
+
+test("private slash discovery honors policy and leaves no receipts or startup writes", async () => {
+  const { data, options, owner } = fixture();
+  const never = async () => assert.fail("discovery initialized feature dependencies");
+  for (const command of ["", "catalog page 2", "catalog group learn page 2", "search private page 2", ...agentFeatures.map(entry => `${entry.id} help`)]) {
+    let checked = false;
+    const result = await handleSlackSlashCommandPayload({ command: "/nobo-help", text: `agent ${command}`, team_id: owner.teamId, user_id: owner.userId, channel_id: owner.channelId, trigger_id: "browse-no-receipt" }, {
+      evaluateAccess: async input => { assert.equal(input.userId, owner.userId); checked = true; return { allowed: true }; },
+      handleAgentCommand: (text, signed) => { assert.ok(checked); return handleAgentCommand(text, signed, options, { createBackend: never, preferences: never, loadServices: never }); },
+    });
+    assert.equal(result.response.response_type, "ephemeral"); assert.equal(result.response.mrkdwn, false); assert.equal(result.task, undefined);
+    assert.ok(result.response.text.length <= 3_500); assert.equal(data.size, 0);
+  }
+});
+
 const privateFlows = [
   ["morning-brief", `settings focus ${PRIVATE_MARKER}`, "show"],
   ["weekly-review", "review", "show latest"],

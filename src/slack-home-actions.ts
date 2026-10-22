@@ -1,6 +1,6 @@
 import type { App } from "@slack/bolt";
 import { toolboxView } from "./slack-toolbox.js";
-import { formatAgentHelp } from "../lib/agent-features/registry.js";
+import { openSlackAgentCatalog, registerSlackAgentCatalogActions } from "./slack-agent-catalog.js";
 import type { ViewsOpenArguments } from "@slack/web-api";
 import {
   plain,
@@ -75,9 +75,14 @@ export function registerSlackHomeActions(
     details: createSlackHomeDetailsView,
   },
 ) {
+  registerSlackAgentCatalogActions(bolt, dependencies);
   bolt.action(/^nobo_home_/, async ({ ack, action, body, client }) => {
     await ack();
     if (!("trigger_id" in body) || !("action_id" in action)) return;
+    if (resolveHomeDestination(action) === "agents") {
+      await openSlackAgentCatalog(body, client, dependencies);
+      return;
+    }
     const access = await dependencies.access({
       userId: body.user.id,
       teamId: body.team?.id,
@@ -181,8 +186,6 @@ export function registerSlackHomeActions(
         );
       } else if (selected === "toolbox") {
         await show(toolboxView());
-      } else if (selected === "agents") {
-        await show(modal("Personal agents", textBlocks(escapeSlack(formatAgentHelp()))));
       } else if (selected === "reminders") {
         const items = await getUserScheduleDashboardItems(body.user.id, 10);
         const blocks = items.flatMap((item) => [
