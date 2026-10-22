@@ -60,3 +60,15 @@ test('lossless maximum Unicode/escaping retrieval and all mandatory closure fiel
  await f.run(`reopen ${target.id}`);assert.match(await f.run(firstNext.replace('/nobo-help agent shutdown-review ','')),/changed/);
  for(const r of finished.records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
 });
+test('otherwise valid CLOSED reviews reject impossible and noncanonical timestamps without touching bad bytes',async()=>{
+ const f=createAgentFeatureFixture(feature),day=id(await f.run('start 2026-10-22'));
+ await f.run(`loop ${day} add Complete local review`);const loop=(await record(f,day)).loops[0].id;
+ await f.run(`disposition ${day} ${loop} | done | none | Reviewed locally`);await f.run(`first-step ${day} | Begin tomorrow`);await f.run(`close ${day}`);
+ const valid=await state(f);assert.equal(valid.records[0].closedAt,'2026-10-22T15:00:00.000Z');assert.match(await f.run(`check ${day}`),/All required fields are complete/);
+ for(const closedAt of ['2026-02-30T15:00:00.000Z','2026-10-22T10:00:00.000-05:00']){
+  const bad=structuredClone(valid);bad.records[0].closedAt=closedAt;const raw=JSON.stringify(bad);f.backend.data.set(f.key('state'),raw);
+  for(const command of ['list',`show ${day}`,`check ${day}`,`export ${day}`,`delete ${day} confirm`]){
+   assert.match(await f.run(command),/Invalid saved shutdown-review schema/);assert.equal(f.backend.data.get(f.key('state')),raw);
+  }
+ }
+});
