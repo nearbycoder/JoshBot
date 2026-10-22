@@ -32,3 +32,76 @@ Context reads are sequential per invocation, with at most 2,000 items, 16 MiB of
 Measurements use Node24.22.1 and seed20261022, synthetic bounded services, production Vite SSR bundling, and an isolated fake Slack API for server startup. No live inference, Slack messages or production records are used. Run `node scripts/bench-agent-features.mjs` with Node24. Full-server and feature-runtime measurements must be interpreted separately. The benchmark report and maximum-context/mixed-load evidence are being completed in a follow-up commit; the selected admission limits were tested against the same three 32-command recall bursts as the baseline.
 
 Initial baseline: all96 commands accepted, accepted p95 1,254–1,287ms, loop maximum1,348–1,411ms, feature RSS peak278–279MiB. With8 permits:24 accepted/72 rejected, p95 249–266ms, loop253–265ms. With4:12 accepted/84 rejected, p95158–206ms, loop147–190ms. With3:9 accepted/87 rejected, p95117–140ms, loop110–127ms, feature RSS peak141–142MiB. Lower accepted latency is **not a throughput improvement**: overload work is explicitly rejected. The150ms event-loop target is a local regression target, not a production latency guarantee. All samples, including noisy JIT/GC samples, are retained in the report.
+
+## Recorded baseline and final foundation comparison
+
+All valid samples are retained in [`scripts/bench-agent-features.results.json`](../scripts/bench-agent-features.results.json), including failures. The baseline is commit `7a30db374bf3df702af5e28413468a04dc571862`; foundation is `19bff050a0862e8f0fc41abcc9b339ba07e30dbe`. The extended baseline was run from a temporary git archive using the same benchmark script. Node24.22.1, Linux x64, AMD RYZEN AI MAX+395; a shared development host, not a dedicated production instance.
+
+The script builds the real runtime and server entries with the production Vite configuration, then forks fresh Node processes with a384MiB heap limit, synthetic services, an environment allowlist and outbound-fetch rejection. Server smoke uses a loopback Slack `auth.test` fixture and disables background runners. This is the production bootstrap code and bundler, but not Railway's exact container/runtime environment or a live Slack workload. Parent build memory is excluded. Linux `VmHWM` measures the exec'd child's RSS high-water mark; an initial probe using `resourceUsage.maxRSS` inherited the build parent's high-water mark and was corrected before the retained reports. Idle memory is sampled after an explicit GC; normal production GC timing differs.
+
+Each runtime sample seeds40 inbox captures, measures100 sequential lists, sends three simultaneous32-request recall bursts (600 notes per accepted request, roughly0.9MB text), then offers60 mixed commands (45 lists and15 recall). The mixed driver waits10ms between arrivals, so event-loop stalls delay the driver too: its measured arrival/completion rate is closed-loop, not a promised open-loop throughput capacity. The baseline accepts96 recall calls before the mixed phase; admission accepts9, so JIT warmup histories also differ. The RSS peak includes the entire runtime sample, including mixed traffic.
+
+| Extended workload | Baseline samples1/2/3 | Foundation samples1/2/3 |
+| --- | --- | --- |
+| Burst accepted / offered | 96/96 in each | 9/96 in each |
+| Burst rejected / offered | 0/96 in each | 87/96 in each |
+| Accepted burst p95, ms | 915.12 /905.16 /1104.32 | 196.61 /205.62 /220.80 |
+| Burst CPU, ms | 3108.47 /3075.82 /3728.25 | 442.91 /483.84 /451.23 |
+| Busy p95, ms | No busy responses | 0.175 /0.195 /0.275 |
+| Mixed accepted / offered | 60/60 in each | 60/60 in each |
+| Mixed deterministic p95, ms | 1.300 /1.418 /1.348 | 1.544 /2.120 /1.454 |
+| Mixed recall p95, ms | 40.18 /52.61 /52.05 | 85.10 /84.43 /82.12 |
+| Mixed CPU, ms | 565.15 /748.01 /713.44 | 725.02 /674.01 /698.45 |
+| Mixed completions / second | 65.37 /56.15 /58.30 | 51.62 /56.05 /54.70 |
+| Runtime peak RSS, MiB | 280.96 /278.96 /281.14 | 207.73 /207.92 /208.32 |
+| Event-loop maximum, ms | 1004.54 /942.67 /1168.11 | 187.56 /202.24 /206.18 |
+
+**The strict150ms event-loop check failed in all three extended foundation samples.** Earlier limit-selection samples at3 permits had110–127ms maxima; these later188–206ms results remain in the record. Admission stays3/2; neither the threshold nor admission was weakened to make the check green. The lower aggregate burst CPU reflects87 rejected commands, not cheaper individual recall or increased throughput. Ordinary commands remain responsive in this bounded mixed workload, but mixed recall has no demonstrated speedup in the foundation. No actual cloud savings are inferred.
+
+Feature-help idle heap fell from13.02MiB to11.07MiB in the extended samples. Full-server results remain separate:
+
+| Server metric | Baseline samples1/2/3 | Foundation samples1/2/3 |
+| --- | --- | --- |
+| Ready, ms | 642.56 /716.76 /730.01 | 853.90 /818.76 /557.08 |
+| Idle RSS, MiB | 317.78 /307.43 /316.43 | 309.82 /301.73 /335.09 |
+| Idle heap, MiB | 83.90 /83.96 /83.91 | 82.67 /82.72 /82.64 |
+| Peak RSS, MiB | 339.30 /327.60 /336.74 | 330.18 /317.23 /339.00 |
+
+These RSS ranges overlap and include a higher foundation sample; **there is no demonstrated full-server RSS reduction**. Production metrics cannot be compared to local RSS as if they were the same workload or process environment.
+
+## Maximum source volumes and validator cost
+
+Real production-adapter tests read all1500 supported records: five toolbox kinds×100, four legacy kinds×200,100 confirmed calendar events and100 approved memories. With1000-character toolbox/job bodies this complete snapshot is2,611,611 JSON-equivalent bytes and passes through the actual runtime. At12000-character bodies the combined snapshot exceeds16MiB and fails visibly without writes. Narrowing to100 notes succeeds at1,220,581bytes;200 reminders succeeds at4,926,491bytes. Thus the new byte bound deliberately excludes some previously individually valid source combinations. A count bound alone does not guarantee a combined byte bound. Existing twenty workflows pass their regression suite, but there is no claim that every combination of previously maximal records fits. User recovery is narrower source kinds where the feature supports them, or fewer/smaller selected source records; features with fixed source sets currently show their own context-unavailable error and may need a future UX improvement for narrower selection.
+
+An additional fresh-process workload runs3 concurrent actual runtime invocations with1500 unique records each,16,356,390 text bytes plus metadata (near16MiB). All3/3 finish in each of three samples. Foundation p95 is186.79 /86.27 /81.41ms; peak RSS110.79 /128.68 /128.10MiB; process CPU334.24 /258.84 /211.29ms. The corresponding baseline without runtime byte validation is recorded too (the benchmark does not serialize the payload to measure it). This measures the cost of validating a large complete response, not inference or retrieval. Byte counting is incremental; node/depth/count bounds prevent pathological metadata traversal. No snapshot survives in a process-wide cache.
+
+## CPU profile and next optimization
+
+A separate bounded V8 sampling profile covers the same three32-command recall bursts, with9 accepted and87 busy responses. Of356.72ms sampled, recall consumes260.24ms(73%), context-byte validation21.11ms(5.9%), GC21.12ms(5.9%), idle24.23ms and other runtime/startup/profiler work30.02ms. These are sampled stack times, not exact CPU accounting or proof of a particular JIT stall. Profiling overhead is excluded from the comparative benchmark samples.
+
+Within recall (overlapping inclusive times), retrieval accounts for206.57ms, excerpt generation109.94ms, normalization47.38ms and frequency building47.42ms. `recall.ts` currently tokenizes source bodies repeatedly and builds excerpts for every matching candidate before sorting and selecting the displayed limit. A600-match query that displays10 results therefore scans600 bodies for excerpts. Ranking first and generating excerpts only for the selected results is the concrete next change; per-invocation normalization reuse may reduce repeated scans. Cooperative yielding could break long turns and add abort opportunities but would not by itself reduce CPU. No recall behavior was changed in the foundation/report commits.
+
+## Exact production snapshot
+
+Read-only Railway CLI5.62.1 queries used the absolute window **2026-10-22T16:45:00Z inclusive through17:45:00Z exclusive**, project`042cca35-2b42-4c41-a233-0b25a5ecdbd6`, production environment`96f78f81-0cbd-4ead-805b-1f409ac128ed`. There are120 evenly spaced30-second samples per series; first16:45:00Z, last17:44:30Z. Values below are arithmetic means/minima/maxima/latest of those returned samples, including zeros. The app's zero sample is retained; this report does not diagnose a deployment gap from a resource sample alone.
+
+| Service / measurement | Mean | Minimum | Maximum | Latest |
+| --- | ---: | ---: | ---: | ---: |
+| App CPU, vCPU | 0.00112190 | 0 | 0.08075153 | 0.00023160 |
+| App memory, GB | 0.23887855 | 0 | 0.44038554 | 0.17749606 |
+| Redis CPU, vCPU | 0.00263781 | 0 | 0.00394437 | 0.00292310 |
+| Redis memory, GB | 0.00848207 | 0.00828621 | 0.00881869 | 0.00854835 |
+
+App service:`eb6c005c-9ef7-4ca2-a964-8cd924ecdcb2`; Redis:`5c1ad89e-2971-46d4-90dc-b59affdf38f5`. The supplied app deployment reference was`a588ccd9-57e2-4518-b8f0-f2af93433b25`; these queries are **service-level time series**, not measurements filtered to that deployment. Earlier MCP one-hour summaries used61 samples at60-second resolution and different relative windows; their means therefore differ. Railway describes CPU in vCPU and service-level metrics spanning deployments; see [resource measurement units](https://docs.railway.com/guides/right-size-cpu-memory) and [metric aggregation](https://docs.railway.com/observability/metrics). These are consumption observations, not paid allocation, a bill, or savings forecasts. No production settings, records or secrets were accessed/changed beyond read-only metrics and local CLI authentication.
+
+## Repeatable checks
+
+```sh
+PATH=/tmp/joshbot-node24/bin:$PATH node scripts/bench-agent-features.mjs --output /tmp/agent-benchmark.json
+PATH=/tmp/joshbot-node24/bin:$PATH node scripts/bench-agent-features.mjs --check
+PATH=/tmp/joshbot-node24/bin:$PATH node scripts/bench-agent-features.mjs --profile /tmp/agent-recall.cpuprofile
+```
+
+`--check` is an opt-in local performance regression gate: runtime RSS≤256MiB, deterministic p95≤50ms, accepted recall p95≤250ms, event-loop maximum≤150ms, at most3 physical context reads, and exactly9 accepted/87 busy burst requests plus60/60 mixed completions. It currently fails the strict event-loop target as documented. It is not part of the normal correctness suite and must not silently be relaxed for shared-host noise. The script removes its temporary bundles and permits no live inference/search; only the loopback fake Slack API is used by server smoke. Source dependencies are linked without changing their package contents.
+
+Correctness validation:658 personal-agent tests passed with zero skips, Node's test concurrency2, and an isolated loopback Redis7.2.10 instance with persistence disabled and removed after the run. The subsequent production-adapter maxima test passes in the15-test performance suite; typecheck passes. Scope covers the existing20 workflows, tenant isolation, receipts, logical store limits/CAS contention, byte budgets, overlapping context rejection, original deadlines, lazy metadata drift, retained cancelled raw promises and real Exa SDK transport cancellation. No live models, Slack messages, deployments, pushes or PRs were used.

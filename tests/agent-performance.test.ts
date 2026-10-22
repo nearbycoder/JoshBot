@@ -203,3 +203,40 @@ test("production Exa transport receives and acts on the original abort signal", 
     assert.equal(cancelled, true);
   } finally { if (previous === undefined) delete process.env.EXA_API_KEY; else process.env.EXA_API_KEY = previous; }
 });
+
+test("real adapters serve all 1500 supported records; oversized combined sources fail and narrower reads recover", async (t) => {
+  const { eventId } = await import("../lib/agent-features/calendar/ics.js");
+  const { createAgentFeatureServices, createProductionContextAdapters } = await import("../lib/agent-features/services.js");
+  const { measureAgentContext } = await import("../lib/agent-features/budgets.js");
+  const f = fixture(), now = new Date("2026-10-22T12:00:00.000Z"), at = now.toISOString();
+  const caller = { ...owner, channelId: "CPERF" };
+  const seed = (textLength: number) => {
+    for (const tool of ["notes", "goals", "habits", "journal", "bookmarks"]) f.data.set(`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:${tool}`, JSON.stringify({entries:Array.from({length:100},(_,i)=>({id:`item-${i}`,title:`Atlas ${i}`,body:"x".repeat(textLength),updatedAt:at,data:{}}))}));
+    for (const [prefix, field] of [["follow-ups:record:","task"],["schedules:job:","task"],["monitors:job:","query"],["channel-digests:subscription:","focus"]]) {
+      for(let i=0;i<200;i++) f.data.set(`${prefix}record-${i}`,JSON.stringify({id:`record-${i}`,channel:caller.channelId,ownerUserId:caller.userId,createdByUserId:caller.userId,createdAt:at,kind:"daily",frequency:"daily",hour:9,minute:0,timezone:"UTC",[field]:"x".repeat(textLength)}));
+    }
+  };
+  seed(1_000);
+  f.data.set(`nobo:agents:v1:${owner.teamId}:${owner.userId}:calendar:calendar-v1`,JSON.stringify({version:1,revision:1,pending:null,events:Array.from({length:100},(_,i)=>({id:eventId(`event-${i}`),uid:`event-${i}`,title:`Meeting ${i}`,location:"Office",busy:true,allDay:false,updatedAt:at,startAt:at,endAt:"2026-10-22T13:00:00.000Z",timezone:"UTC"}))}));
+  f.data.set(`nobo:agents:v1:${owner.teamId}:${owner.userId}:memory-review:cards`,JSON.stringify({version:1,cards:Array.from({length:100},(_,i)=>{
+    const claim={fact:`Atlas memory ${i}`,source:"My confirmation",expiresOn:null,confidence:null};
+    return {...claim,id:`mr_00000000-0000-4000-8000-${String(i).padStart(12,"0")}`,subject:`subject${i}`,key:"key",confirmedAt:at,capturedAt:at,updatedAt:at,revision:2,origin:{kind:"user"},history:[{...claim,confirmedAt:null,revision:1,action:"capture",at},{...claim,confirmedAt:at,revision:2,action:"confirm",at}]};
+  })}));
+  const adapters=createProductionContextAdapters({redis:async()=>({eval:async()=>Array.from({length:200},(_,i)=>`record-${i}`)}),evaluateAccess:async()=>({allowed:true})});
+  const services=createAgentFeatureServices(f.options.backend,caller,new AbortController().signal,{now,timezone:"UTC"},adapters);
+  const observed: { count: number; bytes: number; kinds: Record<string,number> }[]=[];
+  const read: AgentFeature={...feature,execute:async(command,ctx)=>{
+    const items=await ctx.services.readContext(command==="all"?undefined:[command as "note"|"reminder"]);
+    observed.push({count:items.length,bytes:measureAgentContext(items),kinds:items.reduce((counts,item)=>({...counts,[item.kind]:(counts[item.kind]??0)+1}),{} as Record<string,number>)});
+    return String(items.length);
+  }};
+  const settings={...f.options,services,now};
+  assert.equal(await runAgentFeature(read,"all",caller,settings),"1500");
+  assert.equal(Object.keys(observed[0].kinds).length,11);
+  seed(12_000);
+  await assert.rejects(()=>runAgentFeature(read,"all",caller,settings),/complete-read budget/);
+  assert.equal(await runAgentFeature(read,"note",caller,settings),"100");
+  assert.equal(await runAgentFeature(read,"reminder",caller,settings),"200");
+  assert.equal(f.writes,0,"source reads and quota failures never mutate persisted sources");
+  t.diagnostic(JSON.stringify({adapterMaxima:observed}));
+});
