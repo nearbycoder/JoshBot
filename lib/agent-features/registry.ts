@@ -28,11 +28,24 @@ export const agentFeatures: readonly AgentFeature[] = [
   decisionCoach, handoffs, calendar, travel, automationAudit,
 ];
 
+const contextCoverage = "Available context: your private toolbox, confirmed calendar imports, and approved memory cards. Reminders, monitors, digests and follow-ups cover only your records in the channel where you run the command. Saved artifacts and legacy personal memory are not connected.";
+const contextFeatures = new Set([
+  "morning-brief", "weekly-review", "day-planner", "meeting-prep", "read-later",
+  "project-briefs", "recall", "memory-review", "handoffs", "automation-audit",
+]);
+
+export function formatAgentFeatureHelp(feature: AgentFeature): string {
+  if (!contextFeatures.has(feature.id)) return feature.help;
+  const extra = feature.id === "memory-review" ? " Legacy import currently returns no candidates; capture facts explicitly." : "";
+  return `${feature.help}\n\n${contextCoverage}${extra}`;
+}
+
 export function formatAgentHelp() {
   return [
     "Personal agents",
     "Use /nobo-help agent <name> help for commands and examples.",
     "Results stay private. Some commands use NoBo's configured model or web search.",
+    contextCoverage,
     "",
     ...agentFeatures.map((feature) => `${feature.id}: ${feature.title} — ${feature.description}`),
   ].join("\n");

@@ -1,6 +1,6 @@
 import { getUserPreferences } from "../preferences.js";
 import { getSlackAgentRun } from "../slack-agent-runs.js";
-import { agentFeatures, formatAgentHelp } from "./registry.js";
+import { agentFeatures, formatAgentFeatureHelp, formatAgentHelp } from "./registry.js";
 import { runAgentFeature, type AgentFeatureOwner, type AgentRuntimeOptions } from "./runtime.js";
 import { createAgentStateBackend, validateAgentIdentity } from "./store.js";
 import { contextRead } from "./context/shared.js";
@@ -24,7 +24,7 @@ export async function handleAgentCommand(
   if (!id || id.toLowerCase() === "help") return formatAgentHelp();
   const feature = agentFeatures.find((candidate) => candidate.id === id.toLowerCase());
   if (!feature) return "Unknown personal agent. Use /nobo-help agent for available features.";
-  if (command.trim().toLowerCase() === "help") return feature.help;
+  if (command.trim().toLowerCase() === "help") return formatAgentFeatureHelp(feature);
   if (options) return runAgentFeature(feature, command, owner, options);
 
   const now = new Date();

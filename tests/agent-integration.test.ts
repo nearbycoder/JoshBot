@@ -34,6 +34,9 @@ test("registered personal agents have unique IDs and discoverable help", async (
   }
   assert.match(await handleAgentCommand("", owner), /Personal agents/);
   assert.match(await handleAgentCommand("missing help", owner), /Unknown personal agent/);
+  assert.match(await handleAgentCommand("recall help", owner), /only your records in the channel/);
+  assert.match(await handleAgentCommand("recall help", owner), /artifacts and legacy personal memory are not connected/);
+  assert.match(await handleAgentCommand("memory-review help", owner), /Legacy import currently returns no candidates/);
   await assert.rejects(() => handleAgentCommand("inbox help", {}), /signed Slack/);
 });
 
