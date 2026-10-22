@@ -31,7 +31,7 @@ function assertSame(actual: unknown, expected: unknown) {
   if (stamp(actual) !== stamp(expected)) throw new InputError('Saved content changed; reopen it before retrying.');
 }
 function parts(body: string): DisplayPart[] {
-  return body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|(?:calendar|toolbox):[A-Za-z0-9:_-]+|e1:[0-9a-f]{64})/g)
+  return body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|(?:calendar|toolbox):[A-Za-z0-9:_-]+|e1:[0-9a-f]{64}|[0-9a-f]{64})/g)
     .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function pages(body: string, command: string, value: {revision: number}, page = 1) {
@@ -67,9 +67,9 @@ const get = (s: State, id: string) => {
   return r;
 };
 function future(s: State): State {
-  return {...s, revision: Number.MAX_SAFE_INTEGER, records: s.records.map(r => r.kind === 'log' ?
+  return {...s, revision: Number.MAX_SAFE_INTEGER, records: s.records.map<Record>(r => r.kind === 'log' ?
     {...r, revision: Number.MAX_SAFE_INTEGER, disruption: 1440, recovery: 1440, basis: 'estimated'} :
-    {...r, revision: Number.MAX_SAFE_INTEGER})};
+    {...r, revision: Number.MAX_SAFE_INTEGER}).concat(s.records.some(r => r.kind === 'range') ? [] : [{id: '00000000-0000-4000-8000-000000000000', revision: Number.MAX_SAFE_INTEGER, kind: 'range', start: '9999-01-01', end: '9999-12-31'}])};
 }
 function admit(s: State, mode: 'content' | 'lifecycle' | 'remove') {
   const projected = future(s), limits = {maxRecords: 93};
@@ -159,7 +159,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const next = await ctx.store.update('state',initial,raw=>{
       const current=validate(raw), existing=current.records.find(r=>r.kind==='range'); assertSame(existing??null,expected??null);
       const r: Record={id:expected?.id??newId,revision:expected?bump(expected.revision):1,kind:'range',start,end};
-      current.records=current.records.filter(x=>x.kind!=='range');current.records.push(r);current.revision=bump(current.revision);validate(current);admit(current,expected?'lifecycle':'content');
+      current.records=current.records.filter(x=>x.kind!=='range');current.records.push(r);current.revision=bump(current.revision);validate(current);admit(current,'lifecycle');
       return {value:current,result:current};
     });
     const range=next.records.find(r=>r.kind==='range')! as v.InferOutput<typeof rangeSchema>;

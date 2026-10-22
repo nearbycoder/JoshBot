@@ -50,12 +50,12 @@ test('real CAS retries preserve unrelated edits; same-record late deletion and r
 });
 test('maximum escaped Unicode records, ten-row lists and exact stamped report continuations',async()=>{
  const f=createAgentFeatureFixture(feature);const task='漢😀\\|'.repeat(12);const encoded=task.replace(/\\/g,'\\\\').replace(/\|/g,'\\|');
- for(let i=0;i<60;i++)assert.match(await f.run(`log 2026-10-${String(i%20+1).padStart(2,'0')} | category${i} | ${encoded} | ${i%8} | 2 | measured`),/Saved privately/);
- const all=(await state(f)).records;assert.equal(all.length,60);let listed='';for(let i=1;i<=6;i++)listed+=await f.run('list '+i);for(const r of all)assert.ok(listed.includes(r.id));
+ for(let i=0;i<80;i++)assert.match(await f.run(`log 2026-10-${String(i%20+1).padStart(2,'0')} | category${i} | ${encoded} | ${i%8} | 2 | measured`),/Saved privately/);
+ const all=(await state(f)).records;assert.equal(all.length,80);let listed='';for(let i=1;i<=8;i++)listed+=await f.run('list '+i);for(const r of all)assert.ok(listed.includes(r.id));
  const one=JSON.parse(await f.run('export '+all[0].id));assert.equal(one.record.task,task);
  let output=await f.run('review 2026-10-01 | 2026-10-31'),joined='';let count=0,continuation='';
  do {assert.ok(output.length<=3500);joined+=output.split('\n').slice(1).join('\n').split('\nNext: ')[0];continuation=output.match(/Next: (\/nobo-help agent interruption-audit [^\n]+)/)?.[1]??'';count++;if(continuation)output=await f.run(continuation.replace('/nobo-help agent interruption-audit ',''));}while(continuation&&count<20);
- assert.ok(count>1);for(let i=0;i<60;i++)assert.equal(joined.split('Category category'+i+':').length-1,1);
+ assert.ok(count>1);for(let i=0;i<80;i++)assert.equal(joined.split('Category category'+i+':').length-1,1);
  const first=await f.run('review 2026-10-01 | 2026-10-31');const next=first.match(/Next: (.+)/)![1];
  await f.run(`measure ${all[0].id} | 9 | 9 | measured`);assert.match(await f.run(next.replace('/nobo-help agent interruption-audit ','')),/changed/);
  const foreign=await f.run('show '+all[0].id,{owner:{teamId:'TOTHER',userId:f.owner.userId}});assert.match(foreign,/not found/);
@@ -69,5 +69,6 @@ test('saturate content then finish all measurements and remove records above adm
  // Valid lifecycle-grown state remains removable even beyond the content threshold.
  final.revision=Number.MAX_SAFE_INTEGER;for(const r of final.records)r.revision=Number.MAX_SAFE_INTEGER;
  f.backend.data.set(f.key('state'),JSON.stringify(final));
- for(const r of final.records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
+ assert.match(await f.run('review 2026-10-01 | 2026-10-31'),/total reported minutes/);
+ for(const r of (await state(f)).records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
 });
