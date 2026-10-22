@@ -34,6 +34,7 @@ import numberAuditMetadata from "./number-audit.metadata.js";
 import pantryPlanMetadata from "./pantry-plan.metadata.js";
 import practiceLabMetadata from "./practice-lab.metadata.js";
 import premortemMetadata from "./premortem.metadata.js";
+import processFrictionMetadata from "./process-friction.metadata.js";
 import purchaseCompareMetadata from "./purchase-compare.metadata.js";
 import questionTriageMetadata from "./question-triage.metadata.js";
 import readingPathMetadata from "./reading-path.metadata.js";
@@ -109,6 +110,7 @@ export const agentFeatures: readonly AgentFeature[] = [
   lazyAgentFeature(pantryPlanMetadata, () => import("./pantry-plan.js")),
   lazyAgentFeature(practiceLabMetadata, () => import("./practice-lab.js")),
   lazyAgentFeature(premortemMetadata, () => import("./premortem.js")),
+  lazyAgentFeature(processFrictionMetadata, () => import("./process-friction.js")),
   lazyAgentFeature(purchaseCompareMetadata, () => import("./purchase-compare.js")),
   lazyAgentFeature(questionTriageMetadata, () => import("./question-triage.js")),
   lazyAgentFeature(readingPathMetadata, () => import("./reading-path.js")),

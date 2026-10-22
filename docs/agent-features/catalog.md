@@ -1,6 +1,6 @@
 # Personal agent discovery
 
-This checkout registers **68 implemented personal agents**: the existing 20 and 48 additions. Registration and navigation are local implementation work, **not a deployment or release claim**. The remaining additions are registered only after their real modules and metadata arrive. The parent owns final review and release.
+This checkout registers **69 implemented personal agents**: the existing 20 and 49 additions. Registration and navigation are local implementation work, **not a deployment or release claim**. The remaining addition, `change-impact`, will be registered only after its real module and metadata arrive. The parent owns final review and release.
 
 Start privately in your Slack channel or DM composer:
 
