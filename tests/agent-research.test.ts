@@ -495,3 +495,169 @@ test("storage errors provide retry guidance without exposing internals", async (
   assert.ok(!output.includes("secret"));
   assert.equal(searches.length, 0);
 });
+
+function bytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function unicodeSources(): AgentSearchResult[] {
+  return Array.from({ length: 5 }, (_, i) => ({
+    title: "題".repeat(160), url: `https://example.com/${i}/${"x".repeat(970)}`,
+    text: "研究".repeat(500), publishedAt: "2026-10-22T00:00:00Z",
+  }));
+}
+
+function largeUnicodeSynthesis(input: GenerationInput): string {
+  const parsed = JSON.parse(input.input) as { sources: Source[] };
+  return JSON.stringify({
+    findings: Array.from({ length: 5 }, () => ({ text: "研".repeat(330), sourceIds: parsed.sources.map((s) => s.id) })),
+    uncertainties: Array(4).fill("未".repeat(170)),
+  });
+}
+
+test("Unicode source budgets measure serialized bytes and do not split emoji prefixes", async () => {
+  const results = unicodeSources();
+  results[0]!.text = "😀".repeat(500);
+  results[1]!.text = '"\\'.repeat(500);
+  const { context } = harness(results);
+  context.services.generate = async (input) => largeUnicodeSynthesis(input);
+  const saved = await create(context);
+  assert.equal(saved.current.sources.length, 5);
+  assert.ok(bytes(saved.current) <= 18_000);
+  for (const [index, source] of saved.current.sources.entries()) {
+    assert.ok(bytes(source) <= 1_800);
+    assert.ok(source.snippet.length > 0);
+    assert.ok(results[index]!.text.startsWith(source.snippet));
+    assert.equal(source.snippet.isWellFormed(), true);
+    assert.ok(bytes(source.snippet) >= source.snippet.length);
+  }
+  context.services.search = async () => [{ ...sourceA, title: `${"T".repeat(159)}😀`, text: `${"x".repeat(999)}😀` }];
+  context.services.generate = async (input) => synthesis(input);
+  const boundary = await create(context, "Unicode at the character-limit boundary?");
+  assert.equal(boundary.current.sources[0]!.title, "T".repeat(159));
+  assert.equal(boundary.current.sources[0]!.snippet, "x".repeat(999));
+});
+
+test("all accepted Unicode dossiers can grow to two large snapshots within the byte quota", async () => {
+  const { context } = harness();
+  const baseStore = context.store;
+  context.store = {
+    read: (key) => baseStore.read(key),
+    update: (key, initial, transform) => baseStore.update(key, initial, (current) => {
+      const next = transform(current);
+      assert.ok(bytes(next.value) <= 470_000, "Every feature write must remain below its quota");
+      return next;
+    }),
+  };
+  const saved: Saved[] = [];
+  for (let i = 0; i < 12; i++) saved.push(await create(context, `${"問".repeat(595)}${i}?`));
+  const initialBytes = bytes(await state(context));
+  assert.ok(initialBytes < 60_000);
+  const listed = await feature.execute("list", context);
+  assert.ok(listed.includes(`Storage: ${initialBytes} UTF-8 JSON bytes used`));
+  const reserved = Number(listed.match(/; (\d+) bytes including future refresh space/)![1]);
+  assert.ok(reserved > 450_000 && reserved <= 470_000);
+  context.services.search = async () => unicodeSources();
+  context.services.generate = async (input) => largeUnicodeSynthesis(input);
+  for (const dossier of saved) {
+    for (let refresh = 0; refresh < 2; refresh++) {
+      assert.match(await feature.execute(`refresh ${dossier.id}`, context), /^Refreshed dossier/);
+    }
+  }
+  const grown = await state(context);
+  assert.ok(bytes(grown) > 400_000);
+  assert.ok(bytes(grown) <= reserved);
+  assert.ok(bytes(grown) < 480_000 && bytes(grown) < 512_000);
+  assert.ok(bytes(grown) > JSON.stringify(grown).length * 1.5, "Character counts would undercount this Unicode state");
+  for (const d of grown.dossiers) {
+    assert.equal(d.revision, 3);
+    assert.ok(d.previous);
+    assert.ok(bytes(d.current) <= 18_000 && bytes(d.previous) <= 18_000);
+  }
+  await feature.execute(`delete ${saved[0]!.id} confirm`, context);
+  await create(context, "A replacement dossier after freeing quota?");
+  assert.equal((await state(context)).dossiers.length, 12);
+});
+
+test("JSON escaping is included in lifecycle reservations and quota refusals spend no service calls", async () => {
+  const { context, searches, generations } = harness();
+  // Unpaired Unicode code units serialize as six-byte JSON escapes, not replacement UTF-8 bytes.
+  for (let i = 0; i < 11; i++) await create(context, `${"\ud800".repeat(590)}${i}?`);
+  const before = await state(context);
+  const output = await feature.execute(`research ${"\ud800".repeat(590)}12?`, context);
+  assert.match(output, /storage quota exceeded/);
+  assert.match(output, /future refreshes/);
+  assert.match(output, /delete <id> confirm/);
+  assert.match(output, /limit 470000/);
+  assert.deepEqual(await state(context), before);
+  assert.equal(searches.length, 11);
+  assert.equal(generations.length, 11);
+  await feature.execute(`delete ${before.dossiers[0]!.id} confirm`, context);
+  await create(context, `${"\ud800".repeat(590)}12?`);
+});
+
+test("concurrent creates recheck byte reservations against the latest stored state", { timeout: 3_000 }, async () => {
+  const { context } = harness();
+  for (let i = 0; i < 10; i++) await create(context, `${"\ud800".repeat(590)}${i}?`);
+  const ready = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let calls = 0;
+  context.services.generate = async (input) => {
+    if (++calls === 2) ready.resolve();
+    await release.promise;
+    return synthesis(input);
+  };
+  const first = feature.execute(`research ${"\ud800".repeat(590)}11?`, context);
+  const second = feature.execute(`research ${"\ud800".repeat(590)}12?`, context);
+  await ready.promise;
+  release.resolve();
+  const outputs = await Promise.all([first, second]);
+  assert.equal(outputs.filter((output) => output.startsWith("Saved dossier.")).length, 1);
+  assert.ok(outputs.some((output) => output.includes("storage quota exceeded")));
+  assert.equal((await state(context)).dossiers.length, 11);
+});
+
+test("legacy Unicode data above the feature quota stays readable and can be deleted to recover space", async () => {
+  const { context, searches, generations } = harness(unicodeSources());
+  const template = await create(context);
+  const large = structuredClone(template.current);
+  large.sources = large.sources.map((s) => ({ ...s, title: "題".repeat(160), snippet: "研".repeat(1_000) }));
+  large.findings = Array.from({ length: 5 }, () => ({ text: "研".repeat(450), sourceIds: large.sources.map((s) => s.id) }));
+  large.uncertainties = Array(4).fill("未".repeat(300));
+  const legacy: State = { version: 1, dossiers: Array.from({ length: 7 }, (_, i) => ({
+    ...template, id: `r-11111111-1111-4111-8111-${String(i).padStart(12, "0")}`,
+    question: `Legacy topic ${i}?`, revision: 2, current: structuredClone(large), previous: structuredClone(large),
+  })) };
+  assert.ok(bytes(legacy) > 470_000 && bytes(legacy) < 512_000);
+  assert.ok(JSON.stringify(legacy).length < 250_000);
+  await context.store.update<State, void>("dossiers", legacy, () => ({ value: legacy, result: undefined }));
+  assert.match(await feature.execute("list", context), /UTF-8 JSON bytes used/);
+  assert.match(await feature.execute(`show ${legacy.dossiers[0]!.id}`, context), /Legacy topic 0/);
+  assert.match(await feature.execute("research A new research question?", context), /storage quota exceeded/);
+  assert.deepEqual(await state(context), legacy);
+  assert.equal(searches.length, 1);
+  assert.equal(generations.length, 1);
+  assert.match(await feature.execute(`delete ${legacy.dossiers[0]!.id} confirm`, context), /^Deleted research/);
+  assert.ok(bytes(await state(context)) < 470_000);
+  await create(context, "A new research question?");
+  assert.ok(bytes(await state(context)) < 470_000);
+});
+
+test("oversized Unicode synthesis is rejected by bytes while preserving an existing dossier", async () => {
+  const { context } = harness();
+  const saved = await create(context);
+  const before = await state(context);
+  context.services.generate = async (input) => {
+    const parsed = JSON.parse(input.input) as { sources: Source[] };
+    const raw = JSON.stringify({
+      findings: Array.from({ length: 5 }, () => ({ text: "研".repeat(450), sourceIds: [parsed.sources[0]!.id] })),
+      uncertainties: Array(4).fill("未".repeat(300)),
+    });
+    assert.ok(raw.length < 12_000 && Buffer.byteLength(raw, "utf8") > 8_000);
+    return raw;
+  };
+  const output = await feature.execute(`refresh ${saved.id}`, context);
+  assert.match(output, /8,000-byte UTF-8 JSON budget/);
+  assert.match(output, /no changes were saved/);
+  assert.deepEqual(await state(context), before);
+});

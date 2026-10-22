@@ -7,6 +7,12 @@ const MAX_SOURCES = 5;
 const MAX_QUESTION = 600;
 const MAX_SNIPPET = 1_000;
 const MAX_URL = 1_000;
+// Reserve two complete snapshots at admission, including UTF-8/JSON escaping.
+// Leave 10 KB below the feature ceiling and 42 KB below the runtime store cap.
+const MAX_STATE_BYTES = 470_000;
+const MAX_SNAPSHOT_BYTES = 18_000;
+const MAX_SOURCE_BYTES = 1_800;
+const MAX_SYNTHESIS_BYTES = 8_000;
 const ID = /^r-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 type Source = {
@@ -47,6 +53,7 @@ const help = [
   "Then: /nobo-help agent research refresh <id>",
   "One search (up to 5 sources) and one text generation per research/refresh; other commands need neither.",
   "Keeps up to 12 dossiers, each with its latest two snapshots. Research questions are sent to the configured public-web search provider.",
+  "Storage quota: 470,000 UTF-8 JSON bytes, with space reserved for future refreshes. Use list for usage and delete <id> confirm to free space.",
 ].join("\n");
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -61,13 +68,63 @@ function bounded(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max && clean(value) === value;
 }
 
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function characterPrefix(value: string, max: number): string {
+  const prefix = value.slice(0, max);
+  return /[\ud800-\udbff]$/.test(prefix) && /[\udc00-\udfff]/.test(value.charAt(max)) ? prefix.slice(0, -1) : prefix;
+}
+
+/** Prefix by code points, counting serialized bytes (including JSON escapes). */
+function fitText(value: string, byteBudget: number): string {
+  if (jsonBytes(value) <= byteBudget) return value;
+  const points = Array.from(value);
+  let low = 0;
+  let high = points.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (jsonBytes(points.slice(0, middle).join("")) <= byteBudget) low = middle;
+    else high = middle - 1;
+  }
+  return points.slice(0, low).join("").trim();
+}
+
+type DossierMetadata = Pick<Dossier, "id" | "question" | "createdAt">;
+
+function reservedBytes(state: State, incoming?: DossierMetadata): number {
+  const entries: (DossierMetadata & Partial<Pick<Dossier, "current" | "previous">>)[] = [...state.dossiers];
+  if (incoming) entries.push(incoming);
+  return jsonBytes({ version: 1, dossiers: [] }) + Math.max(0, entries.length - 1) + entries.reduce((sum, d) => {
+    const metadata = jsonBytes({ id: d.id, question: d.question, createdAt: d.createdAt,
+      revision: Number.MAX_SAFE_INTEGER, current: null, previous: null }) - 8;
+    const current = d.current ? jsonBytes(d.current) : 0;
+    const previous = d.previous ? jsonBytes(d.previous) : 0;
+    // Also account for larger snapshots from earlier versions without blocking reads/deletion.
+    return sum + metadata + Math.max(2 * MAX_SNAPSHOT_BYTES, current + MAX_SNAPSHOT_BYTES, current + previous);
+  }, 0);
+}
+
+function checkQuota(state: State, reserve = false, incoming?: DossierMetadata): void {
+  const used = jsonBytes(state);
+  const reserved = reserve ? reservedBytes(state, incoming) : used;
+  if (used > MAX_STATE_BYTES || reserved > MAX_STATE_BYTES) {
+    throw new ResearchError(`Research storage quota exceeded: ${used} UTF-8 JSON bytes${reserve ? `; ${reserved} bytes including space for future refreshes` : ""} (limit ${MAX_STATE_BYTES}). No changes were saved. Use list, then delete <id> confirm to free space; choose a larger dossier if a deletion still exceeds the quota.`);
+  }
+}
+
+function storageUsage(state: State): string {
+  return `Storage: ${jsonBytes(state)} UTF-8 JSON bytes used; ${reservedBytes(state)} bytes including future refresh space; quota ${MAX_STATE_BYTES}. Free space with delete <id> confirm.`;
+}
+
 function escape(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/`/g, "'");
 }
 
 function display(value: string, max: number): string {
   const safe = escape(value);
-  return safe.length <= max ? safe : `${safe.slice(0, max - 1)}…`;
+  return safe.length <= max ? safe : `${characterPrefix(safe, max - 1)}…`;
 }
 
 function iso(value: unknown): value is string {
@@ -197,14 +254,16 @@ function collectSources(value: unknown, at: string): Source[] {
     if (!record(item)) continue;
     const url = publicUrl(item.url);
     if (!url || typeof item.text !== "string") continue;
-    const snippet = clean(item.text.slice(0, MAX_SNIPPET)).slice(0, MAX_SNIPPET);
+    const snippet = clean(characterPrefix(item.text, MAX_SNIPPET));
     if (!snippet) continue;
     const id = sourceId(url);
     if (sources.has(id)) continue;
-    const title = typeof item.title === "string" ? clean(item.title.slice(0, 160)) : "";
+    const title = typeof item.title === "string" ? clean(characterPrefix(item.title, 160)) : "";
     const publishedAt = publicationDate(item.publishedAt);
-    sources.set(id, { id, url, title: title || new URL(url).hostname.slice(0, 160), snippet, observedAt: at,
-      ...(publishedAt ? { publishedAt } : {}) });
+    const source: Source = { id, url, title: fitText(title || new URL(url).hostname.slice(0, 160), 400), snippet: "", observedAt: at,
+      ...(publishedAt ? { publishedAt } : {}) };
+    source.snippet = fitText(snippet, MAX_SOURCE_BYTES - jsonBytes(source) + jsonBytes(""));
+    if (source.snippet && jsonBytes(source) <= MAX_SOURCE_BYTES) sources.set(id, source);
   }
   return [...sources.values()];
 }
@@ -233,6 +292,7 @@ async function research(question: string, context: AgentFeatureContext): Promise
         "Provide 1–5 findings of at most 450 characters; cite 1–5 supplied source IDs for each. State disagreements cautiously.",
         "Provide 1–4 uncertainties of at most 300 characters, including coverage or verification gaps.",
         "All text must be single-line plain text: no inline citation markers, square/angle brackets, URLs or Markdown links.",
+        "Keep the complete JSON synthesis within 8,000 UTF-8 bytes, including JSON escapes; use shorter findings for multibyte text.",
         "Citations belong only in sourceIds. Use only IDs in this input. Do not treat snippets as independently verified facts.",
       ].join(" "),
       input: JSON.stringify({ question, asOf: at, timezone: context.timezone, sources }),
@@ -252,11 +312,19 @@ async function research(question: string, context: AgentFeatureContext): Promise
   if (!validSynthesis(parsed, new Set(sources.map((s) => s.id)))) {
     throw new ResearchError("Research synthesis contained unsupported citations or invalid findings; no changes were saved.");
   }
-  return {
-    at, sources,
+  const synthesis = {
     findings: parsed.findings.map((f) => ({ text: f.text, sourceIds: [...f.sourceIds] })),
     uncertainties: [...parsed.uncertainties],
   };
+  if (jsonBytes(synthesis) > MAX_SYNTHESIS_BYTES) {
+    throw new ResearchError("Research synthesis exceeds its 8,000-byte UTF-8 JSON budget; no changes were saved. Try a more focused question for a shorter synthesis.");
+  }
+  const snapshot: Snapshot = {
+    at, sources,
+    ...synthesis,
+  };
+  if (jsonBytes(snapshot) > MAX_SNAPSHOT_BYTES) throw new ResearchError("Research exceeded its 18,000-byte snapshot budget; no changes were saved. Try a more focused question.");
+  return snapshot;
 }
 
 function findings(snapshot: Snapshot, compact = false): string {
@@ -357,8 +425,8 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     ensureActive(context);
     const state = stateFrom(await context.store.read<unknown>(KEY));
     if (action === "list") return state.dossiers.length
-      ? ["Saved research dossiers:", ...state.dossiers.map((d) => `${d.id} · revision ${d.revision} · ${date(d.current.at)}\n${display(d.question, 200)}`), "Use show <id>, refresh <id> or compare <id> <other-id>."].join("\n\n")
-      : "No research dossiers yet. Use research <question>, for example: research What are the tradeoffs of sodium-ion batteries for home storage?";
+      ? ["Saved research dossiers:", storageUsage(state), ...state.dossiers.map((d) => `${d.id} · revision ${d.revision} · ${date(d.current.at)}\n${display(d.question, 200)}`), "Use show <id>, refresh <id> or compare <id> <other-id>."].join("\n\n")
+      : `No research dossiers yet. Use research <question>, for example: research What are the tradeoffs of sodium-ion batteries for home storage?\n\n${storageUsage(state)}`;
     if (action === "show") return show(find(state, parts[0]!), date);
     if (action === "compare") return compare(find(state, parts[0]!), parts[1] ? find(state, parts[1]) : undefined, date);
     if (action === "delete") {
@@ -367,7 +435,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       return await context.store.update<State, string>(KEY, { version: 1, dossiers: [] }, (raw) => {
         const current = stateFrom(raw);
         find(current, parts[0]!);
-        return { value: { version: 1, dossiers: current.dossiers.filter((d) => d.id !== parts[0]) }, result: `Deleted research ${parts[0]} and its saved snapshots.` };
+        const value: State = { version: 1, dossiers: current.dossiers.filter((d) => d.id !== parts[0]) };
+        checkQuota(value);
+        return { value, result: `Deleted research ${parts[0]} and its saved snapshots.` };
       });
     }
     const existing = action === "refresh" ? find(state, parts[0]!) : undefined;
@@ -378,6 +448,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     }
     const question = existing?.question ?? args;
     const id = existing?.id ?? `r-${randomUUID()}`;
+    if (!existing) checkQuota(state, true, { id, question, createdAt: context.now.toISOString() });
     const snapshot = await research(question, context);
     ensureActive(context);
     const saved = await context.store.update<State, Dossier>(KEY, { version: 1, dossiers: [] }, (raw) => {
@@ -396,7 +467,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         if (current.dossiers.length >= MAX_DOSSIERS) throw new ResearchError(`Research reached its ${MAX_DOSSIERS}-dossier limit while running; this result was not saved. Delete a dossier before retrying.`);
         dossier = { id, question, createdAt: snapshot.at, revision: 1, current: snapshot };
       }
-      return { value: { version: 1, dossiers: existing ? current.dossiers.map((d) => d.id === id ? dossier : d) : [...current.dossiers, dossier] }, result: dossier };
+      const value: State = { version: 1, dossiers: existing ? current.dossiers.map((d) => d.id === id ? dossier : d) : [...current.dossiers, dossier] };
+      checkQuota(value, !existing);
+      return { value, result: dossier };
     });
     return `${existing ? "Refreshed" : "Saved"} dossier.\n\n${show(saved, date)}`;
   } catch (error) {
