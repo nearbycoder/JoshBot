@@ -11,6 +11,7 @@ import claimCheckMetadata from "./claim-check.metadata.js";
 import conceptLinksMetadata from "./concept-links.metadata.js";
 import contextBatchMetadata from "./context-batch.metadata.js";
 import curriculumMetadata from "./curriculum.metadata.js";
+import dataCleanroomMetadata from "./data-cleanroom.metadata.js";
 import deadlineBackplanMetadata from "./deadline-backplan.metadata.js";
 import decisionJournalMetadata from "./decision-journal.metadata.js";
 import delegationBriefMetadata from "./delegation-brief.metadata.js";
@@ -85,6 +86,7 @@ export const agentFeatures: readonly AgentFeature[] = [
   lazyAgentFeature(conceptLinksMetadata, () => import("./concept-links.js")),
   lazyAgentFeature(contextBatchMetadata, () => import("./context-batch.js")),
   lazyAgentFeature(curriculumMetadata, () => import("./curriculum.js")),
+  lazyAgentFeature(dataCleanroomMetadata, () => import("./data-cleanroom.js")),
   lazyAgentFeature(deadlineBackplanMetadata, () => import("./deadline-backplan.js")),
   lazyAgentFeature(decisionJournalMetadata, () => import("./decision-journal.js")),
   lazyAgentFeature(delegationBriefMetadata, () => import("./delegation-brief.js")),
