@@ -2,7 +2,6 @@ import { validateAgentIdentity } from "./identity.js";
 export { validateAgentIdentity } from "./identity.js";
 import { resolveAgentBudgets } from "./budgets.js";
 import { contextRead } from "./context/shared.js";
-import { getRedisClient } from "../redis.js";
 import type { AgentFeatureStore, AgentFeatureResourceBudgets } from "./types.js";
 
 export interface AgentStateBackend {
@@ -31,6 +30,7 @@ else redis.call('SET',KEYS[1],ARGV[3]) end
 return 1`;
 
 export async function createAgentStateBackend(): Promise<AgentStateBackend | null> {
+  const { getRedisClient } = await import("../redis.js");
   const redis = await getRedisClient();
   if (!redis) return null;
   return {

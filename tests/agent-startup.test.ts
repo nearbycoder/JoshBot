@@ -4,6 +4,46 @@ import { handleAgentCommand, type AgentStartupDependencies } from "../lib/agent-
 import type { AgentStateBackend } from "../lib/agent-features/store.js";
 import type { AgentFeatureServices } from "../lib/agent-features/types.js";
 import { DEFAULT_USER_PREFERENCES } from "../lib/preferences.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+test("cold injected runtime omits Redis; the default backend still loads it on demand", () => {
+  const home = mkdtempSync(join(tmpdir(), "agent-store-import-"));
+  try {
+    const output = execFileSync(process.execPath, ["--max-old-space-size=512", "--import", "tsx", "--input-type=module", "-e", `
+      import assert from 'node:assert/strict';
+      import { registerHooks } from 'node:module';
+      import { installNetworkGuard } from './scripts/bench-agent-release.mjs';
+      const guard = installNetworkGuard(), loaded = new Set();
+      registerHooks({ load(url, context, next) { loaded.add(url); return next(url, context); } });
+      const { handleAgentCommand } = await import('./lib/agent-features/index.ts');
+      const data = new Map();
+      const backend = { get: async key => data.get(key) ?? null, compareSet: async (key, old, next) => {
+        if ((data.get(key) ?? null) !== old) return false; data.set(key, next); return true;
+      } };
+      const forbidden = async () => { throw new Error('Unexpected service'); };
+      const owner = { teamId: 'TCOLD', userId: 'UCOLD' };
+      assert.match(await handleAgentCommand('inbox capture Offline import proof', owner, {
+        backend, timezone: 'UTC', services: { generate: forbidden, search: forbidden, readContext: forbidden },
+      }), /Captured/);
+      assert.equal(data.size, 1);
+      assert.ok([...loaded].some(url => /agent-features\\/store\\.[jt]s/.test(url)), 'trace must observe store');
+      const redisLoads = () => [...loaded].filter(url => /\\/lib\\/redis\\.[jt]s|node_modules\\/(?:@redis|redis)\\//.test(url));
+      assert.deepEqual(redisLoads(), [], 'injected runtime must not initialize the Redis dependency graph');
+      const { createAgentStateBackend, validateAgentIdentity } = await import('./lib/agent-features/store.ts');
+      validateAgentIdentity(owner);
+      assert.equal(await createAgentStateBackend(), null, 'unconfigured default backend retains null result');
+      assert.ok(redisLoads().length > 0, 'default backend must load the actual Redis module');
+      process.env.REDIS_URL = 'invalid-url';
+      await assert.rejects(createAgentStateBackend(), /Invalid URL/);
+      assert.deepEqual(guard.blocked, []); guard.restore();
+      console.log('cold-store-proof');
+    `], { encoding: "utf8", timeout: 15_000, env: { PATH: process.env.PATH, HOME: home, TMPDIR: home, NODE_ENV: "test" } });
+    assert.match(output, /cold-store-proof/);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 
 const owner = { teamId: "TSTARTUP", userId: "USTARTUP", channelId: "CSTARTUP", requestId: "startup-request" };
 function deferred<T>() {
