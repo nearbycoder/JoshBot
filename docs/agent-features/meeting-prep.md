@@ -2,7 +2,7 @@
 
 Prepare for a meeting you explicitly describe using relevant information already owned by you. A packet includes your stated purpose and attendees, matching owner-context excerpts, source-reported open commitments, a proposed agenda, and suggested questions. Facts and suggestions appear in separate sections. This is preparation before a meeting; it does not process transcripts or modify the toolbox's manual agendas.
 
-The feature module is implemented; the parent integration must register the private entry point before these commands are available in Slack.
+Registered on the integration branch through the private agent entry point. The initial context adapter reads your workspace-scoped toolbox notes and goals; additional source adapters are being integrated with the remaining features. This expansion has not yet been deployed.
 
 ## Commands and example flow
 

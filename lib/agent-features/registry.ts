@@ -1,8 +1,9 @@
 import inbox from "./inbox.js";
+import meetingPrep from "./meeting-prep.js";
 import type { AgentFeature } from "./types.js";
 
 /** Add each implementation only after its integration checks pass. */
-export const agentFeatures: readonly AgentFeature[] = [inbox];
+export const agentFeatures: readonly AgentFeature[] = [inbox, meetingPrep];
 
 export function formatAgentHelp() {
   return [

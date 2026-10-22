@@ -1,6 +1,6 @@
 # Personal-agent expansion — 2026-10-22
 
-Status: implementation and integration underway; not released. Twenty implementation assignments were launched in isolated worktrees. The inbox has been integrated with private Slack routing, Home discovery and scoped persistence. Meeting preparation is next. Parent review and combined validation continue as other implementations return.
+Status: implementation and integration underway; not released. Twenty implementation assignments were launched in isolated worktrees. The inbox and meeting preparation have been integrated with private Slack routing, Home discovery and scoped persistence. Parent review and combined validation continue as other implementations return.
 
 ## Research basis
 

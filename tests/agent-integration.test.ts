@@ -126,6 +126,20 @@ test("toolbox context is workspace/user scoped, filtered and source-labelled", a
   assert.equal((await readAgentToolboxContext(options.backend, owner, ["bookmark"]))[0].sourceUrl, "https://example.com");
 });
 
+test("meeting preparation reads owned toolbox evidence through the registered runtime", async () => {
+  const { options, owner, data } = fixture();
+  data.set(`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`, JSON.stringify({ entries: [
+    { id: "atlas-note", title: "Atlas rollout", body: "The rollout needs a staging review.", updatedAt: "2026-10-22T12:00:00Z", data: {} },
+  ] }));
+  options.services.readContext = (kinds) => readAgentToolboxContext(options.backend, owner, kinds);
+  const prepared = await handleAgentCommand("meeting-prep prepare Atlas launch | purpose: Review Atlas rollout", owner, options);
+  assert.match(prepared, /staging review/);
+  assert.match(prepared, /toolbox:notes:atlas-note/);
+  const id = prepared.match(/mp-[a-f0-9-]{36}/)![0];
+  assert.match(await handleAgentCommand(`meeting-prep show ${id}`, owner, options), /Meeting preparation/);
+  assert.match(await handleAgentCommand(`meeting-prep show ${id}`, { ...owner, userId: "UOTHER" }, options), /not found/);
+});
+
 test("malformed context fails visibly instead of pretending there is no data", async () => {
   const { options, owner, data } = fixture();
   data.set(`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`, '{"entries":[null]}');
