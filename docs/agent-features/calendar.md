@@ -88,11 +88,16 @@ Many full calendar exports contain recurrence or embedded timezone definitions. 
 ## Bounds and retention
 
 - At most 100 confirmed events plus one preview containing at most 100 events; no automatic eviction or deletion of old events.
+- The complete feature command (including `import preview`) must fit 48,000 UTF-16 code units/JavaScript characters, matching the shared runtime. The UTF-8 input-byte limit below applies independently.
 - At most 65,536 UTF-8 bytes, 2,000 physical lines, and 8,192 characters per unfolded line per import.
 - UID: 512 characters; summary and location: 160 characters each. Overlong fields are rejected.
+- Every write measures `Buffer.byteLength(JSON.stringify(state), "utf8")`, including the full record, JSON escaping, Unicode, revision, and pending-preview envelope. Imports allow at most **432,000 bytes** for the projected confirmed state and **464,000 bytes** for confirmed events plus preview. Every lifecycle write must remain strictly below **480,000 bytes**, below the shared store's 512,000-byte ceiling.
+- The 32,000-byte difference between confirmed and preview admission budgets reserves space for a subsequent small edit/preview; the additional 16,000 bytes below the feature ceiling reserve lifecycle headroom. A large preview can still exceed quota: paste fewer events at a time. Admission checks both the staged state and projected confirmation atomically, so accepted previews can be confirmed and existing entries can still be edited individually, cancelled, removed, or cleared near quota. Changes that increase the confirmed data beyond its quota must be shortened or preceded by deletion.
 - Calendar dates and resolved UTC event dates must be between 1970 and 2100. The day after a queried/all-day start date must also fit that range.
 - Availability duration: 1–1,440 whole elapsed minutes. Normal replies fit under 28,000 characters; conflict lists are capped at 20 pairs and long displayed titles are abbreviated.
 - Raw ICS and ignored metadata are not persisted. Confirmed data remains until removed/cleared. An expired preview cannot be confirmed; its bounded parsed data remains until replaced, cancelled, or cleared.
+
+`list` and import previews show actual serialized storage usage. Quota failures leave both the saved events and the previous preview unchanged and explain how to free space: keep your original ICS, cancel a pending preview with `import cancel <preview-token>`, use `list` then `remove <event-id> confirm`, or delete all private calendar data with `clear confirm`. Smaller batches or shorter UID/summary/location text can also fit. Unicode and JSON escaping count toward the byte quota, so event and character counts alone do not establish available storage.
 
 Keep your original ICS if you need an export/backup. There is no export command, live sync, recurrence support, working-hours preference, or external calendar write capability.
 
@@ -129,6 +134,8 @@ Keep your original ICS if you need an export/backup. There is no export command,
 
 No contract, package, lockfile, provider, or service changes are required. No dependencies were added. Parent owns registration, private delivery, context wiring, and combined integration validation.
 
+The feature uses **zero generation calls, zero searches, and zero owner-context service calls** per invocation. Local parsing and interval work are bounded by the input/event limits. The parent runtime supplies the 120-second deadline, prompt cancellation, and signal-guarded store writes. The feature checks cancellation before starting and propagates cancellation reasons instead of masking them as storage failures; it performs no background work or service retries. Replies remain within the runtime's 28,000-character limit. Shared runtime/store files are references only and are not copied into this feature branch.
+
 ## Targeted verification
 
 ```sh
@@ -137,4 +144,4 @@ PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
 git diff --check
 ```
 
-Tests use isolated JSON stores and fake services, including callback retries and a deletion/confirmation race. They cover import-to-confirm-to-delete flow, line folding/text decoding, timezone and all-day semantics, DST gaps/folds and unusual offsets, interval merging, input/state bounds, invalid-state recovery, storage failures, and adapter provenance. No production services or live inference are exercised.
+Tests use isolated JSON stores and fake services, including callback retries and a deletion/confirmation race. They cover import-to-confirm-to-delete flow, line folding/text decoding, timezone and all-day semantics, DST gaps/folds and unusual offsets, interval merging, input/state bounds, invalid-state recovery, storage failures, and adapter provenance. Unicode/JSON-escaping fixtures fill storage near quota, verify actual serialized byte usage and atomic rejection, and then exercise edit, confirmation, cancellation, removal, and clearing. Additional checks cover the shared command limit and abort propagation. No production services or live inference are exercised.

@@ -4,6 +4,11 @@ import { CalendarError, date, timezone } from "./time.js";
 
 export const STATE_KEY = "calendar-v1";
 export const PREVIEW_TTL_MS = 30 * 60_000;
+// All sizes include JSON escaping and UTF-8 encoding. Stable events leave room
+// for a later preview; staged imports additionally reserve lifecycle headroom.
+export const MAX_STATE_BYTES = 480_000;
+export const MAX_IMPORT_STATE_BYTES = 464_000;
+export const MAX_CONFIRMED_STATE_BYTES = 432_000;
 
 export type CalendarPreview = {
   id: string;
@@ -21,6 +26,20 @@ export type CalendarState = {
 
 export function emptyState(): CalendarState {
   return { version: 1, revision: 0, events: [], pending: null };
+}
+
+export function stateBytes(value: CalendarState): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/** Enforce admission and lifecycle quotas inside the atomic transform. */
+export function boundedState(value: CalendarState, budget = MAX_STATE_BYTES - 1): CalendarState {
+  const bytes = stateBytes(value);
+  const limit = Math.min(budget, MAX_STATE_BYTES - 1);
+  if (bytes > limit) {
+    throw new CalendarError(`Calendar storage quota exceeded: ${bytes} UTF-8 JSON bytes; budget ${limit} bytes. Existing events and preview were left unchanged. Keep your original ICS, use list then remove <event-id> confirm, import cancel <preview-token>, or clear confirm. Try a smaller import or shorter UID/summary/location values.`);
+  }
+  return value;
 }
 
 function record(value: unknown): value is Record<string, unknown> {

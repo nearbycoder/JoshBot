@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { AgentContextItem, AgentFeature, AgentFeatureContext, AgentFeatureStore } from "./types.js";
 import { MAX_EVENTS, parseCalendar, type CalendarEvent } from "./calendar/ics.js";
 import {
-  emptyState, mergeEvents, nextRevision, PREVIEW_TTL_MS, readState, STATE_KEY, validateState,
+  boundedState, emptyState, MAX_CONFIRMED_STATE_BYTES, MAX_IMPORT_STATE_BYTES,
+  mergeEvents, nextRevision, PREVIEW_TTL_MS, readState, STATE_KEY, stateBytes, validateState,
   type CalendarPreview, type CalendarState,
 } from "./calendar/state.js";
 import { CalendarError, date, dayBounds, displayInstant, localInstant, timezone } from "./calendar/time.js";
@@ -21,6 +22,8 @@ remove <event-id> confirm — delete one event
 clear confirm — delete all events and any preview
 Example: /nobo-help agent calendar free 2026-10-23 | 45m
 Paste ICS directly; URLs are never fetched. Max 100 saved events, 64 KiB/import, one preview (expires in 30 minutes).
+The whole feature command must fit 48,000 characters. UTF-8 JSON quotas: 432,000 bytes confirmed, 464,000 with preview; additional lifecycle space is reserved below 480,000 bytes.
+At quota, keep the original ICS; use list then remove <event-id> confirm, import cancel <preview-token>, or clear confirm. Smaller imports and shorter text also help.
 UTC and IANA TZID times are supported. Floating times use your supplied timezone at import; all-day dates use your viewing timezone.
 Recurrence, DURATION, VTIMEZONE, VALARM, calendar timezone overrides, and DST-ambiguous/nonexistent local times are rejected. Use explicit UTC/DTEND or individual events.
 Only this private imported snapshot is checked; availability is not a booking or a live-calendar guarantee.`;
@@ -76,6 +79,7 @@ function previewMessage(preview: CalendarPreview, current: CalendarEvent[], zone
     `Import preview (${zone}): ${changes.added} new, ${changes.changed} changed, ${changes.unchanged} unchanged; ${changes.events.length}/${MAX_EVENTS} saved after confirmation.`,
     "Existing events absent from this paste are retained. Floating times were resolved in your supplied timezone. All-day end dates are exclusive.",
     ...lines,
+    `Storage including preview: ${stateBytes({ version: 1, revision: preview.baseRevision, events: current, pending: preview })}/${MAX_IMPORT_STATE_BYTES} UTF-8 JSON bytes.`,
     `Confirm within 30 minutes: import confirm ${preview.id}`,
     `Discard: import cancel ${preview.id}`,
     "Only the latest preview can be confirmed. No saved events have changed.",
@@ -93,9 +97,12 @@ async function stage(raw: string, context: AgentFeatureContext): Promise<string>
   const result = await context.store.update<CalendarState, { preview: CalendarPreview; existing: CalendarEvent[] }>(
     STATE_KEY, emptyState(), rawState => {
       const current = validateState(rawState);
-      mergeEvents(current.events, parsed, createdAt);
+      const merged = mergeEvents(current.events, parsed, createdAt);
+      // Admit only previews whose eventual confirmation also fits. Reserving
+      // stable-state space permits another single-event preview near capacity.
+      boundedState({ version: 1, revision: nextRevision(current.revision), events: merged.events, pending: null }, MAX_CONFIRMED_STATE_BYTES);
       const pending: CalendarPreview = { id, createdAt, expiresAt, baseRevision: current.revision, events: parsed };
-      return { value: { ...current, pending }, result: { preview: pending, existing: current.events } };
+      return { value: boundedState({ ...current, pending }, MAX_IMPORT_STATE_BYTES), result: { preview: pending, existing: current.events } };
     },
   );
   return previewMessage(result.preview, result.existing, zone);
@@ -114,7 +121,7 @@ async function confirm(token: string, context: AgentFeatureContext): Promise<str
     if (pending.baseRevision !== current.revision) throw new CalendarError("Calendar changed since preview. Paste the ICS again.");
     const merged = mergeEvents(current.events, pending.events, confirmedAt);
     return {
-      value: { version: 1, revision: nextRevision(current.revision), events: merged.events, pending: null },
+      value: boundedState({ version: 1, revision: nextRevision(current.revision), events: merged.events, pending: null }, MAX_CONFIRMED_STATE_BYTES),
       result: `Imported: ${merged.added} new, ${merged.changed} changed, ${merged.unchanged} unchanged. ${merged.events.length}/${MAX_EVENTS} saved events. Try list, agenda YYYY-MM-DD, or conflicts.`,
     };
   });
@@ -124,7 +131,7 @@ async function cancel(token: string, context: AgentFeatureContext): Promise<stri
   return context.store.update<CalendarState, string>(STATE_KEY, emptyState(), rawState => {
     const current = validateState(rawState);
     if (current.pending?.id !== token) throw new CalendarError("That preview is no longer current. Saved events were left unchanged.");
-    return { value: { ...current, pending: null }, result: "Import preview discarded. Saved events were left unchanged." };
+    return { value: boundedState({ ...current, pending: null }), result: "Import preview discarded. Saved events were left unchanged." };
   });
 }
 
@@ -201,7 +208,7 @@ async function remove(id: string, context: AgentFeatureContext): Promise<string>
     const events = current.events.filter(event => event.id !== id);
     if (events.length === current.events.length) throw new CalendarError("Event not found. Use list for current event IDs; nothing was removed.");
     return {
-      value: { version: 1, revision: nextRevision(current.revision), events, pending: null },
+      value: boundedState({ version: 1, revision: nextRevision(current.revision), events, pending: null }),
       result: `Removed ${id}. ${events.length} events remain.${current.pending ? " Pending import preview discarded; paste it again if still needed." : ""}`,
     };
   });
@@ -210,13 +217,14 @@ async function remove(id: string, context: AgentFeatureContext): Promise<string>
 async function clear(context: AgentFeatureContext): Promise<string> {
   // Explicit clear is also the recovery path for invalid persisted state.
   return context.store.update<CalendarState, string>(STATE_KEY, emptyState(), () => ({
-    value: emptyState(), result: "Cleared all saved calendar events and the pending import preview.",
+    value: boundedState(emptyState()), result: "Cleared all saved calendar events and the pending import preview.",
   }));
 }
 
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
   try {
-    if (typeof command !== "string" || command.length > 66_000) throw new CalendarError("Command is too large. Paste at most 64 KiB of ICS.");
+    context.signal?.throwIfAborted();
+    if (typeof command !== "string" || command.length > 48_000) throw new CalendarError("Command is too large. Use at most 48,000 characters including the import command, and at most 64 KiB of pasted ICS.");
     const input = command.trim();
     if (!input || input === "help") return HELP;
     const confirmation = /^import (confirm|cancel) ([a-f0-9]{32})$/.exec(input);
@@ -228,6 +236,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       const zone = timezone(context.timezone);
       const state = await readState(context.store);
       return [`Saved calendar: ${state.events.length}/${MAX_EVENTS} events (${zone}).`,
+        `Storage: ${stateBytes(state)} UTF-8 JSON bytes; confirmed import budget ${MAX_CONFIRMED_STATE_BYTES}, preview budget ${MAX_IMPORT_STATE_BYTES}. At quota, cancel the preview or remove old events with confirmation.`,
         ...intervals(state.events, zone).map(item => `${item.event.id} | ${safe(item.event.title, 40)} | ${range(item, zone)}${item.event.busy ? "" : " | transparent"}`),
         ...(!state.events.length ? ["No saved events. Paste a calendar using import preview <ICS>, then import confirm <preview-token>."] : []),
         ...(state.pending ? [`Pending preview ${state.pending.id}; expires ${state.pending.expiresAt}. It is not included in saved events.`] : []),
@@ -245,6 +254,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     if (input.startsWith("remove")) return "Use list to find the event ID, then remove <event-id> confirm. No event was removed.";
     throw new CalendarError("Unknown or incomplete command. Use help for import, list, agenda YYYY-MM-DD, free YYYY-MM-DD | 45m, conflicts, remove, and clear.");
   } catch (error) {
+    // Parent runtime owns prompt cancellation and guarded CAS writes. Preserve
+    // its abort reason instead of reporting cancellation as a storage failure.
+    context.signal?.throwIfAborted();
     if (error instanceof CalendarError) return `Calendar: ${error.message}`;
     return "Calendar storage is unavailable. Retry the command; no successful change was confirmed.";
   }

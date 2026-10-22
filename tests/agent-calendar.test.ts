@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import calendar, { feature, readCalendarEventContext } from "../lib/agent-features/calendar.js";
 import { eventId, MAX_EVENTS, MAX_ICS_BYTES, parseCalendar } from "../lib/agent-features/calendar/ics.js";
-import { PREVIEW_TTL_MS, STATE_KEY, type CalendarState } from "../lib/agent-features/calendar/state.js";
+import { MAX_CONFIRMED_STATE_BYTES, MAX_IMPORT_STATE_BYTES, MAX_STATE_BYTES, PREVIEW_TTL_MS, STATE_KEY, type CalendarState } from "../lib/agent-features/calendar/state.js";
 import { dayBounds, localInstant } from "../lib/agent-features/calendar/time.js";
 import type { AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
@@ -435,4 +435,106 @@ test("input, capacity, conflict reporting, and reply bounds are enforced", async
   assert.match(await feature.execute(`import ${ics(timed("extra"))}`, context), /capacity is 100/);
   assert.deepEqual(await state(context), before);
   assert.match(await feature.execute(`import ${"x".repeat(66_000)}`, context), /too large/);
+});
+
+test("storage usage measures full serialized UTF-8, including Unicode and preview overhead", async () => {
+  const context = createAgentTestContext();
+  const source = ics(event("unicode-会議-📅", `DTSTART:20261023T140000Z\r\nDTEND:20261023T150000Z\r\nSUMMARY:${"会議📅".repeat(30)}\r\nLOCATION:${"東京".repeat(80)}`));
+  const staged = await preview(context, source);
+  const pending = await state(context);
+  const json = JSON.stringify(pending);
+  const bytes = Buffer.byteLength(json, "utf8");
+  assert.ok(bytes > json.length, "Unicode bytes must exceed UTF-16 character count in this fixture");
+  assert.match(staged.reply, new RegExp(`Storage including preview: ${bytes}/${MAX_IMPORT_STATE_BYTES} UTF-8 JSON bytes`));
+  assert.match(await feature.execute("list", context), new RegExp(`Storage: ${bytes} UTF-8 JSON bytes`));
+  await feature.execute(`import confirm ${staged.token}`, context);
+  const confirmedBytes = Buffer.byteLength(JSON.stringify(await state(context)), "utf8");
+  assert.ok(confirmedBytes < bytes, "confirmation releases the preview envelope");
+  assert.ok(confirmedBytes <= MAX_CONFIRMED_STATE_BYTES);
+  assert.match(await feature.execute("list", context), new RegExp(`Storage: ${confirmedBytes} UTF-8 JSON bytes`));
+});
+
+test("byte quotas reject additions and large previews atomically while reserving lifecycle space", async () => {
+  const base = createAgentTestStore();
+  let largestWrite = 0;
+  const store: AgentFeatureStore = {
+    read: base.read,
+    async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      return base.update(key, initial, current => {
+        const result = transform(current);
+        const bytes = Buffer.byteLength(JSON.stringify(result.value), "utf8");
+        assert.ok(bytes < MAX_STATE_BYTES, `Every write must stay below 480,000 bytes; got ${bytes}`);
+        largestWrite = Math.max(largestWrite, bytes);
+        return result;
+      });
+    },
+  };
+  const context = createAgentTestContext({ store });
+  // Escaped lone surrogates are legal JSON string data and inflate from three
+  // bytes in pasted text to six bytes per code unit after JSON.stringify.
+  // This exercises actual serialized growth beyond ordinary UTF-8 text size.
+  const heavyUid = (index: number) => `${"\ud800".repeat(510)}${String(index).padStart(2, "0")}`;
+  const heavy = (index: number, title = "\ud800".repeat(160)) => event(heavyUid(index),
+    `DTSTART:20261023T140000Z\r\nDTEND:20261023T150000Z\r\nSUMMARY:${title}\r\nLOCATION:${"\ud800".repeat(160)}`);
+  for (let start = 0; start < 60; start += 20) {
+    await importEvents(context, ...Array.from({ length: 20 }, (_, offset) => heavy(start + offset)));
+  }
+  let rejectedIndex = -1;
+  for (let index = 60; index < 100; index++) {
+    const before = await state(context);
+    const reply = await feature.execute(`import preview ${ics(heavy(index))}`, context);
+    if (reply.includes("storage quota exceeded")) {
+      assert.match(reply, new RegExp(`budget ${MAX_CONFIRMED_STATE_BYTES} bytes`));
+      assert.match(reply, /remove <event-id> confirm.*import cancel <preview-token>.*clear confirm/);
+      assert.deepEqual(await state(context), before, "failed admission must preserve all saved data");
+      rejectedIndex = index;
+      break;
+    }
+    const token = /Confirm within 30 minutes: import confirm ([a-f0-9]{32})/.exec(reply)?.[1];
+    assert.ok(token, reply);
+    assert.match(await feature.execute(`import confirm ${token}`, context), /^Imported:/);
+  }
+  assert.ok(rejectedIndex > 75 && rejectedIndex < 100, `byte quota should precede event quota: ${rejectedIndex}`);
+  const full = await state(context);
+  assert.ok(Buffer.byteLength(JSON.stringify(full), "utf8") > 400_000);
+
+  // Admission reserve still permits a single-event edit and confirmation.
+  await importEvents(context, heavy(0, "Edited near quota"));
+  const retained = await preview(context, ics(heavy(1)));
+  const beforeOversizedPreview = await state(context);
+  const tooLargePreview = await feature.execute(`import preview ${ics(...Array.from({ length: 20 }, (_, index) => heavy(index, index === 0 ? "Edited near quota" : undefined)))}`, context);
+  assert.match(tooLargePreview, new RegExp(`storage quota exceeded: .*budget ${MAX_IMPORT_STATE_BYTES} bytes`));
+  assert.deepEqual(await state(context), beforeOversizedPreview, "a rejected large preview must retain the previous token");
+  assert.match(await feature.execute(`import cancel ${retained.token}`, context), /discarded/);
+
+  const confirmable = await preview(context, ics(heavy(1, "Another edit")));
+  assert.match(await feature.execute(`import confirm ${confirmable.token}`, { ...context, now: new Date("2026-10-22T15:20:00Z") }), /^Imported:/);
+  assert.match(await feature.execute("agenda 2026-10-23", context), /Another edit/);
+  assert.match(await feature.execute(`remove ${eventId(heavyUid(2))} confirm`, context), /^Removed/);
+  await importEvents(context, heavy(rejectedIndex));
+  assert.ok(largestWrite <= MAX_IMPORT_STATE_BYTES, `headroom was consumed unexpectedly: ${largestWrite}`);
+  assert.match(await feature.execute("clear confirm", context), /^Cleared/);
+  assert.equal((await state(context)).events.length, 0);
+});
+
+test("the runtime command limit and abort reasons are respected without late feature work", async () => {
+  const context = createAgentTestContext();
+  await importEvents(context, timed("saved"));
+  const before = await state(context);
+  assert.match(await feature.execute("x".repeat(48_001), context), /at most 48,000 characters/);
+  assert.deepEqual(await state(context), before);
+
+  const controller = new AbortController();
+  const reason = new Error("Request cancelled");
+  controller.abort(reason);
+  await assert.rejects(feature.execute("clear confirm", { ...context, signal: controller.signal }), error => error === reason);
+  assert.deepEqual(await state(context), before);
+
+  const duringWrite = new AbortController();
+  const guardedStore: AgentFeatureStore = {
+    read: context.store.read,
+    update: async () => { duringWrite.abort(reason); throw reason; },
+  };
+  await assert.rejects(feature.execute(`import ${ics(timed("new"))}`, { ...context, store: guardedStore, signal: duringWrite.signal }), error => error === reason);
+  assert.deepEqual(await state(context), before, "runtime-guarded aborted writes must not be retried or disguised as success");
 });
