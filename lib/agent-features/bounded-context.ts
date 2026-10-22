@@ -1,4 +1,5 @@
 import { AgentContextCapacityError, AGENT_CONTEXT_LIMITS } from "./budgets.js";
+import { yieldAgentWork } from "./cooperative-yield.js";
 import type { AgentContextItem, AgentContextKind, AgentFeatureContext } from "./types.js";
 
 // Three toolbox namespaces (each at most 2 MB before projection) per group;
@@ -23,7 +24,8 @@ export async function readBoundedContext(
   if (kinds.length > 12 || new Set(kinds).size !== kinds.length || kinds.some(kind => !GROUPS.some(group => group.includes(kind)))) throw new Error("Invalid complete source-kind scope.");
   const groups = GROUPS.map(group => kinds.filter(kind => group.includes(kind))).filter(group => group.length);
   const items: AgentContextItem[] = [];
-  for (const group of groups) {
+  for (const [index, group] of groups.entries()) {
+    if (index > 0) await yieldAgentWork(context.signal);
     context.signal?.throwIfAborted();
     const batch = await context.services.readContext(group);
     context.signal?.throwIfAborted();

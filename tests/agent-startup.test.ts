@@ -31,6 +31,14 @@ test("cold injected runtime omits Redis; the default backend still loads it on d
       assert.equal(data.size, 1);
       assert.ok([...loaded].some(url => /agent-features\\/store\\.[jt]s/.test(url)), 'trace must observe store');
       const redisLoads = () => [...loaded].filter(url => /\\/lib\\/redis\\.[jt]s|node_modules\\/(?:@redis|redis)\\//.test(url));
+      const stop = new AbortController();
+      const abort = setImmediate(() => stop.abort(new Error('Cancel before default backend')));
+      try {
+        await assert.rejects(handleAgentCommand('inbox capture Cancelled default backend', owner, {
+          timezone: 'UTC', signal: stop.signal,
+          services: { generate: forbidden, search: forbidden, readContext: forbidden },
+        }), /Cancel before default backend/);
+      } finally { clearImmediate(abort); }
       assert.deepEqual(redisLoads(), [], 'injected runtime must not initialize the Redis dependency graph');
       const { createAgentStateBackend, validateAgentIdentity } = await import('./lib/agent-features/store.ts');
       validateAgentIdentity(owner);

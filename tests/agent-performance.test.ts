@@ -252,6 +252,8 @@ test("real adapters serve all 1500 supported records; oversized combined sources
   assert.equal(await runAgentFeature(read,"reminder",caller,settings),"200");
   const { readBoundedContext } = await import("../lib/agent-features/bounded-context.js");
   const batches: { count: number; bytes: number }[] = [];
+  let timerAtBatch = -1, progressTimer: NodeJS.Timeout | undefined;
+  t.after(() => { if (progressTimer) clearTimeout(progressTimer); });
   const grouped: AgentFeature = { ...feature, execute: async (_, ctx) => {
     const items = await readBoundedContext(ctx, ["note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder", "monitor", "digest", "artifact", "memory", "event"]);
     assert.deepEqual(items.map(item => item.id), expectedOrder, "grouped reads preserve the complete production ordering");
@@ -261,10 +263,12 @@ test("real adapters serve all 1500 supported records; oversized combined sources
   assert.equal(await runAgentFeature(grouped, "read", caller, { ...settings, services: { ...services, readContext: async kinds => {
     const batch = await services.readContext(kinds);
     batches.push({ count: batch.length, bytes: measureAgentContext(batch) });
+    if (batches.length === 1) progressTimer = setTimeout(() => { timerAtBatch = batches.length; }, 0);
     return batch;
   } } }), "1500");
   const elapsedMs = performance.now() - start, used = process.cpuUsage(cpu);
   assert.equal(batches.length, 6);
+  assert.ok(timerAtBatch >= 1 && timerAtBatch < 6, `real timer must progress between complete production groups (observed ${timerAtBatch})`);
   assert.equal(batches.reduce((sum, batch) => sum + batch.count, 0), 1500);
   assert.ok(batches.every(batch => batch.bytes < 16 * 1024 * 1024));
   assert.ok(batches.reduce((sum, batch) => sum + batch.bytes, 0) < 32 * 1024 * 1024);
@@ -382,6 +386,45 @@ test("bounded groups keep the original deadline and do not continue or write aft
   await entered.promise; controller.abort(new Error("original deadline")); await rejected;
   late.resolve(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(deadlines, 1); assert.equal(reads, 2); assert.equal(f.writes, 0);
+});
+
+test("the original deadline can stop between immediate groups before any later source or save", async t => {
+  const { readBoundedContext } = await import("../lib/agent-features/bounded-context.js");
+  const f = fixture(), controller = new AbortController();
+  let reads = 0, deadlines = 0, scheduled: NodeJS.Immediate | undefined;
+  t.mock.method(AbortSignal, "timeout", (ms: number) => { deadlines++; assert.equal(ms, 120_000); return controller.signal; });
+  f.options.services.readContext = async () => {
+    if (++reads === 1) scheduled = setImmediate(() => controller.abort(new Error("original deadline between groups")));
+    return [];
+  };
+  const reading: AgentFeature = { ...feature, execute: async (_, ctx) => {
+    await readBoundedContext(ctx, ["note", "event", "monitor", "digest"]);
+    return ctx.store.update("state", null, () => ({ value: "partial save", result: "saved" }));
+  } };
+  try {
+    await assert.rejects(runAgentFeature(reading, "read", owner, f.options), /original deadline between groups/);
+    assert.equal(deadlines, 1); assert.equal(reads, 1); assert.equal(f.writes, 0); assert.equal(f.data.size, 0);
+  } finally { if (scheduled) clearImmediate(scheduled); }
+});
+
+test("authorization revoked between groups rejects actual automation review and preserves the prior snapshot", async () => {
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = await capacityFixture();
+  assert.match(await f.run(audit, "review"), /Personal automation review/);
+  f.seed(1, true); f.requests.length = 0;
+  const before = new Map(f.backend.data), writes = f.backend.calls.writes, read = f.services.readContext;
+  let scheduled: NodeJS.Immediate | undefined;
+  f.services.readContext = async kinds => {
+    const items = await read(kinds);
+    if (f.requests.length === 1) scheduled = setImmediate(f.revoke);
+    return items;
+  };
+  try {
+    const reply = await f.run(audit, "review");
+    assert.doesNotMatch(reply, /Personal automation review audit-/);
+    assert.deepEqual(f.requests, [["reminder"], ["monitor"]]);
+    assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+  } finally { if (scheduled) clearImmediate(scheduled); }
 });
 
 test("every bounded group consumes normal lower-only read budgets without retries", async () => {

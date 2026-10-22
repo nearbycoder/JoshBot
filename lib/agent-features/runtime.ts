@@ -1,6 +1,7 @@
 import { AgentContextCapacityError, AGENT_CONTEXT_LIMITS, measureAgentContext, resolveAgentBudgets } from "./budgets.js";
 import { AGENT_BUSY_MESSAGE, agentInvocationSignal, withAgentAdmission } from "./admission.js";
 import { contextRead } from "./context/shared.js";
+import { yieldAgentWork } from "./cooperative-yield.js";
 import { createHash } from "node:crypto";
 import { AgentStateCorruptionError, createAgentFeatureStore, createAgentStateBackend, validateAgentIdentity, type AgentStateBackend } from "./store.js";
 import type { AgentFeature, AgentFeatureServices, AgentFeatureStore } from "./types.js";
@@ -30,7 +31,7 @@ export async function runAgentFeature(
   return withAgentAdmission(owner, async () => {
     // The caller supplies the original policy/startup deadline; never renew it.
     const signal = agentInvocationSignal(options.signal);
-    signal.throwIfAborted();
+    await yieldAgentWork(signal);
     const backend = options.backend ?? await abortable(createAgentStateBackend, signal);
     signal.throwIfAborted();
     if (!backend) return "Personal agents need the existing Redis connection. Please try again when it is available.";
