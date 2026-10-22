@@ -27,7 +27,6 @@ const assertStateVersion: typeof kitAssertStateVersion = (...args) =>
 const serializedBytes: typeof kitSerializedBytes = (...args) => checked(() => kitSerializedBytes(...args));
 
 const route = '/nobo-help agent teach-back';
-const help = `${metadata.help}\nSource/content assessment versions have an intentional finite limit of 9,007,199,254,740,991. At exhaustion, changes/removals needing a new version are refused; valid saved data and history stay unchanged. Use export ID for the complete record, then delete ID confirm only to erase that entire root and its history, or create a separate record from explicitly re-entered data. Root revision ceilings still permit removals when semantic versions have capacity.`;
 // These versions identify retained evidence, so exhaustion must never reuse one.
 function nextVersion(current: number, subject: string, rootId: string): number {
   if (current === Number.MAX_SAFE_INTEGER)
@@ -226,7 +225,7 @@ function bind(s: Session, quote: string) {
 }
 async function execute(command: string, ctx: AgentFeatureContext): Promise<string> {
   boundedText(command, {label: 'Command', maxBytes: 16000});
-  if (command === 'help') return help;
+  if (command === 'help') return metadata.help;
   const s = validate(await ctx.store.read('state') ?? initial), newId = randomUUID();
   const usage = (state: State) =>
       `${state.records.length}/8 sessions; ${serializedBytes(state)}/65536 saved bytes; ${
@@ -469,7 +468,6 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
 }
 export default {
   ...metadata,
-  help,
   async execute(command: string, ctx: AgentFeatureContext):
       Promise<string> {
         try {

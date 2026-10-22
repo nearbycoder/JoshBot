@@ -30,7 +30,6 @@ const civilDate: typeof kitCivilDate = (...args) => checked(() => kitCivilDate(.
 const dateInZone: typeof kitDateInZone = (...args) => checked(() => kitDateInZone(...args));
 
 const route = '/nobo-help agent learning-transfer';
-const help = `${metadata.help}\nPlan/observation evidence versions have an intentional finite limit of 9,007,199,254,740,991. At exhaustion, changes/removals needing a new version are refused; valid saved data and history stay unchanged. Use export ID for the complete record, then delete ID confirm only to erase that entire root and its history, or create a separate record from explicitly re-entered data. Root revision ceilings still permit removals when semantic versions have capacity.`;
 // These versions identify retained evidence, so exhaustion must never reuse one.
 function nextVersion(current: number, subject: string, rootId: string): number {
   if (current === Number.MAX_SAFE_INTEGER)
@@ -228,7 +227,7 @@ const fields = (s: string, limits: number[]) =>
 
 async function execute(command: string, ctx: AgentFeatureContext): Promise<string> {
   boundedText(command, {label: 'Command', maxBytes: 16000});
-  if (command === 'help') return help;
+  if (command === 'help') return metadata.help;
   const s = validate(await ctx.store.read('state') ?? initial), newId = randomUUID(),
         date = dateInZone(ctx.now, ctx.timezone);
   const usage = (state: State) =>
@@ -401,7 +400,6 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
 }
 export default {
   ...metadata,
-  help,
   async execute(command: string, ctx: AgentFeatureContext):
       Promise<string> {
         try {

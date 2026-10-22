@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import feature from '../lib/agent-features/practice-lab.js';
+import metadata from '../lib/agent-features/practice-lab.metadata.js';
 
 import {createAgentFeatureFixture, createMemoryAgentBackend, deferred} from './helpers/agent-feature-fixture.js';
 
@@ -450,6 +451,7 @@ test("all field and relationship erasures remain valid at the root revision ceil
 test("semantic version exhaustion is an honest refusal with export/delete recovery, not corruption", async () => {
   const f = createAgentFeatureFixture(feature);
   const beforeHelp = {...f.backend.calls}, help = await f.run("help");
+  assert.equal(feature.help, metadata.help); assert.equal(help, metadata.help);
   assert.match(help, /intentional finite limit/); assert.match(help, /changes\/removals needing a new version are refused/);
   assert.match(help, /export ID/); assert.match(help, /delete ID confirm/); assert.ok(help.length <= 3500);
   assert.deepEqual(f.backend.calls, beforeHelp, "finite-limit help stays stateless");
