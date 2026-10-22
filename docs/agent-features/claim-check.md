@@ -1,6 +1,8 @@
 # Draft claim check
 
-Implemented locally; **unregistered and not deployed**. Parent integration must register its metadata and lazy module. Prefix the following commands with `/nobo-help agent claim-check`; static `help` contains all syntax.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Prefix the following commands with `/nobo-help agent claim-check`; static `help` contains all syntax.
 
 Start with `create Pilot announcement | Ten users completed onboarding in two minutes.` Copy the returned document ID and run `claim DOC add Ten users completed onboarding in two minutes.`, then `evidence DOC add Pilot notes | Ten users completed onboarding. Median time was four minutes.` Find the claim and evidence IDs with `show DOC`; `map DOC CLAIM | EVIDENCE | unclear` records your judgment. `audit DOC` exposes the missing numeric word `two`, the unclear mapping and the unknown evidence date. This is supplied-excerpt coverage, **not factual certification**. No source is verified, searched, fetched or declared trustworthy.
 

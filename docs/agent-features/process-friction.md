@@ -1,6 +1,8 @@
 # Process friction review
 
-Locally implemented, unregistered and not deployed. Parent integration owns registration/release. Private local inputs only; zero model/search/context/live calls, no Slack identity lookup, jobs, workflows or external changes.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Private local inputs only; zero model/search/context/live calls, no Slack identity lookup, jobs, workflows or external changes.
 
 ```
 create Monthly report | 4

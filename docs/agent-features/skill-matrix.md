@@ -1,6 +1,6 @@
 # Skill evidence matrix
 
-Locally implemented; unregistered; not deployed. Integration, independent review, CI and release remain parent-owned.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 `create Backend role` returns a matrix ID. Add `Database design | 3 | Can explain schema and migration tradeoffs`, self-rate it 2, and attach the dated migration example. `gaps` reports the known gap **3 − 2 = 1**, separately labels an unrated skill unknown, and calls an unsupported rating unsubstantiated. The order is descending known gap, then unknowns, with stable skill-ID ties. This is personal development planning, never candidate ranking.
 

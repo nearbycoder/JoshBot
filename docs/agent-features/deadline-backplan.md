@@ -1,5 +1,7 @@
 # Deadline backplan
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 `/nobo-help agent deadline-backplan` computes latest starts through a bounded prerequisite graph, explicit working weekdays, excluded dates, and buffers. It reads no calendar or holiday service and performs no scheduling or external work.
 
 Start with `/nobo-help agent deadline-backplan create Conference proposal | 2026-12-04 | mon,tue,wed,thu,fri`. Substitute the returned full plan ID for `PLAN` and milestone IDs for `ABSTRACT`/`REVIEW`:

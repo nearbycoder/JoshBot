@@ -1,5 +1,7 @@
 # Personal agents: UX contract for the additional fifty
 
+Implementation context (2026-10-22): all 50 additions are now implemented and registered, for 70 total. This dated design specification retains its original requirements, provenance and baseline observations; those observations describe the PR #58 design baseline. See the [70-agent guide index](agent-features/README.md#find-a-feature), [implementation/evidence record](personal-agent-50-release.md), and [PR #59](https://github.com/nearbycoder/JoshBot/pull/59) for release/deployment status. Implementation, scoped review approval and production verification are separate evidence.
+
 Design specification, 2026-10-22. Audited baseline: deployed PR #58, commit `7a30db374bf3df702af5e28413468a04dc571862`. This document proposes integration work; it does not certify that the new catalog, commands, or fifty agents exist. The companion [acceptance checklist](personal-agent-50-acceptance.md) defines release evidence. The parent owns implementation assignments, integration, and rollout.
 
 The outcome is **70 personal agents: the existing 20 plus 50 distinct additions**. Existing toolbox/core Slack functionality, navigation, favorites, and shared runtime hardening do not count toward the fifty. The feature catalog assigns ten implementation batches of five. Each addition needs a useful deterministic workflow and a distinct user outcome, not just a new prompt label.

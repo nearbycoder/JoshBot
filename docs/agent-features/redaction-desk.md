@@ -1,6 +1,8 @@
 # Redaction desk
 
-Implemented locally; **unregistered and not deployed**. Parent integration owns metadata/lazy registration and release. Prefix commands with `/nobo-help agent redaction-desk`; `help` lists all syntax without state or service reads.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Prefix commands with `/nobo-help agent redaction-desk`; `help` lists all syntax without state or service reads.
 
 `create Shareable note | Contact Maya at maya@example.com about the launch.` saves an original and current version. Copy the returned ID into `scan DOC | email`, then `preview DOC TOKEN`. The preview shows exact matched text, zero-based UTF-16 offsets (end exclusive), selected spans and the proposed current text. `apply DOC TOKEN` replaces selected spans with `[EMAIL]`, `[PHONE]`, `[LITERAL]` or `[MIXED]`, consumes that preview and retains one prior version. `undo DOC` restores that retained version and consumes undo/preview. No text is sent anywhere. Copying or applying never establishes that all secrets were found.
 

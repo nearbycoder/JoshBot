@@ -1,6 +1,8 @@
 # Open question triage
 
-Implemented locally, **unregistered and not deployed**. Parent integration and independent review remain required. This private board connects questions to a decision, distinguishes blocking and optional uncertainty, and records explicit acceptable evidence, user answers, source labels, civil review dates and challenges. There is no research, generation or source fetching.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This private board connects questions to a decision, distinguishes blocking and optional uncertainty, and records explicit acceptable evidence, user answers, source labels, civil review dates and challenges. There is no research, generation or source fetching.
 
 Start `/nobo-help agent question-triage create Choose workshop format`, then `ask BOARD add Can attendees install the software? | blocking | Determines whether live exercises are feasible`. Add `evidence-needed BOARD QUESTION | A pilot with three representative attendees`, inspect `queue BOARD`, record `answer BOARD QUESTION | All three installed it | Pilot notes | 2026-10-24`, and challenge with `challenge BOARD QUESTION | One pilot used a different operating system`.
 

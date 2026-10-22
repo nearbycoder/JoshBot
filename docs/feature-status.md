@@ -2,38 +2,17 @@
 
 The baseline sections below record the October 22, 2026 refresh against implementation, automated tests, and production configuration. Their live observations and test counts are historical evidence for that refresh, not verification of the later personal-agent expansion. “Implemented” describes code availability; Slack permissions, subscriptions, credentials, and storage determine what is usable in a particular workspace.
 
-## Twenty private personal agents
+## Seventy private personal agents
 
-Use `/nobo-help agent` or **NoBo Home → More → Personal agents** to discover all 20, then `/nobo-help agent <name> help` for syntax. All 20 modules, private routes, scoped storage limits, and source adapters are implemented and independently reviewed. Release validation passed with **1,093 tests, zero skips**, typecheck, production build, and a dependency audit with zero vulnerabilities. The [personal-agent guide](agent-features/README.md) has workflows and limits, the [expansion record](personal-agent-expansion.md) holds validation evidence, and [PR #58](https://github.com/nearbycoder/JoshBot/pull/58) tracks rollout status.
+All **70 personal agents are implemented and registered**: the original 20 first shipped in [PR #58](https://github.com/nearbycoder/JoshBot/pull/58), and 50 additions are tracked in [PR #59](https://github.com/nearbycoder/JoshBot/pull/59) for release/deployment status. Registration does not establish production availability. The [implementation/evidence record](personal-agent-50-release.md) separates current scoped checks from release and deployment gates. PR #58's **1,093 tests with zero skips**, typecheck, build and zero-vulnerability audit remain [historical release evidence](personal-agent-expansion.md).
 
-Each row below uses the private `/nobo-help agent` route. Append the name and command shown:
+Use the private `/nobo-help agent` route or **NoBo Home → More → Personal agents**, then `<name> help` for syntax. Catalog group filters, search and pages keep discovery bounded; Home Help and Back preserve navigation without executing a feature. The [grouped guide index](agent-features/README.md#find-a-feature) links all 70 outcomes and exact first-command examples. The groups are `plan` (10), `capture` (12), `write` (9), `decide` (8), `learn` (12), `life` (7), and `review` (12). See [discovery details](agent-features/catalog.md).
 
-| Name | First command after the name |
-| --- | --- |
-| [morning-brief](agent-features/morning-brief.md) | `brief` |
-| [weekly-review](agent-features/weekly-review.md) | `review` |
-| [inbox](agent-features/inbox.md) | `capture Review the launch draft` |
-| [day-planner](agent-features/day-planner.md) | `tasks` |
-| [meeting-prep](agent-features/meeting-prep.md) | `prepare Launch review \| purpose: Review readiness` |
-| [reply-coach](agent-features/reply-coach.md) | `style show` |
-| [relationships](agent-features/relationships.md) | `due` |
-| [read-later](agent-features/read-later.md) | `list` |
-| [research](agent-features/research.md) | `research What evidence supports this approach?` |
-| [project-briefs](agent-features/project-briefs.md) | `list` |
-| [recall](agent-features/recall.md) | `search launch` |
-| [memory-review](agent-features/memory-review.md) | `list` |
-| [playbooks](agent-features/playbooks.md) | `list` |
-| [workflows](agent-features/workflows.md) | `list` |
-| [learning](agent-features/learning.md) | `due` |
-| [decision-coach](agent-features/decision-coach.md) | `show` |
-| [handoffs](agent-features/handoffs.md) | `list` |
-| [calendar](agent-features/calendar.md) | `help` |
-| [travel](agent-features/travel.md) | `trip` |
-| [automation-audit](agent-features/automation-audit.md) | `review` |
+The 50 additions include **34 deterministic features**, **16 with explicit optional one-call model assistance**, and **six owned-context consumers**. All 50 declare **zero searches**; original `research` still uses Exa. The runtime requires Redis for non-help commands; model assistance uses the existing configured text model. The additions need no new services or credentials and create no background tasks.
 
-The runtime requires Redis for every non-help command. Deterministic commands need no inference; model-assisted commands use the configured text model, and research also uses Exa. These agents read private toolbox records, confirmed imported calendar events, and eligible approved memory cards. Legacy follow-ups/reminders/monitors/digests cover only the caller's records in the signed current channel. Artifacts and legacy personal memory are unconnected; memory-review legacy import has no candidates. A reference absent from this snapshot is not proof of deletion. See the [exact source contract](agent-features/context.md).
+Connected sources include private toolbox records, confirmed calendar imports and eligible approved memory cards. Legacy follow-ups/reminders/monitors/digests cover only the caller's records in the signed current channel. Artifacts and legacy personal memory are unconnected; memory-review legacy import has no candidates. Missing references do not prove deletion. Home discovery has no channel/source execution; source availability depends on the selected command. See the [exact source contract](agent-features/context.md) and [shared boundaries](personal-agent-50-release.md#shared-boundaries).
 
-This expansion adds on-demand commands, with manual workflow continuation and confirmed calendar snapshots. It adds no calendar OAuth, autonomous sending, vector search, new recurring jobs, or arbitrary tool execution. For final validation, follow the [release process](personal-agent-expansion.md#verification); earlier suite/build/audit results preceded subsequent edits and are not current acceptance evidence.
+Commands run on demand, with manual workflow continuation and confirmed calendar snapshots. They add no calendar OAuth, autonomous sending, vector search, recurring jobs or arbitrary tool execution. Production verification belongs to the parent release process in [PR #59](https://github.com/nearbycoder/JoshBot/pull/59).
 
 ## Baseline features and entry points
 

@@ -1,5 +1,7 @@
 # Decision outcome journal
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Start with `/nobo-help agent decision-journal record Use a short signup form | Reduce friction | 2026-11-20`. Use the returned full decision ID; these commands follow `/nobo-help agent decision-journal`:
 
 ```text

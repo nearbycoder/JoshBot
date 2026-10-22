@@ -1,5 +1,7 @@
 # Capacity forecast
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 `/nobo-help agent capacity-forecast` compares low/high effort assumptions with explicitly supplied weekly capacity. It does not assign people, read calendars, or claim probabilistic confidence.
 
 Start with `/nobo-help agent capacity-forecast create November delivery | 2026-11-02 | 2`. Replace `FORECAST` with the returned full ID and `PACKAGE` with a returned work-package ID:

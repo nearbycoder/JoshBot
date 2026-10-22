@@ -1,6 +1,8 @@
 # Reading paths
 
-Implemented locally, **unregistered and not deployed**; parent integration and independent review remain required. This feature allocates whole readings in stable topological/insertion order. Shared unread prerequisite closure is counted once within an explicit minute budget. The allocator is greedy, not a global optimizer. Oversized readings are deferred with a reason, never partially allocated. Reading completion is a user report, not mastery.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This feature allocates whole readings in stable topological/insertion order. Shared unread prerequisite closure is counted once within an explicit minute budget. The allocator is greedy, not a global optimizer. Oversized readings are deferred with a reason, never partially allocated. Reading completion is a user report, not mastery.
 
 Start `/nobo-help agent reading-path create Learn queue basics`. Add `item PATH add Queue primer | 15 | Saved article` and `item PATH add Retry design | 20 | Engineering note`, then `requires PATH RETRIES | PRIMER`. `route PATH | 25` recommends the 15-minute primer and defers the 20-minute retry article because ten minutes remain. `read PATH PRIMER` records the report; the next route can allocate the retry article. No context calls occur in this pasted-only workflow.
 

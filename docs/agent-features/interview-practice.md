@@ -1,6 +1,6 @@
 # Interview practice
 
-Locally implemented; unregistered; not deployed. Integration, independent review, CI and release remain parent-owned.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Create `Backend interview | 120 | 130`, add the behavioral tradeoff question and save your text response. Annotating `action` requires an exact substring of that specific attempt. `review` uses whitespace-delimited words × 60 / configured words-per-minute, labels duration approximate, compares the target, and lists missing STAR annotations. No missing result is hallucinated from a sentence about measurement. Ambiguous repeated spans require explicit UTF-16 coordinates, which must preserve Unicode character boundaries.
 

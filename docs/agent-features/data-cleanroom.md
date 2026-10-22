@@ -1,6 +1,8 @@
 # Small table cleanroom
 
-Locally implemented, unregistered and not deployed. Parent integration owns registration/release. This feature operates only on entered local cells; it makes zero model/search/context/live calls and never evaluates formula-like text.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This feature operates only on entered local cells; it makes zero model/search/context/live calls and never evaluates formula-like text.
 
 ```
 create Effort samples | name,minutes

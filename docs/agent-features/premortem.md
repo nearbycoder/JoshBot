@@ -1,5 +1,7 @@
 # Project premortem
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Start with `/nobo-help agent premortem create Launch workshop | Attendees complete the exercise`. Use its returned full plan ID:
 
 ```text

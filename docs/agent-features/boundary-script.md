@@ -1,5 +1,7 @@
 # Boundary scripts
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Create a private decline, defer or reduce proposal from an actual request and limit. The stance-specific deterministic template and commitment checklist remain available without model services. No sending, account change or relationship promise is performed.
 
 Start: `/nobo-help agent boundary-script create Extra report this week | Existing delivery already fills the week`. The returned ID replaces `ID`; commands below follow `/nobo-help agent boundary-script`.

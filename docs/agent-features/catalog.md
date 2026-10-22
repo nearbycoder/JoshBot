@@ -1,6 +1,6 @@
 # Personal agent discovery
 
-This checkout registers **70 implemented personal agents**: the existing 20 and all 50 additions. Registration and navigation are local implementation work, **not a deployment or release claim**. Every listed agent has a real module and its own metadata. The parent owns final review and release.
+This checkout registers **70 implemented personal agents**: the existing 20 and all 50 additions. Every listed agent has a real module and its own metadata. The original 20 first shipped in [PR #58](https://github.com/nearbycoder/JoshBot/pull/58); the 50 additions are in [PR #59](https://github.com/nearbycoder/JoshBot/pull/59), which tracks release/deployment status. See the [grouped guide index](README.md#find-a-feature) for all 70 outcomes and first commands, and the [implementation/evidence record](../personal-agent-50-release.md) for scoped validation. The parent owns final release and production verification.
 
 Start privately in your Slack channel or DM composer:
 

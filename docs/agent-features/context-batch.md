@@ -1,5 +1,7 @@
 # Context batching
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 `/nobo-help agent context-batch` groups actions that share setup cost and fit your available location, tools, and minute budget. It works without model or search services. Results describe a proposed batch; they do not start timers, schedule work, or infer completion.
 
 Start with `/nobo-help agent context-batch create Admin hour | 60`. Copy the returned full board ID in place of `BOARD` below; copy returned setup/action IDs in place of `SETUP`/`ACTION`.

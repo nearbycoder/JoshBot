@@ -1,5 +1,7 @@
 # Feedback builder
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Prepare a private observation/impact/request draft without turning an inferred motive into a recorded observation. Explicit interpretations stay separately labeled, including in optional assistance. Observations are user supplied and unverified.
 
 Start: `/nobo-help agent feedback-builder create Review handoff | Monday planning meeting`. Use the returned `ID`. Commands follow `/nobo-help agent feedback-builder`:

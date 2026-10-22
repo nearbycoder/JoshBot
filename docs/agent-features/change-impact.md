@@ -1,6 +1,8 @@
 # Change impact map
 
-Locally implemented, unregistered and not deployed. Parent integration owns registration/release. This is a private local dependency map with zero model/search/context/live calls. A disposition records what the user reports; it never edits external documents, routines or commitments.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This is a private local dependency map with zero model/search/context/live calls. A disposition records what the user reports; it never edits external documents, routines or commitments.
 
 ```
 create Launch dependencies

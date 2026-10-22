@@ -1,6 +1,6 @@
 # Interruption audit
 
-Implemented locally; **not registered or deployed**. Parent integration owns registration, independent review and release.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Records user-entered civil dates, categories, interrupted tasks, disruption/recovery minutes and measured/estimated basis. `3 + 8` and `5 + 4` report **20 known minutes**. Unknown components contribute no invented minutes and have separate counts; zero is known. Complete-entry total medians exclude incomplete entries; recovery medians use known recovery values. Reports break down categories, dates and measurement basis. Chosen prevention rules are suggestions supplied by the user, with no causal claims or Slack inference.
 

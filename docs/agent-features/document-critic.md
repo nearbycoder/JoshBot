@@ -1,6 +1,8 @@
 # Document critic
 
-Implemented locally; **unregistered and not deployed**. The parent must add the metadata and lazy module to discovery. After integration, prefix commands with `/nobo-help agent document-critic`. `help` is static and lists the complete grammar.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Prefix commands with `/nobo-help agent document-critic`. `help` is static and lists the complete grammar.
 
 Create a brief with `create Setup guide | New users | Help a new user install the app`, copy its full document ID, then `text DOC | # Install\nRun the installer.` (paste actual newlines). Use `require DOC | Install,Verify,Troubleshooting`, `check DOC`, and `revise DOC | corrected text`. Missing exact Markdown heading labels, paragraphs over 120 whitespace-delimited words, and unexplained **user-listed** acronyms are explicit heuristics, never correctness scores. `lines DOC` numbers every current line; paragraphs end at blank lines. Columns count UTF-16 units, not visual graphemes.
 

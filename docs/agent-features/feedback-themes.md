@@ -1,6 +1,6 @@
 # Feedback theme review
 
-Locally implemented; unregistered; not deployed. Integration, independent review, CI and release remain parent-owned.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Create `Quarterly feedback`, enter Peer A's dated review-meeting quote, add the manual Decision clarity theme and assign the quote. Retain the migration-note counterexample alongside it, then choose the response experiment about putting tradeoffs before the recommendation. `themes` shows complete quotation coverage, counterevidence and the current response experiment without performing it.
 

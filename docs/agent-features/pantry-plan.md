@@ -1,6 +1,8 @@
 # Pantry and recipe plan
 
-Local, unregistered and not deployed. `pantry-plan` is an **Organize life** feature using only entered recipes and pantry quantities. No shopping, nutrition/allergen/food-safety guidance, generation, search, context read, notification or external action occurs.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+`pantry-plan` is an **Organize life** feature using only entered recipes and pantry quantities. No shopping, nutrition/allergen/food-safety guidance, generation, search, context read, notification or external action occurs.
 
 Start `/nobo-help agent pantry-plan create Pasta | 2`. With its returned ID, add `ingredient ID add pasta | 200 | g`, then `stock ID | pasta | 0.3 | kg`. `plan ID | 4` shows **400 g needed, 300 g available, 100 g shopping gap**. Planning saves one current preview without consuming anything. Copy the complete returned `use ID PLAN_TOKEN confirm` command to consume available stock once. Missing stock remains unknown; explicit zero establishes a known gap.
 

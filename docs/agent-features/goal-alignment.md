@@ -1,6 +1,6 @@
 # Goal alignment
 
-Locally implemented; unregistered; not deployed. Integration, independent review, CI and release remain parent-owned.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Create `November effort`, discover all owned goal IDs with `goals`, and explicitly select a source. Add `Write onboarding guide | 120`, link 75% with your reason, and `review` reports **90 aligned minutes and 30 unallocated minutes**. Shares sum to at most 100% per activity; unknown effort is not spread evenly. Local goal labels are a separate explicit alternative, with no claimed source identity. Activities and links remain user planning assumptions, never evidence of goal completion or causal impact.
 

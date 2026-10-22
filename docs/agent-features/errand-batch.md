@@ -1,6 +1,8 @@
 # Errand windows
 
-Local, unregistered and not deployed. `errand-batch` belongs to **Organize life** and checks entered estimates on demand. It does not use maps, opening-hours lookup, directions, booking, notification, generation, search or context.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+`errand-batch` belongs to **Organize life** and checks entered estimates on demand. It does not use maps, opening-hours lookup, directions, booking, notification, generation, search or context.
 
 The catalog workflow creates `/nobo-help agent errand-batch create Saturday errands | 2026-10-24 | 09:00 | 120 | home`, then adds Library (15 minutes, 09:00–12:00) and Repair shop (20 minutes, 10:00–11:00). Enter `travel ID | home | SHOP | 20`, `travel ID | SHOP | LIBRARY | 15`, and `travel ID | LIBRARY | home | 10`, substituting returned stop IDs. `plan ID` gives shop arrival **09:20**, **40-minute wait** until 10:00, finish **10:20**, library **10:35–10:50**, and home **11:00**: exactly **120 minutes**, including all waiting, travel, service and return.
 

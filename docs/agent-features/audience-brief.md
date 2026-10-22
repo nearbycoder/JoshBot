@@ -1,5 +1,7 @@
 # Audience brief
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Keep canonical facts separate from audience-specific variants. Deterministic rendering preserves exact fact text, includes every required fact or reports overflow, and exposes coverage for every retained fact. Each audience has its own stated needs, word budget and explicit requirements. No messages are sent.
 
 Start: `/nobo-help agent audience-brief create Pilot update`. Replace `ID`, `FACT` and `AUDIENCE` with returned IDs. Commands follow `/nobo-help agent audience-brief`:

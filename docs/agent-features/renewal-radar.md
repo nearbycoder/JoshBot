@@ -1,6 +1,8 @@
 # Renewal review
 
-Local implementation, unregistered and not deployed. `renewal-radar` belongs to **Organize life**. It records manually supplied terms and computes notice deadlines and same-currency cost equivalents. No account access, cancellation, reminder, notification, generation, search or context read occurs.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+`renewal-radar` belongs to **Organize life**. It records manually supplied terms and computes notice deadlines and same-currency cost equivalents. No account access, cancellation, reminder, notification, generation, search or context read occurs.
 
 Start with `/nobo-help agent renewal-radar add Design membership | 2026-12-01 | 14 | 120.00 | USD | year | 1`. The returned ID opens the complete record. `upcoming 60` includes notice dates through the caller's civil today plus 60 days, overdue entries, and unknown dates; the example notice date is **2026-11-17**. `costs` shows **USD 10.00/month**, **USD 120.00/year**. Costs use integer minor units and exact rational formulas, displayed to two decimals with half-up rounding. They are equivalents, not invoices. Currency labels are never converted or added together. Past notice is not a conclusion about cancellation rights.
 

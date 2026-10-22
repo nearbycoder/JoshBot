@@ -1,6 +1,8 @@
 # Evidence timeline
 
-Implemented locally, **unregistered and not deployed**. Parent integration and independent review remain required. This private deterministic feature arranges supplied observations in separate exact-instant, civil-label and unknown-date bands, with explicit before constraints and retained disputes. It neither fetches sources nor chooses a true account.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This private deterministic feature arranges supplied observations in separate exact-instant, civil-label and unknown-date bands, with explicit before constraints and retained disputes. It neither fetches sources nor chooses a true account.
 
 Start with `/nobo-help agent timeline-builder create Launch history`. Use the returned timeline ID in `entry TIMELINE add LABEL | DATE | SOURCE LABEL | EXACT EXCERPT`, then `before TIMELINE ENTRY | LATER_ENTRY` and `view TIMELINE`. `DATE` accepts a valid civil date, an explicit-offset instant, or `unknown`. Repeated dates remain distinct observations. Exact offsets remain available in export; civil dates never acquire timestamps. Mixed precision comparisons use conservative ±14-hour offset bounds; overlapping bounds do not prove ordering. Order cycles reject atomically.
 

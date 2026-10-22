@@ -1,6 +1,8 @@
 # Additional fifty agents: acceptance checklist
 
-Implementation/review checklist, 2026-10-22. This is a specification, not a record that unimplemented features passed. Audit baseline: `7a30db374bf3df702af5e28413468a04dc571862` (deployed PR #58). Pair with the [UX contract](personal-agent-50-ux.md), [feature status](feature-status.md), and [owned-source contract](agent-features/context.md). Parent integration owns final execution and release evidence.
+Implementation context (2026-10-22): all 50 additions are now implemented and registered, for 70 total. This dated acceptance specification remains a checklist, not an executed sign-off; unchecked boxes below are preserved. See the [70-agent guide index](agent-features/README.md#find-a-feature), [implementation/evidence record](personal-agent-50-release.md), and [PR #59](https://github.com/nearbycoder/JoshBot/pull/59) for release/deployment status. Implementation, scoped review approval and production verification are separate evidence.
+
+Implementation/review checklist, 2026-10-22. This is a specification, not an executed acceptance report. Audit baseline: `7a30db374bf3df702af5e28413468a04dc571862` (deployed PR #58). Pair with the [UX contract](personal-agent-50-ux.md), [feature status](feature-status.md), and [owned-source contract](agent-features/context.md). Parent integration owns final execution and release evidence.
 
 ## Evidence rules and efficient test allocation
 

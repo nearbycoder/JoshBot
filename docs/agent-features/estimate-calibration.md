@@ -1,5 +1,7 @@
 # Estimate calibration
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Compare self-reported effort with its frozen initial estimate. Start with:
 
 ```text

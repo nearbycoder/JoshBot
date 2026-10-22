@@ -1,5 +1,7 @@
 # Task breakdown
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 `/nobo-help agent task-breakdown` turns an outcome and success definition into effort-sized steps with observable proof. It tracks only explicit user-reported completion. It does not execute steps, infer completion, or write to checklists/workflows.
 
 Start with `/nobo-help agent task-breakdown create Publish a short guide | Readers can install the app | 30`. Replace `WORK` with the returned full workspace ID, and `STEP` with a returned step ID:

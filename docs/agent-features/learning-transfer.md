@@ -1,6 +1,6 @@
 # Learning transfer
 
-Implemented in this isolated batch; **not yet registered or deployed**. Parent integration owns lazy registration, independent review and release.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Turn supplied learning into a specific application and compare a predeclared prediction with your own observations. Nothing changes learning cards, goals or external accounts. Provenance labels and excerpts are user supplied, not verified documents.
 

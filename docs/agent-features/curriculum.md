@@ -1,6 +1,6 @@
 # Learning curriculum
 
-Implemented locally; **not yet registered or deployed**. Parent owns lazy registration, independent review and release.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Start `/nobo-help agent curriculum create Learn SQL joins | 3 | 25`. With the returned full COURSE ID, add `unit COURSE add Inner joins | 2 | Correctly explain matching rows` and `unit COURSE add Left joins | 2 | Explain unmatched left rows`. Copy both returned unit IDs into `requires COURSE LEFT | INNER`. All commands use the `/nobo-help agent curriculum` prefix. `plan COURSE` allocates whole sessions; `demonstrate COURSE INNER | Explained a worked example correctly` records user evidence and unlocks the dependent unit. Allocation never demonstrates mastery.
 

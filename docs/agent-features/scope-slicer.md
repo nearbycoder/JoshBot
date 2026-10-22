@@ -1,5 +1,7 @@
 # Scope slicer
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 `/nobo-help agent scope-slicer` fits a coherent set of deliverables inside a minute budget while preserving mandatory prerequisites. It reports acceptance criteria and explicit cuts, without claiming work was completed.
 
 Start with `/nobo-help agent scope-slicer create Guide v1 | 180`. Replace `SCOPE` with the returned full scope ID and `INSTALL`/`SHOTS` with returned item IDs:

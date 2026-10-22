@@ -1,6 +1,8 @@
 # Text change digest
 
-Implemented locally; **unregistered and not deployed**. Parent integration owns metadata/lazy registration and release. Prefix commands with `/nobo-help agent change-digest`; static `help` documents the complete grammar.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Prefix commands with `/nobo-help agent change-digest`; static `help` documents the complete grammar.
 
 `create Launch note | before | Launch on October 30 with 10 users.` saves a named before version. Copy the comparison ID into `after DIFF | Launch on November 6 with 20 users.` and `compare DIFF`. The report shows exact deleted/inserted spans, offsets, the change from `October 30` to `November 6`, and the numeric `10`/`20` change. Copy the full hunk ID into `classify DIFF HUNK | substantive | Launch date and audience changed`, then `digest DIFF`. Substantive, cosmetic and unreviewed hunks remain separate; no lexical heuristic silently marks a hunk reviewed.
 

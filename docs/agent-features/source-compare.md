@@ -1,6 +1,8 @@
 # Source comparison
 
-Implemented locally, **unregistered and not deployed**. Parent integration and independent review remain required. This private feature aligns exact pasted source spans by user-created topic. Missing cells remain unknown, lexical differences never become contradictions, and agreement/disagreement are explicit user judgments rather than factual findings. NFKC/case/whitespace-normalized duplicate quotes are identified as non-independent corroboration; source independence is otherwise unknown.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This private feature aligns exact pasted source spans by user-created topic. Missing cells remain unknown, lexical differences never become contradictions, and agreement/disagreement are explicit user judgments rather than factual findings. NFKC/case/whitespace-normalized duplicate quotes are identified as non-independent corroboration; source independence is otherwise unknown.
 
 Start `/nobo-help agent source-compare create Two onboarding studies`. Add two sources with `source COMPARISON add LABEL | PASTED_TEXT`, add `topic COMPARISON add Setup assistance`, and quote each with `quote COMPARISON TOPIC | SOURCE | EXACT_EXCERPT`. `compare COMPARISON` displays aligned cells and missing coverage. Labels use `label COMPARISON TOPIC | unknown|agreement|disagreement`; choose one token. Non-unknown labels need at least two current nonempty cells.
 

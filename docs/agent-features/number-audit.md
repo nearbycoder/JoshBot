@@ -1,6 +1,8 @@
 # Number audit
 
-Locally implemented and tested with the real scoped memory-store/runtime fixture. Unregistered and not deployed by this change. Parent integration owns registration and release. No live calls, installs, model, search, context access or external changes.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Locally implemented and tested with the real scoped memory-store/runtime fixture. No live calls, installs, model, search, context access or external changes.
 
 Create an audit with `create Launch metrics`. Copy its full returned AUDIT ID into:
 

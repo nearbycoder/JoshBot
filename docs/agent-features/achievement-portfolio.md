@@ -1,6 +1,6 @@
 # Achievement portfolio
 
-Locally implemented; unregistered; not deployed. Integration, independent review, CI and release remain parent-owned.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 The catalog example saves the onboarding challenge. Add the personal guide-writing action, measured result `12 | requests per month | 20`, the support-summary excerpt and Maya's review contribution. `story` reports **20 → 12 requests per month**, a decrease of **8** and **40% using denominator 20**. These are labeled user measurements. The report does not infer that the action caused the result. Personal action and team attribution occupy separate exact sections; `bullets` gives a concise variant and `story` retains complete evidence.
 

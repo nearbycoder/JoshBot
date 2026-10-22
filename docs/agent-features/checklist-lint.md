@@ -1,6 +1,8 @@
 # Checklist quality check
 
-Locally implemented, unregistered and not deployed. Registration/release belong to the parent. This feature audits entered procedure design; it never executes steps, records completion, reads toolbox checklists or passes release gates. Zero model, search, context and live calls.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This feature audits entered procedure design; it never executes steps, records completion, reads toolbox checklists or passes release gates. Zero model, search, context and live calls.
 
 Start with `create Publish a guide | Applies to the public documentation site`. Use its returned REVIEW ID:
 

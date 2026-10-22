@@ -1,6 +1,8 @@
 # Home maintenance planner
 
-Local, unregistered and not deployed. **Organize life** feature `home-maintenance` computes only supplied date/usage intervals. No maintenance advice, booking, recurring job, notification, model, search or context read is added.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+**Organize life** feature `home-maintenance` computes only supplied date/usage intervals. No maintenance advice, booking, recurring job, notification, model, search or context read is added.
 
 Start `/nobo-help agent home-maintenance add Air filter | Appliance manual | 90 | none`. With its returned ID, `service ID | 2026-07-01 | none | Replaced filter`, then `due 2026-10-22`, produces **2026-09-29**, **23 civil days overdue**. A second actual service on October 22 establishes a new baseline. `history ID` exposes both exact service rows and their stable IDs.
 

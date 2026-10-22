@@ -1,5 +1,7 @@
 # Conversation rehearsal
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Privately prepare a goal, opening, nonnegotiable boundary, acceptable concessions and an explicit stop condition, then practice one objection at a time. Practice hides your prepared response; after you record an attempt, review reveals it alongside your attempt and a boundary checklist. The tool does not contact anyone, predict a real person's words or conduct a continuous conversation.
 
 Start: `/nobo-help agent difficult-conversation create Discuss shifting the deadline | Agree on a feasible scope`. Replace `ID`, `CARD` and `ATTEMPT` with returned IDs. Commands follow `/nobo-help agent difficult-conversation`:

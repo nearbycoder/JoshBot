@@ -1,6 +1,8 @@
 # Concept connections
 
-Implemented locally, **unregistered and not deployed**; integration and independent review belong to the parent. This feature saves a directed concept graph with explicit `supports`, `contrasts`, `example`, and `depends-on` labels. Breadth-first traversal returns a shortest path, explains each user label, and uses saved insertion order to break ties. It expands each node once; cycles, shared nodes, self-links and disconnected concepts are safe. No edge implies causality or verified evidence.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+This feature saves a directed concept graph with explicit `supports`, `contrasts`, `example`, and `depends-on` labels. Breadth-first traversal returns a shortest path, explains each user label, and uses saved insertion order to break ties. It expands each node once; cycles, shared nodes, self-links and disconnected concepts are safe. No edge implies causality or verified evidence.
 
 Start `/nobo-help agent concept-links create Reliable systems`, then `concept MAP add Idempotency | Repeating a request does not add effects`. Add another node and use `connect MAP FROM | depends-on | TO | Avoid duplicate effects`, followed by `path MAP FROM | TO`. `edit`, `concept ... edit`, and `connect-edit` replace all accepted fields. `remove MAP concept|edge|attachment CHILD_ID confirm` removes explicit items; removing a concept removes its incident edges and attached snapshots. The static help specifies every command and pipe/backslash escaping.
 

@@ -1,6 +1,8 @@
 # Argument map
 
-Implemented locally; **unregistered and not deployed**. Parent registration must wire the metadata and lazy implementation. Prefix commands with `/nobo-help agent argument-map`. `help` is static and gives every command.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+Prefix commands with `/nobo-help agent argument-map`. `help` is static and gives every command.
 
 `create Use a shorter onboarding form` returns a map ID and a separate root claim ID. Add `node MAP add reason | Fewer fields reduce initial effort` and `node MAP add objection | Required information may be missing`. Copy the returned full node IDs into `link MAP REASON | supports | ROOT` and `link MAP OBJECTION | challenges | REASON`. `audit MAP` identifies the unsupported reason and unanswered objection. These flags mean recorded support/response is missing; they do not assess truth or persuasiveness.
 

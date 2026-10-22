@@ -1,6 +1,6 @@
 # Mistake pattern review
 
-Implemented locally; **not yet registered or deployed**. Parent owns registration, independent review and release.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Start `/nobo-help agent mistake-patterns record 2026-10-22 | Review | Missed an edge case | testing`. Then use the same prefix with `rule add Before review, list three boundary cases | testing | 2026-10-23`. With the returned RULE ID, record `opportunity RULE | 2026-10-24 | success | Boundary list caught an empty input bug`, then `patterns testing` and `review RULE`. Enter observations when they occur; dates are user-entered civil labels, without timezone conversion or inferred event instants.
 

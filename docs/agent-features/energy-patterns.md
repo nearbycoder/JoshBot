@@ -1,6 +1,6 @@
 # Energy pattern review
 
-Implemented locally; **not registered or deployed**. Parent integration owns registration, independent review and release.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Record explicit energy with `/nobo-help agent energy-patterns checkin 2026-10-22 | morning | 4 | writing | Felt alert`. Prefix the following commands with `/nobo-help agent energy-patterns` and use returned full IDs.
 

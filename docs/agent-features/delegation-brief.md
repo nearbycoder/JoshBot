@@ -1,5 +1,7 @@
 # Delegation brief
 
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
 Prepare a private request with observable outcomes, recipient labels, decision rights, in/out scope, resources, acceptance tests and civil-date checkpoints. The deterministic completeness audit identifies missing boundaries. Nothing assigns work or contacts the recipient.
 
 Start with `/nobo-help agent delegation-brief create Review onboarding | Reviewer | Find the three largest sources of confusion`. Replace `ID` below with the returned brief ID. Commands follow `/nobo-help agent delegation-brief`:

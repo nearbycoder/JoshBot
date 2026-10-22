@@ -1,6 +1,8 @@
 # Purchase cost comparison
 
-Local, unregistered and not deployed. **Organize life** feature `purchase-compare` compares only entered offers using a shared currency label and common usable unit. It does not fetch prices, convert currencies/units, infer tax/quality/resale, recommend guaranteed purchases, or take external action. Generation/search/context are all zero.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
+
+**Organize life** feature `purchase-compare` compares only entered offers using a shared currency label and common usable unit. It does not fetch prices, convert currencies/units, infer tax/quality/resale, recommend guaranteed purchases, or take external action. Generation/search/context are all zero.
 
 Start `/nobo-help agent purchase-compare create Filter packs | USD | filter | 12`. Enter `offer ID add Pack A | 24.00 | 3.00 | 0.00 | 6 | 0.00` and `offer ID add Pack B | 40.00 | 0.00 | 0.00 | 10 | 0.00`. `compare ID` ranks B's **(40 + 0 − 0)/10 = USD 4.00/filter** ahead of A's **(24 + 3 − 0)/6 = USD 4.50/filter**. `what-if ID | OFFER_A | shipping | 0.00` previews A at 4.00/filter without changing any stored bytes.
 

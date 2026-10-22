@@ -1,6 +1,6 @@
 # Meeting load review
 
-Implemented locally; **not registered or deployed**. Parent integration owns registration, independent review and release.
+Implemented and registered; [release/deployment status is tracked in PR #59](https://github.com/nearbycoder/JoshBot/pull/59). See the [grouped guide index](README.md#find-a-feature) and [implementation/evidence record](../personal-agent-50-release.md).
 
 Start `/nobo-help agent meeting-load create Workweek review | 2026-10-26 | 2026-10-30`. Prefix subsequent commands with `/nobo-help agent meeting-load`; replace `REPORT` with the returned full ID.
 
