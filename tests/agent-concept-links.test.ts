@@ -56,7 +56,7 @@ test("all graph counts and long report continuations are complete and revision-b
  for(let i=0;i<40;i++) assert.match(await f.run(`concept ${id} add N${i} | A${i}`),/Saved concept/);
  let r=(await state(f)).records[0];
  for(let i=0;i<80;i++) assert.match(await f.run(`connect ${id} ${r.nodes[i%40].id} | ${i<40?"supports":"contrasts"} | ${r.nodes[(i+1)%40].id} | E${i}`),/Saved edge/);
- assert.match((await walk(f,`show ${id}`)).all,/E79/); assert.match(await f.run(`concept ${id} add excess | x`),/Invalid saved/);
+ assert.match((await walk(f,`show ${id}`)).all,/E79/); assert.match(await f.run(`concept ${id} add excess | x`),/Maximum 40/);
  for(let i=0;i<20;i++) await f.run(`remove ${id} edge ${(await state(f)).records[0].edges.at(-1).id} confirm`);
  r=(await state(f)).records[0]; for(let i=0;i<20;i++) await f.run(`connect-edit ${id} ${r.edges[i].id} | ${r.edges[i].from} | supports | ${r.edges[i].to} | ${"x".repeat(250)}`);
  const viewed=await walk(f,`path ${id} ${r.nodes[0].id} | ${r.nodes[20].id}`); assert.ok(viewed.count>1);
@@ -78,4 +78,22 @@ test("selection detects edits/deletion across awaited source read and every CAS 
  const p=await f.run(`sources ${r.id}`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1]; let rev=(await state(f)).records[0].revision;
  conflict=true; assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${source.id} | ${fp} | ${rev} | exact`),/changed/);
  rev=(await state(f)).records[0].revision;gate=deferred(); const pending=f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${source.id} | ${fp} | ${rev} | exact`); await new Promise(resolve=>setImmediate(resolve));await f.run(`delete ${r.id} confirm`);gate.resolve([source]);assert.match(await pending,/not found/); assert.equal((await state(f)).records.length,0);
+});
+
+test("ten selected sources, replacement/removal, and production memory revocation preserve exact provenance",async()=>{
+ const {f,backend,key,notes,owner}=production(),r=await setup(f);backend.data.set(key,JSON.stringify(notes(11)));
+ for(let i=0;i<10;i++){const sid=`toolbox:notes:note${String(i).padStart(3,"0")}`,p=await f.run(`sources ${r.id} --kind note --source ${sid}`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1],rev=(await state(f)).records[0].revision;assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${sid} | ${fp} | ${rev} | Idempotency excerpt`),/Saved selected/);}
+ let p=await f.run(`sources ${r.id} --kind note --source toolbox:notes:note010`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1],rev=(await state(f)).records[0].revision;
+ assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | toolbox:notes:note010 | ${fp} | ${rev} | Idempotency excerpt`),/Maximum ten/);
+ let a=(await state(f)).records[0].attachments[0];assert.match(await f.run(`attach-edit ${r.id} ${a.id} | ${r.nodes[1].id} | note | toolbox:notes:note010 | ${fp} | ${rev} | Idempotency excerpt`),/Saved selected/);
+ for(const a of(await state(f)).records[0].attachments)await f.run(`remove ${r.id} attachment ${a.id} confirm`);
+ const mf=createAgentFeatureFixture(memory,{backend,owner,now});await mf.run("capture me | key | Exact memory fact | My source note");let ms=(await mf.store().read<any>("cards"))!;const mid=ms.cards[0].id;await mf.run(`confirm ${mid} 1`);
+ p=await f.run(`sources ${r.id} --kind memory --source memory-review:${mid}`);fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1];rev=(await state(f)).records[0].revision;
+ assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | memory | memory-review:${mid} | ${fp} | ${rev} | Exact memory fact`),/Saved selected/);
+ const saved=(await state(f)).records[0].attachments[0].evidence.sources[0];assert.equal(saved.metadata.cardId,mid);assert.equal(saved.metadata.source,"My source note");assert.deepEqual(saved.metadata.origin,{kind:"user"});
+ await mf.run(`correct ${mid} 2 | Corrected fact | Corrected source`);assert.match((await walk(f,`sources ${r.id} --kind memory`)).all,/absent\/unavailable/);assert.match((await walk(f,`show ${r.id}`)).all,/Exact memory fact/);
+});
+test("mislabeled foreign adapter provenance is refused before selection",async()=>{
+ const f=createAgentFeatureFixture(feature,{services:{readContext:async()=>[{id:"artifact:foreign",kind:"note",title:"Fake",text:"text",metadata:{source:"Personal toolbox / notes"}}]}}),r=await setup(f);
+ assert.match(await f.run(`sources ${r.id} --kind note`),/provenance/);assert.equal((await state(f)).records[0].attachments.length,0);
 });

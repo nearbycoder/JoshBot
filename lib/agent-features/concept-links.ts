@@ -23,7 +23,17 @@ type ConceptMap = v.InferOutput<typeof record>;
 type State = v.InferOutput<typeof schema>;
 const initial: State = { version: 1, records: [] };
 const keys = ["source", "createdAt", "featureId", "cardId", "revision", "subject", "key", "confirmedAt", "expiresOn", "expiryTimezone", "confidence", "origin"];
-const evidence = (items: readonly unknown[], kinds: readonly AgentContextKind[]) => captureEvidence(items, { kinds, maxItems: 1, maxBytes: 65536, metadataKeys: keys });
+function evidence(items: readonly unknown[], kinds: readonly AgentContextKind[]) {
+  const snapshot = captureEvidence(items, { kinds, maxItems: 1, maxBytes: 65536, metadataKeys: keys });
+  for (const source of snapshot.sources) {
+    if (source.kind === "note") {
+      if (!/^toolbox:notes:[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(source.id) || source.metadata?.source !== "Personal toolbox / notes") throw new Error("Note provenance is not the supported owned toolbox adapter.");
+    } else if (source.kind === "memory") {
+      if (!/^memory-review:mr_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(source.id) || source.metadata?.featureId !== "memory-review" || source.id !== `memory-review:${source.metadata.cardId}`) throw new Error("Memory provenance is not the supported approved-card adapter.");
+    } else throw new Error("Only owned notes and approved memory are supported.");
+  }
+  return snapshot;
+}
 const envelope = (r: ConceptMap) => ({ feature: metadata.id, version: 1, record: r });
 function validate(raw: unknown): State {
   assertStateVersion(raw, 1); serializedBytes(raw);
@@ -52,7 +62,7 @@ const get = (s: State, key: string) => { const r = s.records.find(r => r.id === 
 const getNode = (r: ConceptMap, key: string) => { const n = r.nodes.find(n => n.id === key); if (!n) throw new Error("Node not found; inspect show for full IDs."); return n; };
 function render(r: ConceptMap, command: string, body: string, page: number, expected?: string, suffix = "") {
   if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new Error(`Map changed or revision missing. Restart: ${route} ${command} page 1`);
-  const parts = body.split(/((?:toolbox:notes:|memory-review:)[A-Za-z0-9:._/-]+|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[es]1:[a-f0-9]{64})/g).map((text, i) => ({ text, atomic: i % 2 === 1 }));
+  const parts = body.split(/(https?:\/\/[^\s"\\]+|"(?:id|cardId)"\s*:\s*"(?:\\.|[^"\\])*"|(?:toolbox:notes:|memory-review:)[A-Za-z0-9:._/-]+|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[es]1:[a-f0-9]{64})/g).map((text, i) => ({ text, atomic: i % 2 === 1 }));
   return pageAt(paginateParts(parts, { mode: "plain", title: `Concept map ${r.id} · revision ${r.revision}`, command: p => `${route} ${command} page ${p} rev ${r.revision}${suffix}` }), page).text;
 }
 function quota(s: State, content: boolean) {
@@ -92,7 +102,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const expected = key === undefined ? undefined : get(s, key).revision;
     return ctx.store.update("state", initial, raw => {
       const state = validate(raw), r = key === undefined ? undefined : get(state, key); if (r) assertRevision(r.revision, expected);
-      const detail = change(state, r); if (r && state.records.includes(r)) r.revision++;
+      const detail = change(state, r); if (r && state.records.includes(r)) { if (r.revision === MAX_REV) throw new Error("Revision limit reached; export then delete the record explicitly."); r.revision++; }
       validate(state); quota(state, content);
       return { value: state, result: `${detail}\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `show ${key}` : "list"}` };
     });
@@ -103,10 +113,10 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   if ((m = command.match(/^path (\S+) (\S+)\s*\|\s*(\S+?)(?: page (\d+))?(?: rev (\d+))?$/))) { const [, key, from, to, p, rev] = m, r = get(s, key); return render(r, `path ${key} ${from} | ${to}`, path(r, from, to), parsePage(p), rev); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new Error("Record exceeds export limit; use show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete map and owned nodes/edges/snapshots: ${route} delete ${key} confirm`; return save(key, state => { state.records = state.records.filter(r => r.id !== key); return `Deleted privately: ${key}`; }, false); }
-  if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { state.records.push({ id: newId, title, revision: 1, nodes: [], edges: [], attachments: [] }); return `Saved privately: ${newId}\nInspect: ${route} show ${newId}`; }); }
+  if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 8) throw new Error("Maximum eight maps. Export/delete one explicitly."); state.records.push({ id: newId, title, revision: 1, nodes: [], edges: [], attachments: [] }); return `Saved privately: ${newId}\nInspect: ${route} show ${newId}`; }); }
   if ((m = command.match(/^edit (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [title] = fields(input, [160]); return save(key, (_, r) => { r!.title = title; return `Updated map: ${key}`; }); }
-  if ((m = command.match(/^concept (\S+) (add|edit) ([\s\S]+)$/))) { const [, key, action, input] = m, f = fields(input, action === "add" ? [160, 600] : [36, 160, 600]), nid = action === "edit" ? f.shift()! : newId; return save(key, (_, r) => { if (action === "add") r!.nodes.push({ id: nid, title: f[0], annotation: f[1] }); else Object.assign(getNode(r!, nid), { title: f[0], annotation: f[1] }); return `Saved concept: ${nid}. Edges and historical attachments retained as user annotations.`; }); }
-  if ((m = command.match(/^(connect|connect-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, f = fields(input, action === "connect" ? [36, 10, 36, 400] : [36, 36, 10, 36, 400]), eid = action === "connect-edit" ? f.shift()! : newId; if (!v.is(relation, f[1])) throw new Error("Relation must be supports, contrasts, example, or depends-on."); const type = f[1]; return save(key, (_, r) => { const next = { id: eid, from: f[0], type, to: f[2], label: f[3] }; if (action === "connect") r!.edges.push(next); else { const e = r!.edges.find(e => e.id === eid); if (!e) throw new Error("Edge not found."); Object.assign(e, next); } return `Saved edge: ${eid}`; }); }
+  if ((m = command.match(/^concept (\S+) (add|edit) ([\s\S]+)$/))) { const [, key, action, input] = m, f = fields(input, action === "add" ? [160, 600] : [36, 160, 600]), nid = action === "edit" ? f.shift()! : newId; return save(key, (_, r) => { if (action === "add") { if (r!.nodes.length === 40) throw new Error("Maximum 40 concepts; remove one explicitly."); r!.nodes.push({ id: nid, title: f[0], annotation: f[1] }); } else Object.assign(getNode(r!, nid), { title: f[0], annotation: f[1] }); return `Saved concept: ${nid}. Edges and historical attachments retained as user annotations.`; }); }
+  if ((m = command.match(/^(connect|connect-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, f = fields(input, action === "connect" ? [36, 10, 36, 400] : [36, 36, 10, 36, 400]), eid = action === "connect-edit" ? f.shift()! : newId; if (!v.is(relation, f[1])) throw new Error("Relation must be supports, contrasts, example, or depends-on."); const type = f[1]; return save(key, (_, r) => { const next = { id: eid, from: f[0], type, to: f[2], label: f[3] }; if (action === "connect") { if (r!.edges.length === 80) throw new Error("Maximum 80 edges; remove one explicitly."); r!.edges.push(next); } else { const e = r!.edges.find(e => e.id === eid); if (!e) throw new Error("Edge not found."); Object.assign(e, next); } return `Saved edge: ${eid}`; }); }
   if ((m = command.match(/^sources (\S+)([\s\S]*)$/))) {
     const r = get(s, m[1]); let rest = m[2].trim(), page = 1, rev: string | undefined, expected: string | undefined;
     const tail = rest.match(/(?:^| )page (\d+) rev (\d+) fingerprint (s1:[a-f0-9]{64})$/);
@@ -141,7 +151,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     if (!row || row.fingerprint !== expectedFingerprint) throw new Error(`Selection is stale or absent from this permitted snapshot. Reopen ${route} sources ${key} --kind ${kind}`);
     if (!row.source.text.includes(excerpt)) throw new Error("Excerpt must be an exact nonempty span of current source text.");
     const snapshot = evidence([{ ...row.source, text: excerpt }], [kind]);
-    return save(key, (_, map) => { const next = { id: aid, nodeId: nid, sourceFingerprint: row.fingerprint, capturedAt: now, evidence: snapshot }; if (action === "attach") map!.attachments.push(next); else { const a = map!.attachments.find(a => a.id === aid); if (!a) throw new Error("Attachment not found."); Object.assign(a, next); } return `Saved selected historical excerpt: ${aid}. Reference/metadata retained; no edge inferred.`; });
+    return save(key, (_, map) => { const next = { id: aid, nodeId: nid, sourceFingerprint: row.fingerprint, capturedAt: now, evidence: snapshot }; if (action === "attach") { if (map!.attachments.length === 10) throw new Error("Maximum ten selected excerpts; remove one explicitly."); map!.attachments.push(next); } else { const a = map!.attachments.find(a => a.id === aid); if (!a) throw new Error("Attachment not found."); Object.assign(a, next); } return `Saved selected historical excerpt: ${aid}. Reference/metadata retained; no edge inferred.`; });
   }
   if ((m = command.match(/^remove (\S+) (concept|edge|attachment) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "concept") { getNode(r!, child); r!.nodes = r!.nodes.filter(n => n.id !== child); r!.edges = r!.edges.filter(e => e.from !== child && e.to !== child); r!.attachments = r!.attachments.filter(a => a.nodeId !== child); } else if (kind === "edge") { if (!r!.edges.some(e => e.id === child)) throw new Error("Edge not found."); r!.edges = r!.edges.filter(e => e.id !== child); } else { if (!r!.attachments.some(a => a.id === child)) throw new Error("Attachment not found."); r!.attachments = r!.attachments.filter(a => a.id !== child); } return `Removed ${kind}: ${child}. Concept removal also removes incident edges/attachments.`; }, false); }
   throw new Error(`Unknown/incomplete command. Use ${route} help`);
