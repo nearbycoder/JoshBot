@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import assert from "node:assert/strict";
 import test from "node:test";
 import feature, { feature as namedFeature } from "../lib/agent-features/day-planner.js";
@@ -388,9 +389,104 @@ test("task/state/output bounds hold, with all task IDs visible even for long tit
   for (const id of ids) { assert.ok(listing.includes(id)); assert.ok(output.includes(id)); }
   assert.ok(output.length <= 28_000);
   assert.ok(listing.length <= 28_000);
-  assert.ok(JSON.stringify(await saved(context)).length <= 150_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(await saved(context)), "utf8") <= 400_000);
   assert.match(output, /additional unavailable intervals omitted/);
   assertNoOverlap(await plan(context));
+});
+
+function unicodeEvents(): AgentContextItem[] {
+  return Array.from({ length: 200 }, (_, index) => {
+    const start = Date.parse("2026-10-23T14:00:00Z") + index * 2 * 60_000;
+    return event(`${"會".repeat(117)}${String(index).padStart(3, "0")}`, new Date(start).toISOString(), new Date(start + 60_000).toISOString(), {
+      title: "議".repeat(160),
+    });
+  });
+}
+
+test("maximum Unicode task and event counts leave byte headroom for plan refresh and deletion", async () => {
+  const underlying = createAgentTestStore();
+  const writtenBytes: number[] = [];
+  const limitedStore: AgentFeatureStore = {
+    read: underlying.read,
+    async update<T, R>(key: string, initial: T, transform: (value: T) => { value: T; result: R }): Promise<R> {
+      return underlying.update<T, R>(key, initial, current => {
+        const result = transform(current);
+        const bytes = Buffer.byteLength(JSON.stringify(result.value), "utf8");
+        assert.ok(bytes <= 400_000, "every proposed write must respect the feature byte budget");
+        writtenBytes.push(bytes);
+        return result;
+      });
+    },
+  };
+  const context = withEvents(unicodeEvents(), { store: limitedStore });
+  const ids: string[] = [];
+  for (let index = 0; index < 50; index++) {
+    const title = index % 2 === 0 ? "漢".repeat(160) : "🗓".repeat(80);
+    ids.push(await add(context, `${title} | 1 | high`));
+  }
+  assert.ok(Buffer.byteLength(JSON.stringify(await saved(context)), "utf8") <= 64_000);
+  assert.match(await feature.execute("plan 2026-10-23", context), /Scheduled: 50\/50/);
+  const full = JSON.stringify(await saved(context));
+  assert.ok(Buffer.byteLength(full, "utf8") > full.length * 2);
+  assert.ok(Buffer.byteLength(full, "utf8") <= 400_000);
+  assertNoOverlap(await plan(context));
+  assert.match(await feature.execute("plan 2026-10-23", context), /Scheduled: 50\/50/);
+  assert.match(await feature.execute(`remove ${ids[0]}`, context), /Removed/);
+  assert.match(await feature.execute("plan 2026-10-23", context), /Scheduled: 49\/49/);
+  assert.ok((await feature.execute("show", context)).length <= 27_000);
+  assert.match(await feature.execute("clear confirm", context), /Deleted all/);
+  assert.equal((await saved(context)).tasks.length, 0);
+  assert.ok(Math.max(...writtenBytes) < 480_000);
+});
+
+test("UTF-8 admission quota is checked before a write, preserving space and allowing deletion", async () => {
+  const context = withEvents([]);
+  const id = await add(context, "Task with retained lifecycle data | 30 | high");
+  const previous = await saved(context);
+  // A prior/future producer can retain extra lifecycle fields on otherwise valid records.
+  const legacy = { ...previous, tasks: previous.tasks.map(task => ({ ...task, retainedDetails: "漢".repeat(22_000) })) };
+  assert.ok(JSON.stringify(legacy).length < 64_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(legacy), "utf8") > 64_000);
+  await context.store.update<unknown, void>("state", {}, () => ({ value: legacy, result: undefined }));
+  const reply = await feature.execute("add Another task | 10 | normal", context);
+  assert.match(reply, /64,000 UTF-8 byte storage budget/);
+  assert.match(reply, /remove <task-id>.*clear confirm/);
+  assert.deepEqual(await context.store.read("state"), legacy);
+  assert.match(await feature.execute(`remove ${id}`, context), /Removed/);
+  await add(context, "After deletion | 10 | normal");
+  assert.match(await feature.execute("plan 2026-10-23", context), /Scheduled: 1\/1/);
+});
+
+test("oversized proposed snapshots preserve prior state; removal can recover space", async () => {
+  const context = withEvents(unicodeEvents());
+  const id = await add(context, "Retained lifecycle data | 30 | high");
+  const previous = await saved(context);
+  const legacy = { ...previous, tasks: previous.tasks.map(task => ({ ...task, retainedDetails: "漢".repeat(100_000) })) };
+  assert.ok(Buffer.byteLength(JSON.stringify(legacy), "utf8") < 400_000);
+  await context.store.update<unknown, void>("state", {}, () => ({ value: legacy, result: undefined }));
+  const reply = await feature.execute("plan 2026-10-23", context);
+  assert.match(reply, /400,000 UTF-8 byte storage budget/);
+  assert.match(reply, /Nothing was changed/);
+  assert.deepEqual(await context.store.read("state"), legacy);
+  assert.match(await feature.execute(`remove ${id}`, context), /Removed/);
+  await add(context, "Small task | 1 | normal");
+  assert.match(await feature.execute("plan 2026-10-23", context), /Scheduled: 1\/1/);
+});
+
+test("oversized persisted Unicode state has explicit deletion guidance and can be cleared", async () => {
+  const context = withEvents([]);
+  await add(context, "Legacy task | 30 | high");
+  const legacy = { ...await saved(context), retainedDetails: "漢".repeat(134_000) };
+  const json = JSON.stringify(legacy);
+  assert.ok(json.length < 150_000, "the previous character-only limit would miss this case");
+  assert.ok(Buffer.byteLength(json, "utf8") > 400_000);
+  assert.ok(Buffer.byteLength(json, "utf8") < 512_000, "the runtime can load the value for recovery");
+  await context.store.update<unknown, void>("state", {}, () => ({ value: legacy, result: undefined }));
+  assert.match(await feature.execute("tasks", context), /400,000 UTF-8 byte limit.*clear confirm/);
+  assert.deepEqual(await context.store.read("state"), legacy);
+  assert.match(await feature.execute("clear confirm", context), /Deleted all/);
+  await add(context, "Recovered task | 10 | normal");
+  assert.match(await feature.execute("plan 2026-10-23", context), /Scheduled: 1\/1/);
 });
 
 test("invalid persisted shapes are not silently reset; clear confirm is explicit recovery", async () => {

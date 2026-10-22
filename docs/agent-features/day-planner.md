@@ -38,7 +38,11 @@ The plan lists task blocks, blocked intervals with source IDs, and a reason for 
 - `show`: display the last successful plan, using its original timezone, creation time, and event snapshot. Rerun `plan` to refresh calendar context.
 - `clear confirm`: delete all tasks, the plan, and preferences; restore default working hours/breaks. This also explicitly recovers invalid or unsupported stored data. `clear` alone only explains the confirmation syntax.
 
-The state holds at most 50 tasks, four breaks, 200 event labels, and one plan. A new successful plan replaces the old one; no history is kept. A plan has at most 254 nonoverlapping blocks. The persisted document is validated against a 150,000-character JSON bound. Replies are limited to 27,000 characters. At most 12 unavailable intervals are displayed in detail (with up to two source IDs each); omitted intervals still block scheduling. All normal task rows and unscheduled reasons remain visible. Slack mention/link delimiters in user/source text are neutralized for display.
+The state holds at most 50 tasks, four breaks, 200 event labels, and one plan. A new successful plan replaces the old one; no history is kept. A plan has at most 254 nonoverlapping blocks. Replies are limited to 27,000 characters, below the runtime's 28,000-character cap. At most 12 unavailable intervals are displayed in detail (with up to two source IDs each); omitted intervals still block scheduling. All normal task rows and unscheduled reasons remain visible. Slack mention/link delimiters in user/source text are neutralized for display.
+
+Storage is measured with `Buffer.byteLength(JSON.stringify(state), "utf8")` before every changed value is written, including Unicode and JSON escaping. The full feature state is capped at **400,000 UTF-8 bytes**, leaving 80,000 bytes below the parent's 480,000-byte feature ceiling and 112,000 bytes below the store's 512,000-byte hard limit. Adding tasks or changing settings caps the state without a saved plan at **64,000 bytes**, reserving 336,000 bytes within the feature budget for a later plan snapshot. Maximum-count Unicode tasks/events are tested through planning, refresh, removal, and clearing. This keeps accepted tasks processable without filling storage during plan creation.
+
+Quota failures preserve the prior state and explain how to recover: use `tasks`, then `remove <task-id>` to free task and saved-plan space; reduce imported event content when a plan snapshot is too large; or use `clear confirm` to delete all planner state. Removal is permitted above the task-admission budget as long as the loaded state fits the full feature budget. If legacy stored data exceeds the full feature budget but is still readable by the runtime, only `clear confirm` resets it; the feature reports that option explicitly. Future lifecycle/schema expansion must keep the reserved headroom and measure serialized bytes rather than character counts.
 
 ## Timezones and DST
 
@@ -62,6 +66,8 @@ Tasks are sorted by priority, earliest deadline within that priority, creation t
 Tasks are never split. There are no dependencies, travel buffers, recurring tasks, automatic completion, overnight working hours, automatic replanning, calendar writes, or focus timers. Breaks are fixed wall-time intervals, not periodic rest rules. There is no model/search use. Event titles/text are untrusted data and cannot trigger tools or commands.
 
 The schedule only knows the owned event context the adapter supplies. An empty context is explicitly reported and does not verify any external calendar. Failed context reads, invalid event intervals, oversized context, cancellation before saving, and invalid local times do not replace the saved plan. A concurrent task/settings edit or another successfully saved plan causes an in-flight stale proposal to be discarded. Updating tasks/settings is atomic; UUIDs and timestamps are generated outside retryable store transforms.
+
+Each invocation makes **zero generation calls and zero searches** (below the runtime limits of eight and six). Only `plan` reads context, once. Work is bounded by 50 tasks and 200 events. The shared runtime owns the 120-second deadline, prompt cancellation of provider waits, and signal-based late-write guards; the feature also checks cancellation after the event read and before computing/saving its plan. No additional timers, background work, or service calls are started here.
 
 ## Exact parent integration requirements
 
@@ -94,4 +100,4 @@ npm run typecheck
 git diff --check
 ```
 
-Tests use only the shared in-memory store fixture and fake services. They cover complete command flows, priority/deadline ordering, merged blockers, empty/error states, bounded retention/output, invalid persisted state, DST gaps/overlaps and non-hour changes, all-day/overnight event boundaries, retries, concurrent changes, cancellation, and provider failure preservation.
+Tests use only the shared in-memory store fixture and fake services. They cover complete command flows, priority/deadline ordering, merged blockers, empty/error states, UTF-8 byte quotas and lifecycle headroom with Unicode data, quota recovery without partial writes, bounded retention/output, invalid persisted state, DST gaps/overlaps and non-hour changes, all-day/overnight event boundaries, retries, concurrent changes, cancellation, and provider failure preservation.

@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 import { instant, iso, minuteOfDay, PlannerError, validDate, ZonedTime } from "./day-planner/time.js";
@@ -6,6 +7,10 @@ const KEY = "state";
 const MINUTE = 60_000;
 const MAX_TASKS = 50;
 const MAX_EVENTS = 200;
+// Leave 80,000 bytes below the feature ceiling for later lifecycle/schema changes.
+// Task admission reserves 336,000 bytes within this budget for a complete plan.
+const MAX_STATE_BYTES = 400_000;
+const MAX_TASK_STATE_BYTES = 64_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 type Priority = "high" | "normal" | "low";
 type Range = { start: string; end: string };
@@ -96,10 +101,20 @@ function state(value: unknown): State {
   if (!record(value) || value.version !== 1 || typeof value.revision !== "string" ||
     (value.revision !== "initial" && !UUID.test(value.revision)) || !Array.isArray(value.tasks) ||
     value.tasks.length > MAX_TASKS || !value.tasks.every(validTask) || new Set(value.tasks.map(task => task.id)).size !== value.tasks.length ||
-    !validSettings(value.settings) || (value.plan !== null && !validPlan(value.plan, value.tasks)) || JSON.stringify(value).length > 150_000) {
+    !validSettings(value.settings) || (value.plan !== null && !validPlan(value.plan, value.tasks))) {
     throw new PlannerError("Saved day-planner data is invalid or from an unsupported version. It was left unchanged. Use clear confirm only if you want to delete it and start over.");
   }
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_STATE_BYTES) {
+    throw new PlannerError("Saved day-planner data exceeds its 400,000 UTF-8 byte limit. It was left unchanged. Use clear confirm to delete all planner state and start over.");
+  }
   return { version: 1, revision: value.revision, tasks: value.tasks, settings: value.settings, plan: value.plan };
+}
+
+function withinQuota(value: State, limit = MAX_STATE_BYTES): State {
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > limit) {
+    throw new PlannerError(`This change exceeds the day planner's ${limit.toLocaleString("en-US")} UTF-8 byte storage budget. Nothing was changed. Use tasks then remove <task-id> to free space, reduce imported event content if planning, or clear confirm to delete all planner state.`);
+  }
+  return value;
 }
 
 function rangeInput(input: string): Range {
@@ -259,7 +274,7 @@ clear confirm — delete all planner tasks, settings, and saved plan
 Example: add Draft proposal | 60 | high | 2026-10-23T16:00
 Example: settings breaks 12:00-12:30,15:00-15:15
 Example: plan 2026-10-23
-Deadlines are local to the supplied timezone unless they include Z or an offset. Ambiguous/nonexistent local times are rejected. Working/break boundaries must be unambiguous. End time may be 24:00; no overnight work. Tasks are whole blocks: priority first, then deadline, then creation time/ID. For today, planning starts at the next minute. No model calls or calendar writes. 50 tasks and one plan retained; edits invalidate the saved plan.`;
+Deadlines are local to the supplied timezone unless they include Z or an offset. Ambiguous/nonexistent local times are rejected. Working/break boundaries must be unambiguous. End time may be 24:00; no overnight work. Tasks are whole blocks: priority first, then deadline, then creation time/ID. For today, planning starts at the next minute. No model calls or calendar writes. 50 tasks and one plan retained; edits invalidate the saved plan. Storage: 400,000 UTF-8 bytes, with task/settings admission capped at 64,000 to reserve plan space. Use tasks then remove <task-id> to free space, or clear confirm to delete everything.`;
 
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
   if (typeof command !== "string" || command.length > 2_000) throw new PlannerError("Command is too long (maximum 2,000 characters). Use help for syntax.");
@@ -267,7 +282,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
   if (!input || input === "help") return help;
   if (input === "clear confirm") {
     const revision = randomUUID();
-    await context.store.update<unknown, void>(KEY, initial(), () => ({ value: { ...initial(), revision }, result: undefined }));
+    await context.store.update<unknown, void>(KEY, initial(), () => ({ value: withinQuota({ ...initial(), revision }), result: undefined }));
     return "Deleted all day-planner tasks and the saved plan; working hours/breaks are reset to defaults.";
   }
   if (input === "clear") return "Use clear confirm to delete all planner tasks, settings, and the saved plan.";
@@ -291,7 +306,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     await context.store.update<unknown, void>(KEY, initial(), raw => {
       const saved = state(raw);
       if (saved.tasks.length >= MAX_TASKS) throw new PlannerError("The planner holds at most 50 tasks. Remove a task before adding another.");
-      return { value: { ...saved, revision, tasks: [...saved.tasks, task], plan: null }, result: undefined };
+      return { value: withinQuota({ ...saved, revision, tasks: [...saved.tasks, task], plan: null }, MAX_TASK_STATE_BYTES), result: undefined };
     });
     return `Added ${taskText(task)}. Run plan YYYY-MM-DD to schedule it.`;
   }
@@ -302,7 +317,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     const removed = await context.store.update<unknown, boolean>(KEY, initial(), raw => {
       const saved = state(raw);
       if (!saved.tasks.some(task => task.id === id)) return { value: saved, result: false };
-      return { value: { ...saved, revision, tasks: saved.tasks.filter(task => task.id !== id), plan: null }, result: true };
+      return { value: withinQuota({ ...saved, revision, tasks: saved.tasks.filter(task => task.id !== id), plan: null }), result: true };
     });
     return removed ? `Removed ${id}. Run plan YYYY-MM-DD to refresh the plan.` : "Task not found. Use tasks to see current IDs.";
   }
@@ -316,7 +331,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       const saved = state(raw);
       const settings = { hours: hours ?? saved.settings.hours, breaks: breaks ?? saved.settings.breaks };
       if (!validSettings(settings)) throw new PlannerError("Choose at most four nonoverlapping breaks within a single day.");
-      return { value: { ...saved, revision, settings, plan: null }, result: settings };
+      return { value: withinQuota({ ...saved, revision, settings, plan: null }, MAX_TASK_STATE_BYTES), result: settings };
     });
     return `${settingsText(next)} Local times use the supplied timezone and are checked for clock changes when planning. Saved plan cleared; run plan YYYY-MM-DD.`;
   }
@@ -333,13 +348,13 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     let events: unknown;
     try { events = await context.services.readContext(["event"]); }
     catch { throw new PlannerError("Could not read your owned events. Tasks, settings, and any saved plan were kept. Retry plan when event context is available."); }
-    const plan = makePlan(date, context, snapshot, events, zone);
     if (context.signal?.aborted) throw new PlannerError("Planning was cancelled. No saved plan was replaced.");
+    const plan = makePlan(date, context, snapshot, events, zone);
     const revision = randomUUID();
     const committed = await context.store.update<unknown, boolean>(KEY, initial(), raw => {
       const saved = state(raw);
       if (saved.revision !== snapshot.revision) return { value: saved, result: false };
-      return { value: { ...saved, revision, plan }, result: true };
+      return { value: withinQuota({ ...saved, revision, plan }), result: true };
     });
     if (!committed) return "Tasks, settings, or the saved plan changed while planning. This stale proposal was discarded. Run plan YYYY-MM-DD again.";
     return render(plan, snapshot.tasks);
