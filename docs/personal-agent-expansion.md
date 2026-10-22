@@ -1,6 +1,6 @@
 # Personal-agent expansion — 2026-10-22
 
-Status: integration and review underway; not released. Twenty implementation assignments were launched in isolated worktrees. All twenty feature modules are assembled and registered with private Slack routing, Home discovery and scoped persistence. Shared source adapters, the final runtime-limit update and independent reviews are still in progress. Registration does not establish release readiness; the full suite and build must pass after integration.
+Status: integration and review underway; not released. Twenty implementation assignments were launched in isolated worktrees. All twenty feature modules and their runtime-limit updates are assembled and registered with private Slack routing, Home discovery and scoped persistence. Shared source adapters, review fixes and independent reviews are still in progress. Registration does not establish release readiness; the full suite and build must pass after integration.
 
 ## Research basis
 
