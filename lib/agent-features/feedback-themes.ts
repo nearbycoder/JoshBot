@@ -12,8 +12,8 @@ type RecordData = { id: string; title: string; revision: number; createdAt: stri
 type State = { version: 1; records: RecordData[] };
 function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "quotes", "themes"]); validBase(v); array(v.quotes, 30); array(v.themes, 10);
-  for (const t of v.themes) { object(t, ["id", "label", "counterexamples", "experiment"]); validId(t.id); validText(t.label, 160); validText(t.experiment, 320, true); array(t.counterexamples, 3); for (const e of t.counterexamples) { object(e, ["id", "text"]); validId(e.id); validText(e.text, 1000); } }
-  for (const q of v.quotes) { object(q, ["id", "speaker", "date", "context", "text", "themeId"]); validId(q.id); validText(q.speaker, 160); civilDate(q.date); validText(q.context, 500); validText(q.text, 1000); if (q.themeId !== "") { validId(q.themeId); if (!v.themes.some((t: Theme) => t.id === q.themeId)) throw new Error("Dangling theme assignment."); } }
+  for (const t of v.themes) { object(t, ["id", "label", "counterexamples", "experiment"]); validId(t.id, "theme"); validText(t.label, 160); validText(t.experiment, 320, true); array(t.counterexamples, 3); for (const e of t.counterexamples) { object(e, ["id", "text"]); validId(e.id, "counter"); validText(e.text, 1000); } }
+  for (const q of v.quotes) { object(q, ["id", "speaker", "date", "context", "text", "themeId"]); validId(q.id, "quote"); validText(q.speaker, 160); civilDate(q.date); validText(q.context, 500); validText(q.text, 1000); if (q.themeId !== "") { validId(q.themeId, "theme"); if (!v.themes.some((t: Theme) => t.id === q.themeId)) throw new Error("Dangling theme assignment."); } }
   unique([...v.quotes.map((q: Quote) => q.id), ...v.themes.flatMap((t: Theme) => [t.id, ...t.counterexamples.map(e => e.id)])]);
 }
 function projectLifecycle(s: State): State {
@@ -169,8 +169,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix: string): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);
@@ -183,7 +183,7 @@ function unique(values: readonly string[]): void {
   if (new Set(values).size !== values.length) throw new Error("Duplicate IDs.");
 }
 function validBase(r: Record<string, any>): void {
-  validId(r.id); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
+  validId(r.id, "feedback"); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
   for (const value of [r.createdAt, r.updatedAt]) {
     if (typeof value !== "string" || checked(() => normalizeInstant(value)) !== value || !/^\d{4}-.*\.\d{3}Z$/.test(value)) throw new Error("Invalid saved instant.");
   }

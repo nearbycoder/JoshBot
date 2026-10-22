@@ -15,12 +15,12 @@ function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "skills"]); validBase(v); array(v.skills, 24);
   for (const s of v.skills) {
     object(s, ["id", "name", "target", "rubric", "self", "evidence", "reflection"]);
-    validId(s.id); validText(s.name, 160, true); validNumber(s.target, 0, 4);
+    validId(s.id, "skill"); validText(s.name, 160, true); validNumber(s.target, 0, 4);
     array(s.rubric, 5); if (s.rubric.length !== 5) throw new Error("Invalid rubric.");
     for (const definition of s.rubric) validText(definition, 320, true);
     if (s.self !== "") enumValue(s.self, ["0", "1", "2", "3", "4"]);
     validText(s.reflection, 320, true); array(s.evidence, 3);
-    for (const e of s.evidence) { object(e, ["id", "date", "text"]); validId(e.id); civilDate(e.date); validText(e.text, 1000); }
+    for (const e of s.evidence) { object(e, ["id", "date", "text"]); validId(e.id, "example"); civilDate(e.date); validText(e.text, 1000); }
     unique(s.evidence.map((e: Evidence) => e.id));
   }
   unique(v.skills.flatMap((s: Skill) => [s.id, ...s.evidence.map(e => e.id)]));
@@ -147,8 +147,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix: string): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);
@@ -161,7 +161,7 @@ function unique(values: readonly string[]): void {
   if (new Set(values).size !== values.length) throw new Error("Duplicate IDs.");
 }
 function validBase(r: Record<string, any>): void {
-  validId(r.id); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
+  validId(r.id, "matrix"); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
   for (const value of [r.createdAt, r.updatedAt]) {
     if (typeof value !== "string" || checked(() => normalizeInstant(value)) !== value || !/^\d{4}-.*\.\d{3}Z$/.test(value)) throw new Error("Invalid saved instant.");
   }

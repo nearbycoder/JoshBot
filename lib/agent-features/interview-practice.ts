@@ -20,9 +20,9 @@ function validateRecord(v: unknown): asserts v is RecordData {
   for (const key of ["answerSeconds", "wordsPerMinute"]) { validText(v[key], 3, true); if (v[key]) integer(v[key], key === "answerSeconds" ? 15 : 40, key === "answerSeconds" ? 600 : 300); }
   array(v.questions, 8);
   for (const q of v.questions) {
-    object(q, ["id", "text", "type", "attempts"]); validId(q.id); validText(q.text, 1000); enumValue(q.type, TYPES); array(q.attempts, 2);
+    object(q, ["id", "text", "type", "attempts"]); validId(q.id, "question"); validText(q.text, 1000); enumValue(q.type, TYPES); array(q.attempts, 2);
     for (const a of q.attempts) {
-      object(a, ["id", "createdAt", "text", "questionText", "questionType", "annotations", "ratings"]); validId(a.id); if (normalizeInstant(a.createdAt) !== a.createdAt) throw new Error("Invalid instant.");
+      object(a, ["id", "createdAt", "text", "questionText", "questionType", "annotations", "ratings"]); validId(a.id, "attempt"); if (normalizeInstant(a.createdAt) !== a.createdAt) throw new Error("Invalid instant.");
       validText(a.text, 8000, false, 2000); validText(a.questionText, 1000); enumValue(a.questionType, TYPES); array(a.annotations, 4);
       for (const mark of a.annotations) { object(mark, ["section", "start", "end"]); enumValue(mark.section, SECTIONS); validNumber(mark.start, 0, a.text.length - 1); validNumber(mark.end, mark.start + 1, a.text.length); if (!a.text.slice(mark.start, mark.end).isWellFormed() || !a.text.slice(mark.start, mark.end).trim()) throw new Error("Invalid exact span."); }
       unique(a.annotations.map((m: { section: string }) => m.section)); object(a.ratings, [...RATING_KEYS]);
@@ -160,8 +160,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix: string): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);
@@ -174,7 +174,7 @@ function unique(values: readonly string[]): void {
   if (new Set(values).size !== values.length) throw new Error("Duplicate IDs.");
 }
 function validBase(r: Record<string, any>): void {
-  validId(r.id); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
+  validId(r.id, "session"); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
   for (const value of [r.createdAt, r.updatedAt]) {
     if (typeof value !== "string" || checked(() => normalizeInstant(value)) !== value || !/^\d{4}-.*\.\d{3}Z$/.test(value)) throw new Error("Invalid saved instant.");
   }

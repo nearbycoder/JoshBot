@@ -43,7 +43,7 @@ function canonical(value: unknown): string {
 function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "goals", "activities"]); validBase(v); array(v.goals, 10); array(v.activities, 30);
   for (const g of v.goals) {
-    if (g?.kind === "local") { object(g, ["kind", "id", "label"]); validId(g.id); if (!g.id.startsWith("local-")) throw new Error("Invalid local ID."); validText(g.label, 160); }
+    if (g?.kind === "local") { object(g, ["kind", "id", "label"]); validId(g.id, "local"); validText(g.label, 160); }
     else {
       object(g, ["kind", "id", "owner", "snapshot", "fingerprint", "capturedAt", "checkedAt", "verification", "latestFingerprint"]); enumValue(g.kind, ["source"]); sourceId(g.id); object(g.owner, ["teamId", "userId"]);
       for (const k of ["teamId", "userId"]) if (typeof g.owner[k] !== "string" || !/^[A-Z0-9]{2,32}$/.test(g.owner[k])) throw new Error("Invalid source owner.");
@@ -55,7 +55,7 @@ function validateRecord(v: unknown): asserts v is RecordData {
   }
   unique(v.goals.map((g: Selected) => g.id));
   for (const a of v.activities) {
-    object(a, ["id", "label", "minutes", "shares"]); validId(a.id); validText(a.label, 160, true); validNumber(a.minutes, 0, 1_000_000); array(a.shares, 10);
+    object(a, ["id", "label", "minutes", "shares"]); validId(a.id, "activity"); validText(a.label, 160, true); validNumber(a.minutes, 0, 1_000_000); array(a.shares, 10);
     for (const l of a.shares) { object(l, ["goalId", "percent", "reason"]); if (typeof l.goalId !== "string" || !v.goals.some((g: Selected) => g.id === l.goalId)) throw new Error("Dangling goal allocation."); validNumber(l.percent, 1, 100); validText(l.reason, 320); }
     unique(a.shares.map((l: Activity["shares"][number]) => l.goalId)); if (a.shares.reduce((n: number, l: Activity["shares"][number]) => n + l.percent, 0) > 100) throw new Error("Goal shares exceed 100%.");
   }
@@ -189,8 +189,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix: string): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);
@@ -203,7 +203,7 @@ function unique(values: readonly string[]): void {
   if (new Set(values).size !== values.length) throw new Error("Duplicate IDs.");
 }
 function validBase(r: Record<string, any>): void {
-  validId(r.id); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
+  validId(r.id, "board"); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
   for (const value of [r.createdAt, r.updatedAt]) {
     if (typeof value !== "string" || checked(() => normalizeInstant(value)) !== value || !/^\d{4}-.*\.\d{3}Z$/.test(value)) throw new Error("Invalid saved instant.");
   }

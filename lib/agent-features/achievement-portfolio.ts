@@ -34,7 +34,7 @@ function validateRecord(v: unknown): asserts v is RecordData {
   object(v.metric, ["value", "unit", "baseline"]); validText(v.metric.unit, 160, true);
   for (const key of ["value", "baseline"]) { validText(v.metric[key], 20, true); if (v.metric[key]) metricNumber(v.metric[key]); }
   array(v.evidence, 8);
-  for (const e of v.evidence) { object(e, ["id", "label", "text"]); validId(e.id); validText(e.label, 160); validText(e.text, 2000, false, 500); }
+  for (const e of v.evidence) { object(e, ["id", "label", "text"]); validId(e.id, "evidence"); validText(e.label, 160); validText(e.text, 2000, false, 500); }
   unique(v.evidence.map((e: Evidence) => e.id));
 }
 function projectLifecycle(s: State): State {
@@ -157,8 +157,8 @@ function validText(value: unknown, maxBytes = 1000, empty = false, maxUnits = ma
 function validNumber(value: unknown, min: number, max: number): void {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new Error("Invalid number.");
 }
-function validId(value: unknown): void {
-  if (typeof value !== "string" || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
+function validId(value: unknown, prefix: string): void {
+  if (typeof value !== "string" || value.length !== prefix.length + 37 || !value.startsWith(`${prefix}-`) || !/^[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new Error("Invalid ID.");
 }
 function enumValue<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T)) fail(`Choose ${values.join(", ")}.`);
@@ -171,7 +171,7 @@ function unique(values: readonly string[]): void {
   if (new Set(values).size !== values.length) throw new Error("Duplicate IDs.");
 }
 function validBase(r: Record<string, any>): void {
-  validId(r.id); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
+  validId(r.id, "achievement"); validText(r.title, 160, true); validNumber(r.revision, 1, MAX_REVISION);
   for (const value of [r.createdAt, r.updatedAt]) {
     if (typeof value !== "string" || checked(() => normalizeInstant(value)) !== value || !/^\d{4}-.*\.\d{3}Z$/.test(value)) throw new Error("Invalid saved instant.");
   }

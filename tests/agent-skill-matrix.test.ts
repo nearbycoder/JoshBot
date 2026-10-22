@@ -162,3 +162,29 @@ test("ceiling refuses writes, permits exact removals and rejects old content-sta
   assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
   assert.equal((await state(f)).records.length, 0);
 });
+
+for (const role of [
+  { name: 'root', prefix: 'matrix', corrupt: (r: any, bad: unknown) => { r.id = bad; } },
+  { name: 'skill', prefix: 'skill', corrupt: (r: any, bad: unknown) => { r.skills[0].id = bad; } },
+  { name: 'evidence', prefix: 'example', corrupt: (r: any, bad: unknown) => { r.skills[0].evidence[0].id = bad; } },
+] as const) test(`strict generated ID role ${role.name} preserves raw state across reads, edits and service commands`, async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await setup(f); const k = uid(await f.run(`skill ${id} add Schema | 3 | Explain tradeoffs`), "skill"); await f.run(`evidence ${id} ${k} | 2026-10-20 | Supplied example`);
+  const original = f.backend.data.get(f.key("state"))!;
+  assert.equal(JSON.parse(await f.run(`export ${id}`)).record.id, id);
+  const uuid = randomUUID(), valid = `${role.prefix}-${uuid}`;
+  const wrongRole = role.prefix === PREFIX ? "skill" : PREFIX;
+  for (const bad of [`wrongprefix-${uuid}`, `${wrongRole}-${uuid}`, `${role.prefix}${"x".repeat(100)}-${uuid}`, `${valid}a`, valid.slice(0, -1), [valid], { id: valid }, 42, null]) {
+    const corrupted = JSON.parse(original); role.corrupt(corrupted.records[0], bad);
+    const raw = ` \n${JSON.stringify(corrupted, null, 1)}\t `; f.backend.data.set(f.key("state"), raw);
+    const calls = { ...f.calls }, writes = f.backend.calls.compareSets;
+    for (const command of ["list", `show ${id}`, `export ${id}`, `edit ${id} | title | Forbidden`, `delete ${id} confirm`, `gaps ${id}`]) {
+      assert.match(await f.run(command), /preserved|read safely/i, `${role.name}: ${command}`);
+      assert.equal(f.backend.data.get(f.key("state")), raw);
+      assert.equal(f.backend.calls.compareSets, writes); assert.deepEqual(f.calls, calls);
+    }
+  }
+  f.backend.data.set(f.key("state"), original);
+  assert.match(await f.run(`edit ${id} | title | Valid again`), /Saved privately/);
+  assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
+});

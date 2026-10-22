@@ -233,3 +233,46 @@ test("dense identifier-rich legacy details reconstruct without exhausting pagina
   assert.deepEqual(JSON.parse(await reconstruct(f, id)).record, r);
   assert.match(await f.run(`goal-remove ${id} ${gid} confirm`), /Saved privately/);
 });
+
+for (const role of [
+  { name: 'root', prefix: 'board', corrupt: (r: any, bad: unknown) => { r.id = bad; } },
+  { name: 'local goal with coherent reference', prefix: 'local', corrupt: (r: any, bad: unknown) => { r.goals[0].id = bad; r.activities[0].shares[0].goalId = bad; } },
+  { name: 'activity', prefix: 'activity', corrupt: (r: any, bad: unknown) => { r.activities[0].id = bad; } },
+  { name: 'goal reference alone', prefix: 'local', corrupt: (r: any, bad: unknown) => { r.activities[0].shares[0].goalId = bad; } },
+] as const) test(`strict generated ID role ${role.name} preserves raw state across reads, edits and service commands`, async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await setup(f); const local = uid(await f.run(`local ${id} | Local evidence`), "local"); const activity = uid(await f.run(`activity ${id} add Work | 120`), "activity"); await f.run(`link ${id} ${activity} | ${local} | 75 | Entered allocation`);
+  const original = f.backend.data.get(f.key("state"))!;
+  assert.equal(JSON.parse(await f.run(`export ${id}`)).record.id, id);
+  const uuid = randomUUID(), valid = `${role.prefix}-${uuid}`;
+  const wrongRole = role.prefix === PREFIX ? "local" : PREFIX;
+  for (const bad of [`wrongprefix-${uuid}`, `${wrongRole}-${uuid}`, `${role.prefix}${"x".repeat(100)}-${uuid}`, `${valid}a`, valid.slice(0, -1), [valid], { id: valid }, 42, null]) {
+    const corrupted = JSON.parse(original); role.corrupt(corrupted.records[0], bad);
+    const raw = ` \n${JSON.stringify(corrupted, null, 1)}\t `; f.backend.data.set(f.key("state"), raw);
+    const calls = { ...f.calls }, writes = f.backend.calls.compareSets;
+    for (const command of ["list", `show ${id}`, `export ${id}`, `edit ${id} | title | Forbidden`, `delete ${id} confirm`, `review ${id}`, `goals ${id}`, `source ${id} toolbox:goals:legacy_01`, `select ${id} | toolbox:goals:legacy_01`, `refresh ${id}`]) {
+      assert.match(await f.run(command), /preserved|read safely/i, `${role.name}: ${command}`);
+      assert.equal(f.backend.data.get(f.key("state")), raw);
+      assert.equal(f.backend.calls.compareSets, writes); assert.deepEqual(f.calls, calls);
+    }
+  }
+  f.backend.data.set(f.key("state"), original);
+  assert.match(await f.run(`edit ${id} | title | Valid again`), /Saved privately/);
+  assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
+});
+
+test("owned toolbox source IDs retain their non-local legacy contract through selection and allocation", async () => {
+  const x = integrated(); await x.add("Legacy source");
+  const source = JSON.parse(x.backend.data.get(toolboxKey)!); source.entries[0].id = "Legacy_goal-01";
+  const raw = JSON.stringify(source); x.backend.data.set(toolboxKey, raw);
+  const id = await setup(x.f), sid = "toolbox:goals:Legacy_goal-01";
+  assert.match(await x.f.run(`select ${id} | ${sid}`), /Saved privately/);
+  const activity = uid(await x.f.run(`activity ${id} add Work | 120`), "activity");
+  assert.match(await x.f.run(`link ${id} ${activity} | ${sid} | 75 | Entered allocation`), /Saved privately/);
+  assert.match(await x.f.run(`refresh ${id}`), /Saved privately/);
+  assert.match(await x.f.run(`replace ${id} | ${sid} | confirm`), /Saved privately/);
+  const record = JSON.parse(await x.f.run(`export ${id}`)).record;
+  assert.equal(record.goals[0].id, sid); assert.equal(record.activities[0].shares[0].goalId, sid);
+  assert.equal(x.backend.data.get(toolboxKey), raw);
+  assert.match(await x.f.run(`goal-remove ${id} ${sid} confirm`), /Saved privately/);
+});
