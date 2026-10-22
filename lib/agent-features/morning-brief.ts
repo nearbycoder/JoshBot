@@ -20,6 +20,8 @@ type Candidate = Source & { bucket: Bucket; matchesFocus: boolean; elapsed: bool
 const KEY = "settings";
 const MAX_CONTEXT = 500;
 const MAX_FOCUS = 160;
+// Preferences never accumulate records. Leave ample room below the shared 480 KB budget.
+const MAX_SETTINGS_BYTES = 2_048;
 const LABELS: Record<Kind, string> = {
   reminder: "Reminders", "follow-up": "Follow-ups", goal: "Goals", note: "Notes", event: "Imported events",
 };
@@ -44,6 +46,7 @@ Examples:
 
 Focus helps rank items within urgency groups; it does not hide other commitments.
 Dates use your supplied timezone. Later means the next seven calendar days.
+Preference storage is limited to 2048 UTF-8 bytes. Use show for usage and settings reset confirm to erase preferences.
 Briefs use only returned personal sources, cite their IDs, and are not saved. No model, channel triage, live calendar lookup, or scheduled delivery.`;
 
 class InputError extends Error {}
@@ -65,6 +68,16 @@ function validFocus(value: unknown): value is string {
   return typeof value === "string" && value.length <= MAX_FOCUS && value.trim() === value && !CONTROLS.test(value);
 }
 
+function settingsBytes(settings: Settings): number {
+  return Buffer.byteLength(JSON.stringify(settings), "utf8");
+}
+
+function checkSettingsBudget(settings: Settings): void {
+  if (settingsBytes(settings) > MAX_SETTINGS_BYTES) {
+    throw new InputError("Morning-brief preferences exceed the 2048-byte storage budget. Use a shorter focus, settings focus clear, or settings reset confirm to erase preferences.");
+  }
+}
+
 function settingsFrom(value: unknown): Settings {
   if (!object(value) || value.version !== 1 || !validFocus(value.focus) ||
       Object.keys(value).some((key) => !["version", "focus", "sources"].includes(key)) ||
@@ -73,7 +86,9 @@ function settingsFrom(value: unknown): Settings {
     throw new SettingsError();
   }
   const sources = value.sources;
-  return { version: 1, focus: value.focus, sources: KINDS.filter((kind) => sources.includes(kind)) };
+  const settings: Settings = { version: 1, focus: value.focus, sources: KINDS.filter((kind) => sources.includes(kind)) };
+  checkSettingsBudget(settings);
+  return settings;
 }
 
 /** Flatten and escape source text so Slack links/mentions and injected markup stay inert. */
@@ -85,7 +100,7 @@ function display(value: string, limit: number): string {
 }
 
 function showSettings(settings: Settings): string {
-  return `Morning brief settings\nFocus: ${settings.focus ? display(settings.focus, MAX_FOCUS) : "none"}\nSources: ${settings.sources.map((kind) => LABELS[kind]).join(", ")}\nPriorities: at most 5; later: next 7 calendar days; imported agenda: at most 4 events.\nOnly these preferences are retained. Use settings reset confirm to erase them.\nRun brief [focus] for a fresh briefing; a one-off focus does not change settings.`;
+  return `Morning brief settings\nFocus: ${settings.focus ? display(settings.focus, MAX_FOCUS) : "none"}\nSources: ${settings.sources.map((kind) => LABELS[kind]).join(", ")}\nPriorities: at most 5; later: next 7 calendar days; imported agenda: at most 4 events.\nPreference storage: ${settingsBytes(settings)}/${MAX_SETTINGS_BYTES} UTF-8 bytes. Use settings focus clear to remove the focus or settings reset confirm to erase all preferences.\nOnly these preferences are retained.\nRun brief [focus] for a fresh briefing; a one-off focus does not change settings.`;
 }
 
 function validDay(value: string): boolean {
@@ -259,11 +274,13 @@ function renderBrief(raw: unknown, settings: Settings, focus: string, context: A
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
   try {
     if (typeof command !== "string" || command.length > 500 || CONTROLS.test(command)) throw new InputError("Use a single-line command of at most 500 characters. Run help for examples.");
+    if (!command.trim()) return HELP;
     const [verb = "brief", args = ""] = command.trim().match(/^(\S+)(?:\s+([\s\S]*))?$/u)?.slice(1) ?? [];
     const action = verb.toLowerCase();
     if (action === "help" && !args) return HELP;
     if (action === "settings" && args.toLowerCase() === "reset confirm") {
       const next = defaults();
+      checkSettingsBudget(next);
       await context.store.update<unknown, null>(KEY, next, () => ({ value: next, result: null }));
       return `Saved preferences erased; defaults restored.\n${showSettings(next)}`;
     }
@@ -283,6 +300,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       } else throw new InputError("Use settings show, settings focus <text>, settings sources <categories>, or settings reset confirm.");
       const saved = await context.store.update<unknown, Settings>(KEY, defaults(), (current) => {
         const next = { ...settingsFrom(current), ...patch };
+        checkSettingsBudget(next);
         return { value: next, result: next };
       });
       return showSettings(saved);

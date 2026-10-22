@@ -28,6 +28,7 @@ test("exports the assigned feature and provides help and settings without contex
   assert.equal(feature.id, "morning-brief");
   const { run, calls, context } = fixture();
   assert.match(await run("help"), /\/nobo-help agent morning-brief brief launch preparation/u);
+  assert.equal(await run(""), feature.help);
   for (const command of ["show", "settings", "settings show"]) {
     const output = await run(command);
     assert.match(output, /Focus: none/u);
@@ -153,7 +154,7 @@ test("imported ranges handle multi-day events, exclusive midnight endings and el
 
 test("empty and disabled sources are disclosed without claiming a clear calendar", async () => {
   const { run } = fixture();
-  const output = await run("");
+  const output = await run("brief");
   assert.match(output, /No priorities found/u);
   assert.match(output, /Reminders: no usable records returned \(empty or not connected\)/u);
   assert.match(output, /Imported events: no usable records returned/u);
@@ -275,7 +276,35 @@ test("context, output, agenda and retained settings stay bounded", async () => {
   assert.match(output, /examined the first 500 of 501 returned records/u);
   assert.doesNotMatch(output, /\[event event-500\]/u);
   assert.ok(output.length < 28_000, `Output length: ${output.length}`);
-  assert.ok(JSON.stringify(await context.store.read("settings")).length < 500);
+  assert.ok(Buffer.byteLength(JSON.stringify(await context.store.read("settings")), "utf8") < 2_048);
+});
+
+test("UTF-8 preference accounting handles Unicode and JSON escaping with room for later updates", async () => {
+  const { run, context } = fixture();
+  const focuses = ["漢".repeat(160), "🚀".repeat(80), '"'.repeat(160), "\\".repeat(160), "\ud800".repeat(160)];
+  for (const focus of focuses) {
+    assert.equal(focus.length, 160);
+    await run(`settings focus ${focus}`);
+    const saved = await context.store.read<{ focus: string }>("settings");
+    assert.equal(saved?.focus, focus, "The maximum accepted focus must be preserved");
+    const encoded = JSON.stringify(saved);
+    const bytes = Buffer.byteLength(encoded, "utf8");
+    assert.ok(bytes > 160, "Include JSON structure and encoding overhead");
+    assert.ok(bytes < 2_048, `Preference bytes: ${bytes}`);
+    assert.ok(480_000 - bytes > 478_000, "Leave substantial headroom for future lifecycle changes");
+    assert.ok((await run("show")).includes(`Preference storage: ${bytes}/2048 UTF-8 bytes.`));
+    assert.match(await run("settings sources notes"), /Sources: Notes/u);
+    assert.match(await run("settings sources all"), /Imported events/u);
+    assert.match(await run("brief"), /No priorities found/u);
+    assert.equal((await context.store.read<{ focus: string }>("settings"))?.focus, focus);
+    await run("settings focus clear");
+    assert.ok(Buffer.byteLength(JSON.stringify(await context.store.read("settings")), "utf8") < bytes);
+  }
+  await run(`settings focus ${"漢".repeat(160)}`);
+  assert.match(await run("settings reset confirm"), /Saved preferences erased/u);
+  assert.equal((await context.store.read<{ focus: string }>("settings"))?.focus, "");
+  assert.match(await run("help"), /2048 UTF-8 bytes/u);
+  assert.match(await run("show"), /settings focus clear.*settings reset confirm/u);
 });
 
 test("invalid timezone or runtime clock never silently falls back to server time", async () => {
