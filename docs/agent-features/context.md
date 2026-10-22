@@ -1,6 +1,8 @@
 # Owned personal-agent context
 
-`services.readContext(kinds)` now reads the authenticated caller's existing sources. `readAgentOwnedContext` lives in `lib/agent-features/context.ts`; `services.ts` wires production dependencies. The existing `readAgentToolboxContext(backend, owner, kinds?, signal?)` export remains available.
+For commands and examples, start with the [personal-agent guide](README.md). This reference describes the connected source/runtime contracts on the development branch; the expansion is **not deployed**, and release review remains open.
+
+`services.readContext(kinds)` reads the authenticated caller's existing sources. `readAgentOwnedContext` lives in `lib/agent-features/context.ts`; `services.ts` wires production dependencies. The existing `readAgentToolboxContext(backend, owner, kinds?, signal?)` export remains available.
 
 The adapter is read-only. It does not migrate records, delete stale index entries, query Slack, fetch artifact URLs, execute models, read channel history, or read shared channel memory. Empty sources and failed sources are different: missing records return no items; unavailable providers, malformed eligible records and exceeded complete-read limits reject the request. Production-facing source errors identify the source without exposing provider error text; the original error remains the error's `cause`.
 
@@ -21,7 +23,7 @@ The adapter is read-only. It does not migrate records, delete stale index entrie
 | `digest` | User index plus subscription owner AND signed current channel | `digest:<subscription-id>` | Entire index must fit 200 IDs |
 | `artifact` | Not connected: existing files have no workspace/channel provenance | None | No enumeration or file/URL reads |
 
-The theoretical combined maximum is **1,500 items** (500 toolbox + 100 calendar + 100 memory + 800 legacy records). There is no final item-count truncation. A selected source exceeding its bounds fails instead of returning a partial list. Individual features may select smaller subsets: at this integration base meeting prep examines 200, morning brief 500, weekly review 1,000 and automation audit 80. Those feature limits are independent of this adapter.
+The theoretical combined maximum is **1,500 items** (500 toolbox + 100 calendar + 100 memory + 800 legacy records). There is no final item-count truncation. A selected source exceeding its bounds fails instead of returning a partial list. Individual features may select smaller subsets: meeting prep examines 200, morning brief 500, weekly review 1,000, recall 1,000 (with a separate text budget), and automation audit 80. Those feature limits are independent of this adapter.
 
 Requested kinds alone are loaded; `[]` performs no source I/O, omitted kinds requests all supported sources, and duplicate kinds do not duplicate reads. Final order is events first, then other items, with each group ordered by due date/instant ascending, undated records last, then actual update time descending and source ID ascending. Date-only deadlines sort by their literal label, without inventing a midnight timestamp. This keeps the complete imported agenda ahead of a commitment backlog. Automation-only reads put the earliest known next occurrences first. The compatibility toolbox-only export sorts by actual update time descending then ID.
 
@@ -60,24 +62,32 @@ Existing artifact APIs filter by user but enumerate the artifact directory, lack
 
 ## Production wiring and cancellation
 
-`index.ts` resolves one request time and creates the combined run/120-second deadline signal **before** backend initialization and preference loading. Every awaited startup step, including the dynamic services import, is raced against that signal. Late resolution/rejection is consumed, and cannot proceed to feature execution or receipt writes. The same resolved caller timezone/time/signal and feature ID are passed to `createAgentFeatureServices`; preferences are not fetched again. Existing help, private routing, injected runtime options and deduplication behavior are preserved.
+The integrated Slack route in `lib/slack-commands.ts` starts the combined run/120-second deadline signal **before the initial access-policy read**. It races that read and dispatch against the signal and passes the original deadline into `handleAgentCommand` through `timeoutSignal`; startup does not receive a fresh 120-second allowance. Direct entry through `index.ts` creates a deadline before backend initialization and preference loading when no ingress deadline is supplied.
+
+`index.ts` resolves one request time and races every awaited startup step, including the dynamic services import, against the active signal. Late resolution/rejection is consumed and cannot proceed to feature execution or receipt writes after cancellation. The same resolved caller timezone/time/signal and feature ID are passed to `createAgentFeatureServices`; preferences are not fetched again. Help bypasses feature storage and generation, while the signed Slack route still enforces access policy. All non-help commands require the existing Redis backend, including stateless consumers.
 
 `contextRead` guards each adapter, policy/index/record read, and sibling-store read with active cancellation, before starting and after resolving. Pending I/O stops being awaited immediately on abort; it cannot trigger subsequent source work. Providers that do not support cancellation may finish their already-started read, but the result is discarded. The adapters receive read-only sibling stores whose `update` rejects. Generation remains text-only/tool-free; public search uses the existing Exa provider with 1–8 results and the existing runtime budgets.
 
 Tests can inject `AgentContextAdapters` (owner indexes, channel policy, calendar and approved-memory helpers), `createProductionContextAdapters`' Redis/access getters, and startup dependencies. No test needs Slack, models, Exa, production Redis, a filesystem artifact directory or local Redis.
 
-## Parent integration notes
+## Runtime and consumer contracts
 
-No shared type contract or existing-core export changes are required. This commit wires the real services and startup parameters. The parent should expose these coverage limits in integrated help/replies: legacy jobs/follow-ups cover only the signed current channel, legacy memory import and artifacts are unconnected, and missing references mean absent from this current authorized snapshot, not proven deletion across all sources.
+`registry.ts` registers all 20 features; `index.ts` dispatches commands through the scoped runtime. `/nobo-help agent` and the Home Personal agents view expose the catalog. Context-consuming help includes the connected/unconnected source boundaries, and memory-review help states that legacy import has no candidates. Missing references always mean absent from the current authorized snapshot, not proven deletion across all sources.
 
-The parent has assigned consumer fixes separately for three source-contract issues identified at this branch's integration base: morning brief accepting ISO all-day intervals with `allDay: true`, day planner treating equal-endpoint timed events as nonblocking instants, and handoffs accepting date-only goal deadlines. This adapter deliberately preserves those truthful source representations. It does not edit the consumers or work around them with misleading metadata.
+The runtime namespaces feature JSON by workspace, user, and feature, with a 512,000-byte per-value ceiling. Features impose lower UTF-8 quotas and lifecycle reservations; their guides describe retention and cleanup. Atomic `store.update` callbacks are synchronous and side-effect-free because compare-and-swap retries can rerun them. Generation is text-only with no tools, capped at eight calls per invocation; search is capped at six calls with 1–8 results each. Command text is limited to 48,000 characters and replies to 28,000, with stricter per-feature limits. Request receipts retain fingerprints/status for 24 hours without storing private input or reply text.
 
-Verification:
+Preserve truthful source representations when changing consumers. Morning brief accepts the calendar adapter's normalized all-day timestamps with original civil dates; day planner treats equal-endpoint timed events as nonblocking instants; handoffs preserves date-only goal deadlines. Automation audit trims bounded text after clipping and validates a new snapshot before updating saved history. Further review fixes do not justify changing source dates or inventing metadata to fit a consumer.
+
+## Verification process
+
+Use Node 24 from the repository root. These commands describe local checks, not a claim that the current revision has passed final acceptance:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-context.test.ts tests/agent-startup.test.ts tests/agent-integration.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-context.test.ts tests/agent-startup.test.ts tests/agent-integration.test.ts
+npm run typecheck
 git diff --check
 ```
 
 Tests exercise actual toolbox-goal/meeting, weekly-review, memory lifecycle and full-calendar/planner flows using in-memory storage, plus exact source metadata, ownership mismatches, requested-kind filtering, changed/deleted sources, bounded deterministic reads, malformed data, provider failures, approved-memory import isolation, read-only stores, active read cancellation and explicit/accelerated-deadline startup cancellation with late results producing no feature work or writes.
+
+After remaining fixes and independent reviews, run the full tests, typecheck, build, and dependency audit as described in the [expansion validation process](../personal-agent-expansion.md#verification). Earlier results do not certify later edits. These checks do not establish live Slack delivery, provider output quality, or production deployment.

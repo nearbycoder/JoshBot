@@ -1,12 +1,13 @@
 # User-taught reusable playbooks
 
+Use `/nobo-help agent playbooks help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `playbooks` saves private text procedures with typed inputs, explicit placeholders,
 ordered steps, revision history, previews and saved run results. Each step receives
 the earlier steps' drafts. Unlike a saved prompt string, a playbook validates its
 inputs and preserves the exact procedure version used for each successful run.
 
-Parent integration is required before these commands are available in Slack.
-The intended prefix is `/nobo-help agent playbooks`. Examples below use that prefix
+Use `/nobo-help agent playbooks` as the command prefix. Examples below use that prefix
 for creation; subsequent examples show the text after the prefix. Replace `BOOK_ID`
 and `RUN_ID` with the full IDs returned by the feature, including `pb_` or `run_`.
 
@@ -147,12 +148,10 @@ playbook, all retained versions and every run belonging to it. No scheduled work
 external accounts, messages or artifacts are created. `help`, inspection, preview,
 revision, restoration and deletion do not require a model provider.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Import named `feature` or the default export from
-   `lib/agent-features/playbooks.ts`; register the exact ID `playbooks` in the
-   parent-owned registry, `/nobo-help agent` routing, help and Home discovery.
-2. Supply `AgentFeatureContext` with the caller's workspace/user/feature-scoped
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/playbooks.ts` as `playbooks`. `index.ts` dispatches `/nobo-help agent playbooks <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies `AgentFeatureContext` with the caller's workspace/user/feature-scoped
    store. This module uses only the key `playbooks-state`, schema 1; its store
    transforms are pure, synchronous and safe to retry. Provide atomic updates
    capable of preserving concurrent commands. No shared contract changes are
@@ -163,7 +162,7 @@ revision, restoration and deletion do not require a model provider.
    whitespace. Supply a valid `now` and IANA `timezone`; dates never use the server's
    local timezone. Version/run timestamps are ISO UTC instants, and each run stores
    the timezone separately.
-4. Provide `services.generate` as text-only inference with no tools. This feature
+4. The runtime provides `services.generate` as text-only inference with no tools. This feature
    never calls `search` or `readContext`, and uses no credentials or other services.
    Generation requires at most four sequential calls and zero searches, within
    the runtime's eight-call/six-search budgets. Use the shared 120-second deadline,
@@ -180,8 +179,8 @@ access or feature-specific context adapters are required.
 ## Verification
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-playbooks.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-playbooks.test.ts
+npm run typecheck
 git diff --check
 ```
 

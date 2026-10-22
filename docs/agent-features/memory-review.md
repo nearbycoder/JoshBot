@@ -1,13 +1,11 @@
 # Memory review and provenance
 
+Use `/nobo-help agent memory-review help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `memory-review` keeps private, user-owned memory cards with a source, capture time,
 optional expiry, optional confidence rating, and a short revision history. You
 explicitly review and confirm a card before it can become approved context.
 Confirmation records your judgment; it does not independently verify a claim.
-
-The module is ready for parent integration. Its intended entry point is
-`/nobo-help agent memory-review <command>`; routing and private delivery are not
-implemented by this feature module.
 
 ## Capture and review a fact
 
@@ -89,7 +87,11 @@ then returns at most one equivalent confirmed claim per subject/key.
   always require another confirmation. Cards dated after the supplied current
   time also remain excluded until the clock catches up.
 
-## Import owned legacy candidates
+## Legacy import availability
+
+The integrated `import` and `import list` commands currently return **no candidates**. Legacy personal memory lacks workspace/channel provenance and stable record IDs, so it is not connected. Approved cards are deliberately excluded from this feature's import reader to prevent feedback. Use `capture`, inspect the source, then `confirm` instead. Other features can read your currently eligible approved cards through the [connected context service](context.md).
+
+The syntax below remains supported for a future authorized legacy source adapter; it does not describe an available import flow on this branch:
 
 ```text
 /nobo-help agent memory-review import
@@ -99,8 +101,8 @@ then returns at most one equivalent confirmed claim per subject/key.
 /nobo-help agent memory-review confirm <new-card-id> 1
 ```
 
-`import` reads only the caller-owned `memory` context supplied by the runtime and
-lists candidate IDs with excerpts. Listing does not create cards. Selecting an
+When an authorized candidate adapter is supplied, `import` reads its caller-owned
+`memory` context and lists candidate IDs with excerpts. Listing does not create cards. Selecting an
 ID fetches the current source again and copies its text into a new unconfirmed
 card. Inspect the copied claim before confirming; source text may have changed
 since the preview. Each import preserves the legacy source ID and supplied
@@ -143,7 +145,7 @@ The workspace holds at most 100 cards without silent eviction, subject to a
 **479,000-byte serialized UTF-8 quota including reserved history space**. `list`
 shows both actual saved bytes and the budget including reserves. Unicode and
 JSON escaping count toward the byte quota; character count alone does not
-predict capacity. The quota stays below the parent's 480,000-byte feature target
+predict capacity. The quota stays below the shared 480,000-byte feature target
 and 512,000-byte hard limit for each stored JSON value.
 
 Before accepting a capture, import, or correction, the feature reserves enough
@@ -164,7 +166,7 @@ serialized value fits the 479,000-byte quota.
 
 Each card retains at most six revisions. Subjects and keys are at most 80
 characters each; facts are at most 1,200; sources at most 300. Commands are at
-most 4,000 characters. Replies are capped at 27,500 characters, below the parent's
+most 4,000 characters. Replies are capped at 27,500 characters, below the runtime's
 28,000-character output limit. There is no automatic cleanup: `forget` removes
 a card and its retained history. Malformed persisted data is rejected without
 resetting it.
@@ -174,34 +176,20 @@ reminders, external writes, or outbound messages. Claim text and source content
 remain untrusted data. Confirmation must never turn their content into executable
 instructions or evidence of an external action.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Register the named `feature` (also the default export) from
-   `lib/agent-features/memory-review.ts` under exactly `memory-review`, route the
-   command text after the ID to `feature.execute`, and expose `feature.help` in
-   the private help/Home flow. Replies must remain private.
-2. Supply the contract's workspace/user/feature-scoped `AgentFeatureContext` with
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/memory-review.ts` as `memory-review`. `index.ts` dispatches `/nobo-help agent memory-review <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies the contract's workspace/user/feature-scoped `AgentFeatureContext` with
    a valid `now`, user timezone, and atomic JSON store. The sole feature-local
    storage key is `cards`, with schema version `1`. It must never resolve to
    legacy/global keys. UUIDs and timestamps are generated outside the pure,
-   synchronous, retryable store transforms. The parent owns identity/access
+   synchronous, retryable store transforms. The shared runtime owns identity/access
    checks, request deduplication, and persistence error handling. The feature
    checks serialized UTF-8 bytes and its lifecycle reservation inside the atomic
    transform, so concurrent additions cannot bypass the quota. The schema and
    sole storage key are unchanged.
-3. For import, implement `services.readContext(["memory"])` with only owned
-   legacy candidates, using stable unique IDs and complete candidate text. Return
-   at most 500 records per call; this module rejects larger responses rather than
-   silently omitting candidates. No other context kinds, generation, or search
-   services are needed. Candidate IDs must remain stable across listing/import.
-   Each invocation uses zero generate calls, zero searches, and at most one
-   context read, fitting the runtime's eight-generation/six-search budgets.
-   The parent's 120-second deadline and abortable services stop waiting promptly;
-   its signal-guarded store prevents late commits. This feature also checks the
-   supplied signal before work and at write transforms, and rethrows cancellation
-   instead of reporting it as a successful or ordinary provider response. A late
-   import response cannot be written after cancellation.
-4. Optionally consume the exported read-only adapter:
+3. For this feature, `services.readContext(["memory"])` returns no legacy candidates: legacy user memory is excluded for missing provenance, and `featureId: "memory-review"` suppresses approved-card reads. If a future authorized legacy adapter is added, its IDs must be stable and unique, candidate text complete, and its response at most 500 records; larger responses are rejected. No other context kinds, generation, or search are used. Each invocation makes at most one context read. Runtime abortable services and signal-guarded writes enforce the 120-second deadline; late import responses cannot commit after cancellation.
+4. The shared context service consumes the exported read-only adapter for other features:
 
    ```ts
    import { readApprovedMemoryContext } from "./agent-features/memory-review.js";
@@ -216,23 +204,20 @@ instructions or evidence of an external action.
    subject/key as `title`. Metadata includes source, revision, original capture
    time, confirmation time, confidence, expiry date/timezone, and legacy origin.
    Only explicitly confirmed, fresh, unexpired, nonconflicting cards are included.
-   Equivalent approved claims are deduplicated by subject/key. The parent must
-   impose its downstream context budget and treat the text as quoted untrusted
-   data. Call again when assembling context so expiry/staleness is reevaluated.
+   Equivalent approved claims are deduplicated by subject/key. Downstream consumers
+   keep their own context budgets and treat the text as quoted untrusted data. Call again when assembling context so expiry/staleness is reevaluated.
    Do not feed the adapter back into the legacy import source; its ID prefix is
    filtered defensively. Invalid state or unavailable storage causes the adapter
    to reject; the caller must handle this and must not silently fall back to
    treating unreviewed cards as approved.
 
-No shared routing, registry, contract, package, or lockfile changes are included
-in this implementation. Parent integration and combined repository validation
-are still required before release.
+Registration and approved-memory consumption are wired. Legacy import remains unconnected; combined validation and review are still required before release.
 
 ## Verification
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-memory-review.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-memory-review.test.ts
+npm run typecheck
 git diff --check
 ```
 

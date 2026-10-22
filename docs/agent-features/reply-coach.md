@@ -1,8 +1,8 @@
 # Personal reply coach
 
-`reply-coach` composes private reply suggestions from a conversation you paste. You choose the tone, length, and intent, inspect the suggestion, and revise it without losing the original conversation or earlier versions. It never sends a message or changes another account.
+Use `/nobo-help agent reply-coach help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
 
-This module is ready for parent integration. The intended entry point is `/nobo-help agent reply-coach <command>`; the parent must register it before these Slack commands are available. All results must be delivered privately.
+`reply-coach` composes private reply suggestions from a conversation you paste. You choose the tone, length, and intent, inspect the suggestion, and revise it without losing the original conversation or earlier versions. It never sends a message or changes another account.
 
 ## A complete workflow
 
@@ -80,18 +80,18 @@ Only the leading `|` separators are syntax. The final pasted conversation or rev
 - Timestamps are stored as ISO UTC strings and displayed in the runtime-supplied timezone. An invalid clock or timezone produces an actionable error instead of falling back to the server's timezone.
 - Invalid persisted state is rejected without automatic repair or data loss. Storage errors advise checking `list`/`show` before retrying. A response lost after a successful persistence operation can require runtime request deduplication; this feature does not deduplicate transport deliveries.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Import the named or default `feature` from `lib/agent-features/reply-coach.ts` and register ID **`reply-coach`**. Route the command suffix to `feature.execute(command, context)` and expose `feature.help` in help/Home discovery.
-2. Inject `AgentFeatureContext` with authorized workspace/user identity, `now`, the user's configured IANA `timezone`, optional cancellation signal, and the implemented **atomic, workspace/user/feature-scoped** store. This module owns one key, **`state`**, with schema version **1**, and applies a stricter storage budget than the runtime's 512,000-byte limit. Reservations are derived from existing records, with no schema or shared-store change. Do not expose this state through channel-wide context. Transform callbacks may retry and must not commit if they throw.
-3. Provide `services.generate` as the existing text-only adapter. Each `draft`/`revise` uses at most one call; deterministic commands use none. Keep its `instructions` separate from the JSON `input`. The expected response is raw JSON with exactly `reply` and `commitments` (no Markdown fences):
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/reply-coach.ts` as `reply-coach`. `index.ts` dispatches `/nobo-help agent reply-coach <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime injects `AgentFeatureContext` with authorized workspace/user identity, `now`, the user's configured IANA `timezone`, optional cancellation signal, and the implemented **atomic, workspace/user/feature-scoped** store. This module owns one key, **`state`**, with schema version **1**, and applies a stricter storage budget than the runtime's 512,000-byte limit. Reservations are derived from existing records, with no schema or shared-store change. Do not expose this state through channel-wide context. Transform callbacks may retry and must not commit if they throw.
+3. The runtime provides `services.generate` as the existing text-only adapter. Each `draft`/`revise` uses at most one call; deterministic commands use none. Keep its `instructions` separate from the JSON `input`. The expected response is raw JSON with exactly `reply` and `commitments` (no Markdown fences):
 
    ```json
    {"reply":"Thanks for asking. Friday won't work for me.","commitments":[]}
    ```
 
    Each commitment, if present, has exactly `text` (an exact reply substring, up to 400 characters) and `authorization` (an exact caller-intent or revision-instruction substring, up to 600). At most five are accepted. Raw generated JSON is limited to 12,000 characters. No structured-output SDK change is required.
-4. Acknowledge long-running generation through the parent's usual async path and deliver **all** results privately. Render returned text as literal text with mention/link expansion disabled; pasted conversations and generated replies are untrusted text. Do not create a send button or automatically publish/copy suggestions elsewhere. Returned output fits under 28,000 characters even at the documented field limits.
+4. Acknowledge long-running generation through the shared asynchronous delivery path and deliver **all** results privately. Render returned text as literal text with mention/link expansion disabled; pasted conversations and generated replies are untrusted text. Do not create a send button or automatically publish/copy suggestions elsewhere. Returned output fits under 28,000 characters even at the documented field limits.
 5. Use the implemented shared authorization, cancellation/deadline guards, and delivery deduplication. The feature also checks cancellation before generation and after it returns. No new service interfaces, dependencies, package changes, shared runtime/store changes, recurring jobs, context adapter, or production configuration are required by this feature.
 
 ## Verification
@@ -99,8 +99,8 @@ Only the leading `|` separators are syntax. The final pasted conversation or rev
 Tests use `tests/agent-feature-test-utils.ts` and fake generation only:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-reply-coach.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-reply-coach.test.ts
+npm run typecheck
 git diff --check
 ```
 

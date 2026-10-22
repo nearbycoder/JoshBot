@@ -1,8 +1,8 @@
 # Personal agents
 
-These 20 features are registered on the development branch. Integration and independent review are in progress; they are **not deployed yet**. Follow [release status and research](../personal-agent-expansion.md).
+Use `/nobo-help agent` to see the catalog, or open **NoBo Home → More → Personal agents**. Each command uses `/nobo-help agent <name> <command>`, and `<name> help` explains its syntax.
 
-Use `/nobo-help agent` to see the catalog, or open **NoBo Home → More → Personal agents**. Each command uses `/nobo-help agent <name> <command>`, and `<name> help` explains its syntax. Replies are private. Saved data is separated by Slack workspace, user, and feature.
+All 20 features, private routes, storage limits, and source adapters are integrated on the development branch. Remaining fixes, independent review, and release validation are in progress; the expansion is **not deployed** and has not reached final acceptance. Follow [release status and research](../personal-agent-expansion.md). Replies are private. Saved data is separated by Slack workspace, user, and feature.
 
 ## Find a feature
 
@@ -37,9 +37,9 @@ For planning, import a calendar snapshot using the [calendar example](calendar.m
 
 ## Storage, sources, and generation
 
-Redis is required for feature commands that use saved state. Model-assisted commands use the existing configured model; research additionally uses the existing Exa integration. Help and deterministic operations do not require inference. Generated drafts and interpretations are labeled, and source coverage depends on the adapters available to the command.
+The shared runtime requires Redis for every non-help command, including stateless recall. Model-assisted commands use the existing configured model; research additionally uses the existing Exa integration. Help and deterministic operations do not require inference. Generated drafts and interpretations are labeled; validated citations or source quotations establish provenance, not model accuracy. Connected source coverage is described below.
 
-Every feature has bounded storage and documented removal or reset commands. Limits measure serialized UTF-8 bytes, so large Unicode text can reach capacity before an item-count limit. Quota errors preserve saved work and explain how to free space. Request receipts store fingerprints and status, without caching private input or replies, to suppress duplicate Slack delivery.
+Stateful features have bounded storage and documented removal or reset commands; recall retains no feature state. Limits measure serialized UTF-8 bytes, so large Unicode text can reach capacity before an item-count limit. Quota errors preserve saved work and explain how to free space. Request receipts store fingerprints and status, without caching private input or replies, to suppress duplicate Slack delivery.
 
 Connected sources include your private toolbox records, confirmed calendar imports, and eligible approved memory cards. Reminders, monitors, digests, and follow-ups cover **your records in the channel where you run the command**. Saved artifacts and legacy personal memory are not connected; memory-review's legacy-import commands therefore return no candidates. Capture facts directly in memory-review instead. Missing references indicate absence from the current permitted snapshot, not proof that a record was deleted everywhere. See the [source-coverage reference](context.md) for bounds and date semantics.
 

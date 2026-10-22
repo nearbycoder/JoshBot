@@ -1,7 +1,6 @@
 # Reading queue and digests
 
-Implementation module: `lib/agent-features/read-later.ts`. Feature ID: `read-later`.
-This module is ready for parent integration; it does not register its own route.
+Use `/nobo-help agent read-later help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
 
 The private queue helps decide what to read in the time you have, records partial
 reading progress, creates cited summaries and digests of pasted excerpts, and
@@ -9,9 +8,11 @@ saves your own takeaways. It never fetches an article URL. A link alone is not
 enough to summarize an article, and all summaries explicitly disclose that full
 article text is unavailable.
 
+Bookmark candidates are connected to your private toolbox bookmarks. Import copies only a selected bookmark's title and URL; you must supply the reading estimate and article excerpt. See [source coverage](context.md).
+
 ## A complete reading session
 
-After integration, use `/nobo-help agent read-later <command>`. All commands and
+Use `/nobo-help agent read-later <command>`. All commands and
 results must stay private to the caller. For example:
 
 ```text
@@ -148,7 +149,7 @@ reset it with `clear confirm`.
 
 Every proposed state is measured with
 `Buffer.byteLength(JSON.stringify(state), "utf8")` and kept below **480,000
-bytes**, below the parent's 512,000-byte hard limit. The quota also reserves
+bytes**, below the runtime's 512,000-byte hard limit. The quota also reserves
 13,000 bytes for each article's maximal future summary, 25,000 for the latest
 digest, and lifecycle headroom. Progress/status/priority fields are budgeted at
 their largest encoding, so an accepted article can still be summarized, marked
@@ -159,50 +160,41 @@ quota before reaching the item count; unpaired Unicode surrogates are rejected.
 On quota rejection, the command changes nothing and explains how to export and
 delete items, remove takeaways, or shorten excerpts. Archiving retains data.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Import the named `feature` (also the default export) from
-   `lib/agent-features/read-later.ts`, register the exact ID `read-later`, and
-   route `/nobo-help agent read-later <command>` to `feature.execute`. Expose
-   `feature.help` through the private help/Home entry. This branch intentionally
-   changes no shared router, registry, Home, or contract files.
-2. Supply identity-checked, workspace/user/feature-scoped `context.store` with
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/read-later.ts` as `read-later`. `index.ts` dispatches `/nobo-help agent read-later <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies identity-checked, workspace/user/feature-scoped `context.store` with
    atomic `update` and isolated JSON values. Only the literal scoped key
    `queue` is accessed. Updates must support pure synchronous retryable
-   transforms; IDs/timestamps are created before those transforms. Parent
+   transforms; IDs/timestamps are created before those transforms. Runtime
    request deduplication handles duplicate delivery of commands such as
    `takeaway` (the module does not consume `requestId`). The module's measured
    quota and reservations fit the shared store's 512,000-byte per-value cap.
-3. Supply `context.now`, an explicit valid IANA `context.timezone`, and optional
+3. The runtime supplies `context.now`, an explicit valid IANA `context.timezone`, and optional
    cancellation signal. Deliver every response privately; no command has a
    public response mode. Route potentially slower `read` and `digest` commands
-   through the parent's asynchronous private delivery path.
-4. Supply text-only, tool-free `services.generate` for `read`/`digest`. Each
+   through the shared asynchronous private delivery path.
+4. The runtime supplies text-only, tool-free `services.generate` for `read`/`digest`. Each
    request makes at most one call with at most five 6,000-character excerpts.
    The model must return the instructed JSON; malformed responses are handled
-   without state loss. This fits the parent's eight-generation/six-search
+   without state loss. This fits the runtime's eight-generation/six-search
    invocation limits: the module uses at most one generation and zero searches.
    Use the shared runtime's 120-second deadline, prompt cancellation, and late
    write guards; the module also checks cancellation before work and before
    committing generated results. Rendering a saved summary/digest needs no
    model. All replies fit the shared 28,000-character ceiling.
-5. For optional bookmark import, `readContext(["bookmark"])` should return only
-   caller-owned `AgentContextItem`s with stable `id`, `kind: "bookmark"`, title,
-   and a plain HTTP(S) `sourceUrl`. Only the first 100 returned entries are
-   considered; invalid links and ambiguous duplicate IDs are skipped. The
-   source `text` is intentionally not imported. Return `[]` when no authorized
-   bookmark context is available. No bookmark mutation adapter is needed.
-6. No `services.search` adapter, arbitrary URL fetching, new dependencies,
-   environment variables, accounts, jobs, outbound messages, or production
-   service calls are required by this implementation.
+5. Bookmark import is connected through `readContext(["bookmark"])` to the caller's private toolbox. It returns stable `toolbox:bookmarks:<entry-id>` IDs, `kind: "bookmark"`, titles, and plain HTTP(S) `sourceUrl` values when valid. The feature considers the first 100 entries, matching the source bound, and skips invalid links or ambiguous duplicate IDs. It intentionally does not import source `text` as article content. Empty eligible bookmarks return `[]`; source failures reject. No bookmark mutation is available.
+6. The feature uses no `services.search`, arbitrary URL fetching, direct provider
+   API calls, new accounts, jobs, or outbound messages. Generation uses the existing
+   shared adapter; no feature-specific environment variables or dependencies are added.
 
 ## Verification
 
-Run only this feature's suite plus repository typechecking:
+With Node 24, run the targeted suite and repository typecheck:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-read-later.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-read-later.test.ts
+npm run typecheck
 git diff --check
 ```
 

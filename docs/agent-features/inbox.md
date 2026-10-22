@@ -1,6 +1,6 @@
 # Capture inbox and action triage
 
-Feature ID: `inbox`. Registered in the private agent router on the integration branch; release status is tracked in the personal-agent expansion roadmap.
+Use `/nobo-help agent inbox help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
 
 Use the inbox for a thought, pasted message, task, link, or a mixture of these. A capture starts **unprocessed**. Triage proposes a category, a short summary, up to three concrete next actions, and urgency with reasoning. The proposal stays a preview until you explicitly accept it. Acceptance marks the item **processed / accepted** and saves its private classification. Dismissal marks it **processed / dismissed** without approving the proposal.
 
@@ -52,21 +52,21 @@ Substitute the IDs from your own responses. To discard a capture during review, 
 - Malformed or unsupported persisted state is reported without resetting or overwriting it. Storage failures are reported without exposing backend details. If a write cannot be confirmed, check `list` or `show` before retrying; request deduplication belongs to the runtime.
 - Relative dates remain source text. Displayed dates use the supplied timezone; an invalid runtime clock or timezone causes a helpful error instead of a server-local fallback. No background processing, model tools, external account changes, or outbound communications are implemented.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Import the named `feature` (or default export) from `lib/agent-features/inbox.ts` and register it once under ID `inbox`, using the existing `AgentFeature` contract. Add it to private agent help/Home discovery. Route `/nobo-help agent inbox <command>` to `feature.execute(command, context)` and preserve multiline command text.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/inbox.ts` as `inbox`. `index.ts` dispatches `/nobo-help agent inbox <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
 2. Enforce caller identity/access checks and private delivery in the shared router. Return feature strings as private responses, with asynchronous acknowledgement/delivery for triage when needed. Feature output is bounded for a roughly 28,000-character Slack reply budget; the worst-case escape expansion is covered by a test.
-3. Supply `context.store` already scoped by workspace, user, and feature. The only relative store key is `state`; its JSON shape is version 1 with at most 100 items. Each item has a stable ID, immutable captured text, ISO timestamps, a revision UUID, a status, and either a pending preview or an accepted classification. Implement atomic CAS semantics for `store.update`; transforms are pure, synchronous, retryable, and preserve other items. Generate IDs and timestamps outside transforms. Do not share this namespace with other features.
-4. Supply `context.now`, a valid `context.timezone`, and optional `context.signal`. Supply `services.generate({ instructions, input })` as the existing text-only, tool-free service. Maintain the instructions/input boundary. No search, read-context adapter, new dependency, global Redis key, or other production API is required.
+3. The runtime supplies `context.store` already scoped by workspace, user, and feature. The only relative store key is `state`; its JSON shape is version 1 with at most 100 items. Each item has a stable ID, immutable captured text, ISO timestamps, a revision UUID, a status, and either a pending preview or an accepted classification. The shared store implements atomic CAS semantics for `store.update`; transforms are pure, synchronous, retryable, and preserve other items. Generate IDs and timestamps outside transforms. Do not share this namespace with other features.
+4. The runtime supplies `context.now`, a valid `context.timezone`, and optional `context.signal`. Supply `services.generate({ instructions, input })` as the existing text-only, tool-free service. Maintain the instructions/input boundary. No search, read-context adapter, new dependency, global Redis key, or other production API is required.
 5. Apply the shared request deduplication policy before execution. This module does not consume `requestId`; separate capture invocations create separate stable records, even when their text matches. Handle corrupted-state inspection and any future migrations centrally without silently deleting user data.
 
-No shared contract changes are requested. Routing, registry, access policy, persistence adapters, and private delivery remain parent-owned.
+Routing, access policy, persistence adapters, and private delivery are implemented in the shared runtime and Slack integration.
 
 ## Targeted verification
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-inbox.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-inbox.test.ts
+npm run typecheck
 git diff --check
 ```
 

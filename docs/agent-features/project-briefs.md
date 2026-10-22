@@ -1,8 +1,12 @@
 # Project context and status briefs
 
+Use `/nobo-help agent project-briefs help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `project-briefs` keeps a private context pack for a project: its purpose, constraints, open questions, user-recorded decisions, and explicitly selected personal sources. A brief refreshes those references, quotes useful excerpts and source-reported status, and optionally adds a cited synthesis. It does not infer a numeric progress score, change source records, or post to a channel.
 
-Parent integration supplies the entry point `/nobo-help agent project-briefs <command>`. Commands below use that prefix. Replace the example project ID with the full `prj-…` ID returned by `create`; use actual source IDs returned by `sources`.
+Commands below use `/nobo-help agent project-briefs <command>`. Replace the example project ID with the full `prj-…` ID returned by `create`; use actual source IDs returned by `sources`.
+
+Connected context includes private toolbox records, confirmed calendar imports, and eligible approved memory cards. Legacy follow-ups, reminders, monitors, and digests include only your records in the signed current channel. Legacy personal memory and artifacts are not connected. See [source coverage](context.md); an absent reference is not proof of deletion.
 
 ## A working flow
 
@@ -40,7 +44,7 @@ The deterministic brief combines your project fields with refreshed evidence and
 
 Updates replace the whole selected field; use multiline text or semicolons for several constraints, questions, or decisions. A pipe separates the title/purpose or field/text; additional pipes are treated as part of the body. No natural-language command execution, background refresh, or automatic selection is performed.
 
-Supported source kinds are `note`, `goal`, `habit`, `journal`, `bookmark`, `follow-up`, `reminder`, `monitor`, `digest`, `artifact`, `memory`, and `event`. Actual availability depends on the parent runtime's owned-context adapters. Source IDs are qualified by kind, so `note:abc` and `memory:abc` are distinct references. Pass the kind and raw source ID as separate command arguments.
+Supported source kinds are `note`, `goal`, `habit`, `journal`, `bookmark`, `follow-up`, `reminder`, `monitor`, `digest`, `artifact`, `memory`, and `event`. All listed kinds except `artifact` have connected sources under the boundaries above. `memory` means eligible approved memory-review cards; legacy personal memory remains excluded. Source IDs are qualified by kind, so `note:abc` and `memory:abc` are distinct references. Pass the kind and raw source ID as separate command arguments.
 
 ## Freshness, separation, and failures
 
@@ -51,12 +55,12 @@ Supported source kinds are `note`, `goal`, `habit`, `journal`, `bookmark`, `foll
 - All newly rendered dates use the caller's supplied IANA timezone. A saved brief retains the timezone it was originally rendered in and says when it was built. Invalid runtime timezones are rejected without falling back to the server timezone.
 - A context or generation failure leaves the project and its previous brief unchanged. Retry `brief <project-id>` without `--synthesize` if generation is unavailable. Even if source refresh succeeded, it is not saved when the requested synthesis fails.
 - Revision checks reject a generated or refreshed result if this project was edited, unlinked, archived, deleted, or refreshed concurrently. Retry the command against the latest project state. Independent project edits remain intact. Creation, field updates, archive, unlink, and deletion use atomic scoped-store transforms.
-- Source documents and generated text are untrusted data, never commands or tools. Slack angle-bracket control syntax is neutralized in replies. No search, direct API calls, channel history, external writes, messages, account changes, or live inference tests are used by the implementation.
+- Source documents and generated text are untrusted data, never commands or tools. Slack angle-bracket control syntax is neutralized in replies. The optional synthesis uses the configured text model. There is no public search, direct feature API access, channel-history read, external write, message sending, or account change; local tests use fake generation.
 
 ## Limits and retention
 
 - At most 20 packs per workspace/user/feature, including archives; 8 references per pack. A **470,000-byte aggregate quota including refresh reserves** may bind before these count limits. Nothing is silently evicted. `list` shows usage; use `delete <project-id> confirm` to free capacity. Unlinking sources or shortening fields can also free capacity. Archiving retains data and does not free a slot or its byte reserve.
-- Storage is measured with `Buffer.byteLength(JSON.stringify(value), "utf8")`, including Unicode and JSON escaping, rather than JavaScript string length. Every accepted write stays at or below 470,000 actual bytes, below the parent's 480,000-byte safety target and 512,000-byte store limit. Creation, links and field edits also reserve room for each pack's future refreshed snapshots and saved brief. Revision/date/status growth and archive/restore changes are prepaid, so accepted packs can still be processed when admission is full. Quota rejection preserves the entire previous state and provides deletion guidance.
+- Storage is measured with `Buffer.byteLength(JSON.stringify(value), "utf8")`, including Unicode and JSON escaping, rather than JavaScript string length. Every accepted write stays at or below 470,000 actual bytes, below the shared 480,000-byte safety target and 512,000-byte store limit. Creation, links and field edits also reserve room for each pack's future refreshed snapshots and saved brief. Revision/date/status growth and archive/restore changes are prepaid, so accepted packs can still be processed when admission is full. Quota rejection preserves the entire previous state and provides deletion guidance.
 - Title: 120 characters. Purpose: 1,000. Constraints, questions and decisions: 1,500 each. Commands: 6,000 total. Source IDs: 160, with no whitespace, pipes or angle brackets.
 - At most 2,000 context items per service response. Oversized or malformed responses fail without saving. Discovery displays at most 20 matches; narrow with a kind and search text.
 - Each snapshot stores at most 1,000 source-text characters, 160 title characters, and 100 status characters. Brief evidence displays at most 600 characters per source with truncation labels. Generation sees the stored, bounded source excerpts, not full documents, metadata, URLs, or other project packs.
@@ -65,23 +69,23 @@ Supported source kinds are `note`, `goal`, `habit`, `journal`, `bookmark`, `foll
 - Packs and snapshots persist until deletion; archiving is organizational, not erasure. `show` and `show … brief` let you copy the current pack or latest reusable brief. There is no separate bulk export or version history.
 - Structurally invalid persisted state fails closed with recovery guidance; it is never silently reset. Unknown extra properties are omitted when writing the validated, bounded schema.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Import `feature` (or the default export) from `lib/agent-features/project-briefs.ts` and register the exact ID `project-briefs` in the private agent command registry. Route the remaining raw command string to `feature.execute(command, context)`. Add help/Home discovery using its title, description and help string. No shared code is changed in this child implementation.
-2. Use the implemented identity-checked, **workspace + user + feature scoped** `AgentFeatureStore.read/update`. This module uses only the local key `packs`, version `1`; `update` provides atomic optimistic retry semantics and does not commit when its transform throws. The module has pure synchronous retryable transforms and creates IDs/timestamps outside them. Its local 470,000-byte quota and future-capacity reservations stay below the shared store's 512,000-byte value ceiling. The shared runtime handles request deduplication, including repeated creates.
-3. Supply `readContext(kinds)` with caller-owned context only, stable kind/ID pairs, bounded titles/text, and useful `updatedAt`/`status` when available. It must not return channel-wide or other-user data. Return no more than 2,000 items and avoid truncation that silently drops linked IDs; the present contract has no targeted-ID or pagination/completeness flag. Sources omitted by the adapter are reported as missing from its returned snapshot.
-4. Supply text-only `generate({instructions,input})` with no tools for the optional `--synthesize` path through the implemented runtime. At most one call is made per request; no `search` implementation is required by this feature. Use the runtime's existing 120-second deadline, prompt cancellation and late-write guards; no additional deadline service or shared contract changes are needed. Deterministic briefs and all management commands work without generation.
-5. Supply valid `now`, the user's IANA `timezone`, and optional cancellation `signal`; privately deliver the returned text and handle any asynchronous generation. Do not expose the scoped packs record as shared project context without a separate explicit integration design.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/project-briefs.ts` as `project-briefs`. `index.ts` dispatches `/nobo-help agent project-briefs <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The shared runtime supplies identity-checked, **workspace + user + feature scoped** `AgentFeatureStore.read/update`. This module uses only the local key `packs`, version `1`; `update` provides atomic optimistic retry semantics and does not commit when its transform throws. The module has pure synchronous retryable transforms and creates IDs/timestamps outside them. Its local 470,000-byte quota and future-capacity reservations stay below the shared store's 512,000-byte value ceiling. The shared runtime handles request deduplication, including repeated creates.
+3. The shared `readContext(kinds)` adapter returns stable, globally unique IDs, bounded titles/text, and actual `updatedAt`/`status` where available. Its current maximum is 1,500 items, under this feature's 2,000-item response limit; it rejects source overflows rather than silently dropping linked IDs. It has no targeted-ID or pagination/completeness field. A linked source absent from this authorized snapshot is reported missing without claiming deletion. Preserve the [source boundaries](context.md), including current-channel legacy records and unconnected artifacts.
+4. The runtime supplies text-only `generate({instructions,input})` with no tools for the optional `--synthesize` path through the implemented runtime. At most one call is made per request; no `search` implementation is required by this feature. Use the runtime's existing 120-second deadline, prompt cancellation and late-write guards; no additional deadline service or shared contract changes are needed. Deterministic briefs and all management commands work without generation.
+5. The runtime supplies valid `now`, the user's IANA `timezone`, and optional cancellation `signal`; privately deliver the returned text and handle any asynchronous generation. Do not expose the scoped packs record as shared project context without a separate explicit integration design.
 
 No new packages, environment variables, migrations, production credentials, outgoing jobs, or external accounts are required.
 
 ## Verification
 
-Run only this feature's tests during parallel child implementation:
+With Node 24, run the targeted suite from the repository root:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-project-briefs.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-project-briefs.test.ts
+npm run typecheck
 git diff --check
 ```
 

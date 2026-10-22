@@ -1,8 +1,10 @@
 # Personal automation review
 
+Use `/nobo-help agent automation-audit help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `automation-audit` is an on-demand, private health and history review of your permitted reminders, monitors and digests. It explains suspicious timing, old records, vague purposes and duplicate candidates. It never runs, edits, disables or deletes jobs, and never sends a message to another person. No model or web access is required.
 
-The parent must register the feature and supply the context adapter described below before these commands are available.
+Reviews cover only your reminders, monitors, and digest subscriptions in the channel where you run the command. They inspect stored metadata, not channel messages or verified delivery outcomes. See [source coverage](context.md).
 
 ## Commands and example flow
 
@@ -44,11 +46,11 @@ Copy the actual source and suggestion IDs from your review; the IDs above are ex
 
 Comparison is observational. A source or suggestion disappearing may mean an adapter returned different coverage or a cap was reached; it is not proof of deletion or resolution. New evidence can produce a new suggestion ID after a previous suggestion was dismissed. Historical views reflect current dismissal preferences.
 
-## Parent integration requirements
+## Runtime and source contract
 
-1. Import named `feature` or the default export from `lib/agent-features/automation-audit.ts`, register exact ID `automation-audit`, and expose it through the private agent router/help/Home. No child changes to those shared files are required.
-2. Supply the existing `AgentFeatureContext` with a workspace/user/feature-scoped atomic store, a valid `now`, and the user's timezone. The only feature-local storage key is `audit`. Updates must preserve the contract's synchronous, retryable, atomic semantics. The parent remains responsible for request deduplication and private delivery.
-3. Implement `readContext(["reminder", "monitor", "digest"])` using only authorized caller-owned metadata. Ownership filtering and permitted destination labels happen in the adapter. Do not scan arbitrary Redis keys or broaden to channel-wide subscriptions the caller does not own. Return a deterministic order, prioritizing relevant records if there are more than 80. An empty array means no eligible records were returned; adapter outages must throw rather than masquerade as empty inventory.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/automation-audit.ts` as `automation-audit`. `index.ts` dispatches `/nobo-help agent automation-audit <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies the existing `AgentFeatureContext` with a workspace/user/feature-scoped atomic store, a valid `now`, and the user's timezone. The only feature-local storage key is `audit`. Updates must preserve the contract's synchronous, retryable, atomic semantics. The shared runtime remains responsible for request deduplication and private delivery.
+3. `readContext(["reminder", "monitor", "digest"])` is connected to bounded owner indexes with record ownership, access-policy, and signed-current-channel checks. It reads metadata only; it does not scan global Redis keys or read channel messages. The shared adapter returns complete eligible sources within its per-index 200-ID limits, ordered by earliest next occurrence, then actual update time and ID. This feature examines the first **80** entries and discloses omissions. Empty eligible records and source failures remain distinct. See [source coverage](context.md).
 4. Use stable, globally unique source IDs across the three kinds, preferably `reminder:<id>`, `monitor:<id>`, and `digest:<id>`. IDs must match `[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}`. Duplicate IDs among the inspected entries are all excluded as ambiguous.
 5. Map records to `AgentContextItem` and the following optional, top-level `metadata` fields. Do not supply secrets, arbitrary source documents, raw run errors, or private data outside the caller's scope. No new shared TypeScript contract fields are needed.
 
@@ -66,9 +68,10 @@ Comparison is observational. A source or suggestion disappearing may mean an ada
     nextRunAt: "2026-10-23T14:00:00Z",
     schedule: "weekly Friday 09:00", // consistent human-readable label
     timezone: "America/Chicago", // source schedule's timezone, when known
-    destination: "private DM", // optional permitted stable destination label
-    lastRunAt: "2026-10-16T14:00:03Z", // only if truly known
-    lastRunStatus: "success" // "failed" or "unknown"; only if truly known
+    destination: "current channel C123", // label from the signed invocation
+    // lastRunAt is present for a monitor check; its delivery outcome remains unknown.
+    // lastRunStatus is optional in the consumer contract, but is not supplied
+    // by the current legacy adapters.
   }
 }
 ```
@@ -81,9 +84,9 @@ Existing reminder/monitor/digest records expose `nextRunAt`, schedule fields and
 
 The feature retains at most eight snapshots, 80 input entries per review, 160 suggestions per snapshot and 100 dismissal IDs. It reports skipped entries and cap truncation. Suggestions are prioritized by rule (overdue, explicit failure, stale, purpose, missing timing, metadata, duplicates); capped-out suggestions may still be suggested by a later review with different coverage. Titles are capped at 160 characters, purposes at 500, schedule labels at 160 and destinations at 120. Stored values contain only allowlisted normalized fields; source URLs, arbitrary metadata and full documents are not retained. Responses stay below 28,000 characters and point to `inspect` when abbreviated.
 
-Storage is measured with `Buffer.byteLength(JSON.stringify(state), "utf8")`, including Unicode and JSON escaping. Every accepted review keeps the entire value at or below **450,000 bytes**, evicting the oldest snapshots until it fits. This reserves **29,000 bytes** for later dismissal/lifecycle changes under the feature's **479,000-byte** ceiling, below the parent's 512,000-byte limit. Normal dismissals never need to evict accepted history; 100 bounded IDs/timestamps consume less than the reserve. Retention may therefore be fewer than eight snapshots. Review output discloses evictions, and review/show/history show usage and deletion guidance.
+Storage is measured with `Buffer.byteLength(JSON.stringify(state), "utf8")`, including Unicode and JSON escaping. Every accepted review keeps the entire value at or below **450,000 bytes**, evicting the oldest snapshots until it fits. This reserves **29,000 bytes** for later dismissal/lifecycle changes under the feature's **479,000-byte** ceiling, below the runtime's 512,000-byte limit. Normal dismissals never need to evict accepted history; 100 bounded IDs/timestamps consume less than the reserve. Retention may therefore be fewer than eight snapshots. Review output discloses evictions, and review/show/history show usage and deletion guidance.
 
-If even one new review plus existing dismissals cannot fit the admission budget, it is rejected without changing history or dismissals. Ask the context adapter to return fewer or shorter records. `clear confirm` deletes saved history and dismissals but cannot reduce an individually oversized source set. No partial snapshot is silently accepted.
+If even one new review plus existing dismissals cannot fit the admission budget, it is rejected without changing history or dismissals. A maintainer can inspect the bounded source fields; do not hide records or weaken the adapter's complete-read contract to make a snapshot fit. `clear confirm` deletes saved history and dismissals but cannot reduce an individually oversized source set. No partial snapshot is silently accepted.
 
 Dismissals use deterministic IDs based on the rule, source IDs and relevant evidence. They survive an unchanged refresh; material evidence changes may produce a new ID. Only the newest 100 dismissals are retained, so an older recommendation may reappear. Use `clear confirm` to remove all review data and reset dismissals. There is no background expiry, execution telemetry collection, export, job mutation, recurrence parser or model inference in this feature.
 
@@ -91,12 +94,12 @@ Provider failures preserve saved history and dismissals. Corrupt persisted shape
 
 Titles, purposes (including text/title fallbacks), schedule labels and destinations are trimmed again after clipping, so a cutoff at a word boundary cannot leave invalid trailing whitespace. Each new snapshot passes the same validation used for saved history before any storage update starts. A failed new-snapshot validation preserves existing history and dismissals and asks for the supplied metadata/capture time to be checked; it does not ask you to clear valid saved data.
 
-Each review makes one `readContext` call; all other commands use saved state. There are zero generation or search calls, within the parent's per-invocation limits of eight generations and six searches. The parent runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. No shared runtime/store files are copied into or modified by this feature.
+Each review makes one `readContext` call; all other commands use saved state. There are zero generation or search calls, within the runtime's per-invocation limits of eight generations and six searches. The shared runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. The feature uses the shared runtime and store directly.
 
 Targeted verification:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-automation-audit.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-automation-audit.test.ts
+npm run typecheck
 git diff --check
 ```

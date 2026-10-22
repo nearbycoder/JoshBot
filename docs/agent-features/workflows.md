@@ -1,8 +1,10 @@
 # Resumable personal workflows
 
+Use `/nobo-help agent workflows help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `workflows` runs private, text-only tasks in an inspectable sequence. A workflow contains an explicit input, one to six instructions, and one durable run with saved step outputs. Each step sees the original input and the immediately preceding saved output. It can extract, draft, summarize, or transform text; it cannot execute code, fetch a URL, send a message, or change an account.
 
-The parent must register this feature before these entry points are available:
+Start with:
 
 ```text
 /nobo-help agent workflows help
@@ -77,12 +79,12 @@ All state is validated before use or mutation. Unsupported/corrupt records produ
 - Records remain until `delete <id> confirm`. There is no export file, auto-expiry, version history, rerun, recurring trigger, worker, tool execution, owner-context lookup, or web search.
 - Timestamps are UTC ISO strings in storage; inspection uses the supplied timezone, and generation receives that timezone and the invocation clock. No server-local timezone is assumed.
 
-## Parent integration requirements
+## Runtime and source contract
 
-1. Import the named `feature` (or default export) from `lib/agent-features/workflows.ts` and register its exact ID, **`workflows`**, with the shared private `/nobo-help agent <id> <command>` router and help/Home discovery.
-2. Supply the `AgentFeatureContext` contract with authenticated workspace/user identity, a valid `now` and timezone, optional request abort signal, and a store namespace isolated to workspace/user/**workflows**. This module uses only the relative key **`state`**, with schema `{ version: 1, workflows: [...] }`.
-3. Use the parent-owned shared `store.update` implementation with atomic compare-and-swap transactions across processes, synchronous retryable transforms, JSON value semantics, and abort guards. A read/modify/write adapter without CAS cannot provide ownership, cancellation, or checkpoint guarantees. All UUIDs/timestamps and service calls are outside transforms. The feature measures and reserves bytes inside pure transforms; no shared-store changes are needed.
-4. Supply `services.generate` as bounded text-only inference with no tools or external writes. Neither `search` nor `readContext` is used. Honor the instruction/output budget in the adapter where possible; the module rejects oversized responses. No additional service or shared-contract change is required.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/workflows.ts` as `workflows`. `index.ts` dispatches `/nobo-help agent workflows <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies the `AgentFeatureContext` contract with authenticated workspace/user identity, a valid `now` and timezone, optional request abort signal, and a store namespace isolated to workspace/user/**workflows**. This module uses only the relative key **`state`**, with schema `{ version: 1, workflows: [...] }`.
+3. The shared `store.update` implementation provides atomic compare-and-swap transactions across processes, synchronous retryable transforms, JSON value semantics, and abort guards. A read/modify/write adapter without CAS cannot provide ownership, cancellation, or checkpoint guarantees. All UUIDs/timestamps and service calls are outside transforms. The feature measures and reserves bytes inside pure transforms; no shared-store changes are needed.
+4. The runtime supplies `services.generate` as bounded text-only inference with no tools or external writes. Neither `search` nor `readContext` is used. Honor the instruction/output budget in the adapter where possible; the module rejects oversized responses. No additional service or shared-contract change is required.
 5. Acknowledge Slack commands promptly and deliver responses privately/asynchronously through the shared runtime's 120-second deadline and cancellation/write guards. The feature uses at most two 45-second generation waits and a 100-second work budget, leaving saving/delivery headroom. Retain runtime request deduplication; this feature does not retain request IDs or deduplicate separate `create` requests.
 6. Persist only the scoped state. No Redis key scanning, Slack API access, provider SDK, scheduler, package change, or environment secret is needed here.
 
@@ -91,8 +93,8 @@ All state is validated before use or mutation. Unsupported/corrupt records produ
 Targeted fake-service tests cover the complete flow, invalid commands and persisted data, provider failure/retry, two-step limits, concurrent ownership, cancellation, active/future-step edits, pause/resume, deletion, abort, generation timeout, expired claims, storage failure recovery, pure retryable transforms, capacity, timezone rendering, scoped isolation, and worst-case response escaping. Quota/deadline cases cover CJK UTF-8 text, JSON control characters, lone surrogates, full output/lifecycle headroom, atomic edit rejection, legacy over-quota deletion, a reduced second-step timeout, exhausted work budgets, and recovery when runtime abort guards prevent interruption writes.
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-workflows.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-workflows.test.ts
+npm run typecheck
 git diff --check
 ```
 

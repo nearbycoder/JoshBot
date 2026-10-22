@@ -1,8 +1,10 @@
 # Time-blocked day planner
 
-Command ID: `day-planner`. Every command returns a private reply through the parent agent-feature router. This module is ready for integration; it does not register its own route.
+Use `/nobo-help agent day-planner help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
 
 Build an on-demand, deterministic proposal around your tasks, working hours, fixed breaks, and owned calendar events. It never writes to a calendar or calls a model. Tasks remain in the planner until you remove them; scheduling does not mark them complete.
+
+Event context comes from your confirmed [calendar imports](calendar.md). A pending preview is excluded, and the imported snapshot does not verify an external calendar. See [source coverage](context.md).
 
 ## A complete flow
 
@@ -40,7 +42,7 @@ The plan lists task blocks, blocked intervals with source IDs, and a reason for 
 
 The state holds at most 50 tasks, four breaks, 200 event labels, and one plan. A new successful plan replaces the old one; no history is kept. A plan has at most 254 nonoverlapping blocks. Replies are limited to 27,000 characters, below the runtime's 28,000-character cap. At most 12 unavailable intervals are displayed in detail (with up to two source IDs each); omitted intervals still block scheduling. All normal task rows and unscheduled reasons remain visible. Slack mention/link delimiters in user/source text are neutralized for display.
 
-Storage is measured with `Buffer.byteLength(JSON.stringify(state), "utf8")` before every changed value is written, including Unicode and JSON escaping. The full feature state is capped at **400,000 UTF-8 bytes**, leaving 80,000 bytes below the parent's 480,000-byte feature ceiling and 112,000 bytes below the store's 512,000-byte hard limit. Adding tasks or changing settings caps the state without a saved plan at **64,000 bytes**, reserving 336,000 bytes within the feature budget for a later plan snapshot. Maximum-count Unicode tasks/events are tested through planning, refresh, removal, and clearing. This keeps accepted tasks processable without filling storage during plan creation.
+Storage is measured with `Buffer.byteLength(JSON.stringify(state), "utf8")` before every changed value is written, including Unicode and JSON escaping. The full feature state is capped at **400,000 UTF-8 bytes**, leaving 80,000 bytes below the shared 480,000-byte feature ceiling and 112,000 bytes below the store's 512,000-byte hard limit. Adding tasks or changing settings caps the state without a saved plan at **64,000 bytes**, reserving 336,000 bytes within the feature budget for a later plan snapshot. Maximum-count Unicode tasks/events are tested through planning, refresh, removal, and clearing. This keeps accepted tasks processable without filling storage during plan creation.
 
 Quota failures preserve the prior state and explain how to recover: use `tasks`, then `remove <task-id>` to free task and saved-plan space; reduce imported event content when a plan snapshot is too large; or use `clear confirm` to delete all planner state. Removal is permitted above the task-admission budget as long as the loaded state fits the full feature budget. If legacy stored data exceeds the full feature budget but is still readable by the runtime, only `clear confirm` resets it; the feature reports that option explicitly. Future lifecycle/schema expansion must keep the reserved headroom and measure serialized bytes rather than character counts.
 
@@ -69,11 +71,11 @@ The schedule only knows the owned event context the adapter supplies. An empty c
 
 Each invocation makes **zero generation calls and zero searches** (below the runtime limits of eight and six). Only `plan` reads context, once. Work is bounded by 50 tasks and 200 events. The shared runtime owns the 120-second deadline, prompt cancellation of provider waits, and signal-based late-write guards; the feature also checks cancellation after the event read and before computing/saving its plan. No additional timers, background work, or service calls are started here.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Register the named/default `feature` export from `lib/agent-features/day-planner.ts` under **`day-planner`**. Wire `/nobo-help agent day-planner <command>` and its private discovery/help entry. There are no shared routing or registry changes in this commit.
-2. Supply the normal workspace/user/feature-scoped `AgentFeatureContext`, current `now`, a valid IANA `timezone`, and atomic retryable `store.update`. The only key this feature reads/writes is **`state` within its feature namespace**. Store version is 1. Identity checks, private delivery, command deduplication, and persisted-state lifecycle remain runtime responsibilities.
-3. Implement `services.readContext(["event"])` using caller-owned events, including the calendar import feature when integrated. Return a **complete** bounded set of at most 200 event records; do not silently truncate it. The current shared method accepts no date-window parameter, so the planner asks for the owned event set and clips it itself. If the source cannot return that complete set, fail the call; supporting larger calendars requires a parent-owned contract extension for complete windowed reads.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/day-planner.ts` as `day-planner`. `index.ts` dispatches `/nobo-help agent day-planner <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies the normal workspace/user/feature-scoped `AgentFeatureContext`, current `now`, a valid IANA `timezone`, and atomic retryable `store.update`. The only key this feature reads/writes is **`state` within its feature namespace**. Store version is 1. Identity checks, private delivery, command deduplication, and persisted-state lifecycle remain runtime responsibilities.
+3. `services.readContext(["event"])` uses `readCalendarEventContext` with the caller's read-only calendar store and resolved timezone. It returns the complete confirmed snapshot, currently at most **100** events, within the planner's **200**-record input ceiling. Pending previews are excluded. The shared contract has no date-window parameter: the planner clips intervals itself. Oversized or failed source reads reject instead of claiming availability; larger calendars would require an explicit complete-window contract.
 4. Every busy event must have a unique nonempty `id` (at most 120 characters, no control characters or surrounding whitespace), `kind: "event"`, a string `title` (at most 2,000 characters), and the following metadata:
 
    ```ts
@@ -86,13 +88,13 @@ Each invocation makes **zero generation calls and zero searches** (below the run
 
    Both timestamps must have explicit offsets or `Z`; naive timestamps, missing endpoint metadata, reversed intervals, duplicate IDs, or malformed records reject the entire proposal, including when outside the requested day. Equal endpoint instants are valid nonblocking point events: the calendar adapter's equal `startAt`/`endAt` for a timed VEVENT without `DTEND` is consumed directly, without rewriting its `busy: true` flag. No inference from `dueAt`, natural-language text, or an assumed duration occurs. Record `status: "cancelled"` / `"canceled"`, or `metadata.busy: false`, to skip other nonblocking events. Normalize other transparency/status spellings in the adapter.
 
-5. Convert all-day events to absolute start/end instants using the calendar's intended timezone, preserving the **exclusive end date**; the same metadata shape then works for all-day or multiday events. `allDay` may be included for provenance but does not alter scheduling. Date-only `startDate`/`endDate` metadata is not consumed here. Expand any supported recurrence in the calendar adapter before supplying concrete occurrences, with distinct IDs. Propagate calendar import/completeness failures instead of silently dropping conflicts.
+5. The calendar adapter converts all-day civil dates into absolute start/end instants in the caller's resolved viewing timezone, preserving the **exclusive end date** and DST boundaries. `allDay` remains provenance; the planner consumes the normalized interval rather than `startDate`/`endDate`. The importer rejects recurrence. Preserve complete imported intervals and propagate failures instead of dropping conflicts.
 
 No new dependencies, model configuration, external grants, secrets, Redis key access, outbound messaging, or calendar-write adapter are required.
 
 ## Verification
 
-From the worktree, with Node 24 available on `PATH`:
+From the repository root, with Node 24 available on `PATH`:
 
 ```sh
 node --import tsx --test tests/agent-day-planner.test.ts
@@ -100,12 +102,6 @@ npm run typecheck
 git diff --check
 ```
 
-In an isolated planner worktree without the calendar module, run the targeted test command with `NOBO_TEST_CALENDAR_MODULE` set to the absolute path of the parent's read-only `lib/agent-features/calendar.ts`. For example:
-
-```sh
-NOBO_TEST_CALENDAR_MODULE=/home/nearby/Sites/JoshBot/lib/agent-features/calendar.ts node --import tsx --test tests/agent-day-planner.test.ts
-```
-
-After integration the regression loads the local calendar module by default; it is never skipped. It imports pasted ICS through the real calendar preview/confirm flow and calls `readCalendarEventContext` with a separate in-memory calendar store. It verifies a timed event without `DTEND` remains a busy point in source context, does not obstruct a task crossing that instant, and does not invalidate plans for another day. Normal meetings still block time and reversed intervals remain errors.
+The integrated regression loads the local calendar module by default; it is never skipped. It imports pasted ICS through the real calendar preview/confirm flow and calls `readCalendarEventContext` with a separate in-memory calendar store. It verifies a timed event without `DTEND` remains a busy point in source context, does not obstruct a task crossing that instant, and does not invalidate plans for another day. Normal meetings still block time and reversed intervals remain errors.
 
 Tests use only in-memory stores and fake services, plus that local calendar parser/adapter; no production services or network calls occur. They also cover complete command flows, priority/deadline ordering, merged blockers, empty/error states, UTF-8 byte quotas and lifecycle headroom with Unicode data, quota recovery without partial writes, bounded retention/output, invalid persisted state, DST gaps/overlaps and non-hour changes, all-day/overnight event boundaries, retries, concurrent changes, cancellation, and provider failure preservation.

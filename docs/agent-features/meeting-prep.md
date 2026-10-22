@@ -1,12 +1,14 @@
 # Meeting preparation briefs (`meeting-prep`)
 
+Use `/nobo-help agent meeting-prep help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 Prepare for a meeting you explicitly describe using relevant information already owned by you. A packet includes your stated purpose and attendees, matching owner-context excerpts, source-reported open commitments, a proposed agenda, and suggested questions. Facts and suggestions appear in separate sections. This is preparation before a meeting; it does not process transcripts or modify the toolbox's manual agendas.
 
-Registered on the integration branch through the private agent entry point. The initial context adapter reads your workspace-scoped toolbox notes and goals; additional source adapters are being integrated with the remaining features. This expansion has not yet been deployed.
+Meeting prep can read your private toolbox notes/goals, confirmed calendar imports, eligible approved memory cards, and your follow-ups/reminders in the current channel. Artifacts and legacy personal memory are not connected. See [source coverage](context.md).
 
 ## Commands and example flow
 
-All examples use the intended private entry point `/nobo-help agent meeting-prep`. Replace `<id>` with the full `mp-…` identifier returned by `prepare` or `list`. The date below is an example: choose a future time when trying it.
+All examples use the private entry point `/nobo-help agent meeting-prep`. Replace `<id>` with the full `mp-…` identifier returned by `prepare` or `list`. The date below is an example: choose a future time when trying it.
 
 ```text
 /nobo-help agent meeting-prep help
@@ -51,24 +53,24 @@ The agenda and questions are deterministic suggestions grounded in these cited i
 - User and source text is inert data. Slack angle-bracket controls/mentions are escaped. Display fields are bounded after escaping as well, keeping replies below the 28,000-character target even for adversarial ampersand-heavy text.
 - A failing owner-context provider or a malformed non-array response leaves existing state unchanged. A failed `prepare` does not save a meeting or evict one; a failed `refresh` preserves the last packet and pending notes. Valid empty context still produces a useful supplied-input packet. Individual malformed source records are skipped.
 - Concurrent additions use atomic updates. Refresh saves only when the meeting's revision still matches the revision read before context retrieval. Newer edits, successful refreshes, and deletion win; stale work is discarded with retry guidance. Atomic transforms are pure, synchronous, and safe to retry. UUIDs and timestamps are generated outside them.
-- Persisted schema, field sizes, source shapes, notes, history, and revision relationships are validated. Invalid data is reported without silently resetting it. The scoped data must be restored by the parent/runtime administrator if corrupted.
+- Persisted schema, field sizes, source shapes, notes, history, and revision relationships are validated. Invalid data is reported without silently resetting it. The scoped data must be restored by the runtime administrator if corrupted.
 
-## Exact parent integration needs
+## Runtime and source contract
 
-1. Import `feature` (also the default export) from `lib/agent-features/meeting-prep.ts`; register it under the exact ID `meeting-prep`. Wire help and discoverability to `/nobo-help agent meeting-prep <command>`.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/meeting-prep.ts` as `meeting-prep`. `index.ts` dispatches `/nobo-help agent meeting-prep <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
 2. Enforce caller identity and **private-only response delivery** for every command. The module returns plain text and has no Slack client or sending capability. Supply runtime deduplication for retried command requests, as defined by the shared contract; this feature does not independently deduplicate `requestId` values.
-3. Supply the existing `AgentFeatureStore` interface, scoped to workspace/user/feature, with atomic compare-and-swap/retry semantics for `update`. This module uses only local key **`packets`**, schema **1**. Do not give it arbitrary Redis-key access. No migration of shared data is needed.
-4. Supply `context.now` as a valid `Date`, the user's explicit IANA `context.timezone`, and optionally `context.signal` for cancellation during preparation. Never substitute server-local timezone silently.
-5. Implement `services.readContext(kinds)` for caller-owned `note`, `goal`, `follow-up`, `reminder`, `memory`, `event`, and `artifact` records. Return stable IDs, titles, text, and optional `updatedAt`, `dueAt`, and normalized `status` values. Use ISO timestamps with explicit offsets. Return an empty array for supported-but-empty data, and reject on provider failure. Bound/order results upstream as appropriate; this feature only scans the first 200. Never return channel-wide or attendee-private data merely because a meeting mentions them.
+3. The runtime supplies the existing `AgentFeatureStore` interface, scoped to workspace/user/feature, with atomic compare-and-swap/retry semantics for `update`. This module uses only local key **`packets`**, schema **1**. Do not give it arbitrary Redis-key access. No migration of shared data is needed.
+4. The runtime supplies `context.now` as a valid `Date`, the user's explicit IANA `context.timezone`, and optionally `context.signal` for cancellation during preparation. Never substitute server-local timezone silently.
+5. `services.readContext(kinds)` requests `note`, `goal`, `follow-up`, `reminder`, `memory`, `event`, and `artifact`. The integrated sources supply toolbox notes/goals, confirmed calendar events, eligible approved cards, and owned current-channel follow-ups/reminders. `artifact` remains a recognized but unconnected kind; legacy personal memory is also excluded. Records carry stable IDs, titles, text, and genuine optional `updatedAt`, `dueAt`, and normalized `status`. The consumer displays due times only for offset-bearing timestamps, so date-only goal deadlines are not converted to invented instants. The adapter orders events first, then deadlines and updates, while this feature scans only the first 200 records. Empty eligible sources return no records; source errors reject. See [source coverage](context.md).
 6. No changes to the shared feature contract, dependency manifest, lockfile, or other features are required. `services.generate` and `services.search` are unused. No accounts, timers, jobs, calendar writes, model credentials, or outbound messaging permissions are needed.
 
 ## Verification
 
-Run only this feature's test file and typecheck from the repository root:
+With Node 24, run the targeted suite and typecheck from the repository root:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-meeting-prep.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-meeting-prep.test.ts
+npm run typecheck
 git diff --check
 ```
 

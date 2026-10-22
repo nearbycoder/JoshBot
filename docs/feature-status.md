@@ -1,8 +1,41 @@
 # NoBo feature status
 
-Reviewed October 22, 2026 against the implementation, automated tests, and production configuration. “Implemented” describes code availability; Slack permissions, subscriptions, credentials, and storage determine what is usable in a particular workspace.
+The baseline sections below record the October 22, 2026 refresh against implementation, automated tests, and production configuration. Their live observations and test counts are historical evidence for that refresh, not verification of the later personal-agent expansion. “Implemented” describes code availability; Slack permissions, subscriptions, credentials, and storage determine what is usable in a particular workspace.
 
-## Where to find each feature
+## Twenty personal agents on the development branch — not deployed
+
+Use `/nobo-help agent` or **NoBo Home → More → Personal agents** to discover all 20, then `/nobo-help agent <name> help` for syntax. All 20 modules and routes, scoped storage limits, and real source adapters are integrated in development. Remaining fixes, independent reviews, and validation are still in progress; this is **not a production release or final acceptance**. The [personal-agent guide](agent-features/README.md) has workflows and limits, and the [expansion roadmap](personal-agent-expansion.md) tracks release readiness.
+
+Each row below is available in development code through the private `/nobo-help agent` route. Append the name and command shown:
+
+| Name | First command after the name |
+| --- | --- |
+| [morning-brief](agent-features/morning-brief.md) | `brief` |
+| [weekly-review](agent-features/weekly-review.md) | `review` |
+| [inbox](agent-features/inbox.md) | `capture Review the launch draft` |
+| [day-planner](agent-features/day-planner.md) | `tasks` |
+| [meeting-prep](agent-features/meeting-prep.md) | `prepare Launch review \| purpose: Review readiness` |
+| [reply-coach](agent-features/reply-coach.md) | `style show` |
+| [relationships](agent-features/relationships.md) | `due` |
+| [read-later](agent-features/read-later.md) | `list` |
+| [research](agent-features/research.md) | `research What evidence supports this approach?` |
+| [project-briefs](agent-features/project-briefs.md) | `list` |
+| [recall](agent-features/recall.md) | `search launch` |
+| [memory-review](agent-features/memory-review.md) | `list` |
+| [playbooks](agent-features/playbooks.md) | `list` |
+| [workflows](agent-features/workflows.md) | `list` |
+| [learning](agent-features/learning.md) | `due` |
+| [decision-coach](agent-features/decision-coach.md) | `show` |
+| [handoffs](agent-features/handoffs.md) | `list` |
+| [calendar](agent-features/calendar.md) | `help` |
+| [travel](agent-features/travel.md) | `trip` |
+| [automation-audit](agent-features/automation-audit.md) | `review` |
+
+The runtime requires Redis for every non-help command. Deterministic commands need no inference; model-assisted commands use the configured text model, and research also uses Exa. These agents read private toolbox records, confirmed imported calendar events, and eligible approved memory cards. Legacy follow-ups/reminders/monitors/digests cover only the caller's records in the signed current channel. Artifacts and legacy personal memory are unconnected; memory-review legacy import has no candidates. A reference absent from this snapshot is not proof of deletion. See the [exact source contract](agent-features/context.md).
+
+This expansion adds on-demand commands, with manual workflow continuation and confirmed calendar snapshots. It adds no calendar OAuth, autonomous sending, vector search, new recurring jobs, or arbitrary tool execution. For final validation, follow the [release process](personal-agent-expansion.md#verification); earlier suite/build/audit results preceded subsequent edits and are not current acceptance evidence.
+
+## Baseline features and entry points
 
 | Area | Entry point | Status and prerequisites |
 | --- | --- | --- |
@@ -40,7 +73,7 @@ Open **NoBo Home → Open toolbox**, or use `/nobo-help tools <tool> help`.
 
 All twenty are implemented, scoped to workspace and user in Redis, and require no model calls. Their create/export/delete flows, duplicate protection, workspace isolation and concurrent writes passed a live Redis smoke check during this refresh; all synthetic records were removed. Tool-specific examples and limits are in [the toolbox guide](toolbox.md).
 
-## Production configuration and remaining setup
+## Production configuration at the baseline refresh
 
 - Slack bot credentials, OpenCode credentials, Exa, Redis and the public artifact base URL are configured. Kimi K3 remains selected for default text and vision.
 - Production reports the required native Agent OAuth grants. However, its logs warn that **`agent_session_stopped` is not subscribed**. Add that bot event in the existing Slack app's Event Subscriptions and save; reinstall only if Slack requests it. Until then, the native Stop control cannot reliably reach NoBo. See [the Slack admin checklist](slack-bolt-migration.md).
@@ -48,7 +81,7 @@ All twenty are implemented, scoped to workspace and user in Redis, and require n
 - GitHub/Linear creation and admin controls remain optional and unconfigured. Draft generation and ordinary bot features remain available.
 - Slack slash-command registration, private-channel membership, Agent view/client behavior, and every workspace-specific event cannot be proven by repository tests alone. Use the live acceptance checklist in the migration guide after Slack configuration changes.
 
-## Refresh changes and verification
+## Historical refresh changes and verification
 
 - Release checks passed on Node 24: all **449 tests**, including real Redis concurrency and lease tests, with zero skipped; typecheck; production build; and a full dependency audit.
 - Updated direct dependencies to current stable releases, with Node 24 LTS and matching Node types. TypeScript 7, Flue 2.3, pi-ai 1.4, Redis client 6.3 and Chromium 153 are included. CI uses the current Node setup action and runs tests, typechecking, a production dependency audit, and the build.
@@ -61,7 +94,7 @@ All twenty are implemented, scoped to workspace and user in Redis, and require n
 - A real Chromium 153 render produced a PNG. The standalone server tests exercise Bolt/Flue startup and signed Slack URL verification with a local Slack API fixture.
 - A small live Kimi K3 request through the updated Flue runtime returned successfully. No test messages were posted to Slack.
 
-## Practical limits
+## Baseline practical limits
 
 - Artifact URLs are bearer links. Marking an artifact expired hides it from normal lists but does not revoke a link until cleanup deletes the file.
 - Deterministic explicit skills use the documented mention/slash entry points. An ordinary DM/thread reply may be answered by the model instead.

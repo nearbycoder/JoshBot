@@ -1,12 +1,16 @@
 # Session handoff packets
 
+Use `/nobo-help agent handoffs help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `handoffs` saves your explicitly supplied task progress and selected personal source excerpts so you can carry them into a new conversation. It does not restore a running model or tool session, execute next steps, send messages, or verify that reported work actually happened. Everything is private and deterministic; no generation or web search is used.
 
-The parent integration must register this module before the following entry point is available:
+The command prefix is:
 
 ```text
 /nobo-help agent handoffs <command>
 ```
+
+Connected context includes private toolbox records, confirmed calendar imports, and eligible approved memory cards. Legacy follow-ups, reminders, monitors, and digests include only your records in the signed current channel. Legacy personal memory and artifacts are not connected. See [source coverage](context.md); an absent reference is not proof of deletion.
 
 ## A complete flow
 
@@ -70,20 +74,14 @@ Each packet accepts up to 6 sources. Objective length is 240 characters; complet
 
 Output escaping can require additional truncation per displayed field; total replies fit below 28,000 characters. Saved data remains intact. Open revisions stop at 999,999, reserving revision 1,000,000 for close; further work needs a new packet. Corrupt or unknown-version persisted state is rejected without automatic reset or partial repair; the runtime owner must recover it. There is no bulk export command; `show`/`resume` provide copyable text and explicit deletion handles retention.
 
-## Parent integration requirements
+## Runtime and source contract
 
-1. Import the named `feature` or default export from `lib/agent-features/handoffs.ts`, register the exact `handoffs` ID, route `/nobo-help agent handoffs …`, and expose its help/Home entry. All responses must remain private; the module returns text only.
-2. Supply the shared `AgentFeatureContext` with workspace/user/feature-scoped storage, caller identity, a valid `now`, and an explicit caller timezone. The only local store key is `packets-v1` (schema version 1). `store.update` must provide atomic compare/retry semantics; callbacks are synchronous, side-effect-free, and leave their input unmodified. The feature's measured quota and closing reserve keep accepted state below the shared 512,000-byte value limit without a contract/schema change.
-3. Implement `services.readContext()` using authorized caller-owned data. Source IDs must be stable and unique across kinds, satisfy the syntax above, and be exposed to the caller by `sources`. Prefer explicit `updatedAt` instants; date-only goal `dueAt` values can pass through unchanged. Missing/truncated adapter coverage must not be interpreted by the parent as definitive source deletion. No `generate` or `search` adapter is needed for this feature's operations.
-4. Keep private delivery, identity/access checks, request deduplication, and durable persistence in the shared runtime. Repeated captures intentionally create different IDs; Slack request retries need parent deduplication. No feature-level request ledger, external writes, session restoration, account changes, or shared contract changes are required.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/handoffs.ts` as `handoffs`. `index.ts` dispatches `/nobo-help agent handoffs <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies the shared `AgentFeatureContext` with workspace/user/feature-scoped storage, caller identity, a valid `now`, and an explicit caller timezone. The only local store key is `packets-v1` (schema version 1). `store.update` must provide atomic compare/retry semantics; callbacks are synchronous, side-effect-free, and leave their input unmodified. The feature's measured quota and closing reserve keep accepted state below the shared 512,000-byte value limit without a contract/schema change.
+3. The wired `services.readContext()` reads the connected sources listed above, using stable unique IDs across kinds. IDs must satisfy this feature's syntax and are discoverable through `sources`. Actual `updatedAt` instants and date-only goal `dueAt` values pass through unchanged. Context errors preserve the saved packet, and missing references describe only the current authorized snapshot. Neither `generate` nor `search` is used.
+4. Keep private delivery, identity/access checks, request deduplication, and durable persistence in the shared runtime. Repeated captures intentionally create different IDs; Slack request retries need runtime deduplication. No feature-level request ledger, external writes, session restoration, account changes, or shared contract changes are required.
 5. Use the shared runtime's 120-second deadline, promptly abortable service wrappers, and signal-guarded store. Handoffs makes zero generation/search calls and at most one owner-context read per invocation. Its pre-write/post-context cancellation checks also discard late source responses; the shared runtime remains responsible for stopping the wait promptly and guarding storage writes after cancellation.
 
 Targeted verification uses `node --import tsx --test tests/agent-handoffs.test.ts`, plus `npm run typecheck` and `git diff --check`. Tests use only fake storage/context services, including delayed/cancelled provider responses, concurrent edits/close/delete, retryable transactions, malformed storage, DST/timezone boundaries, source failures, and retention bounds. Quota tests cover CJK, emoji, JSON-escaped lone surrogates, revision growth, concurrent captures at capacity, deletion recovery, and closing every accepted packet without an oversized write.
 
-The cross-feature regression creates and updates real toolbox goals and reads them through the actual parent-owned `readAgentToolboxContext` adapter with an in-memory backend. It covers discovery, capture, deadline-change staleness, explicit refresh, and retained history. Separate checks isolate `dueAt` changes from text/`updatedAt`, preserve the difference between calendar dates and instants across caller timezones, and reject malformed/impossible deadlines. In an isolated feature checkout without the shared adapter, point this test at the parent's existing file; do not copy shared files into the branch:
-
-```sh
-HANDOFF_TEST_CONTEXT_ADAPTER=/absolute/path/to/parent/lib/agent-features/context.ts node --import tsx --test tests/agent-handoffs.test.ts
-```
-
-After parent integration, the test imports the local adapter automatically and needs no override. The adapter test uses only fake backend reads; it never connects to Redis or calls production services.
+The cross-feature regression creates and updates real toolbox goals and reads them through the actual shared `readAgentToolboxContext` adapter with an in-memory backend. It covers discovery, capture, deadline-change staleness, explicit refresh, and retained history. Separate checks isolate `dueAt` changes from text/`updatedAt`, preserve the difference between calendar dates and instants across caller timezones, and reject malformed/impossible deadlines. The integrated test loads the local adapter automatically and uses only fake backend reads; it never connects to Redis or calls production services.

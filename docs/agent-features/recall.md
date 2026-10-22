@@ -1,8 +1,8 @@
 # Personal cross-tool recall
 
-Implementation module: `lib/agent-features/recall.ts`, exported as named `feature` and default export with ID `recall`. Registered on the integration branch; shared context adapters and release verification are still in progress. The expansion has not yet been deployed.
+Use `/nobo-help agent recall help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
 
-Recall finds your own notes, journal entries, goals, bookmarks, artifacts, memory and follow-ups in one private search. It uses lexical word matching over the context supplied by NoBo; it does not search channel history, crawl links, use embeddings or claim semantic/vector retrieval.
+Recall searches your private toolbox notes, journal entries, goals and bookmarks, eligible approved memory-review cards, and your follow-ups in the channel where you run the command. The `artifact` filter is recognized but has no connected source; legacy personal memory is also unconnected. See [source coverage](context.md). It uses lexical word matching over the context supplied by NoBo; it does not search channel history, crawl links, use embeddings or claim semantic/vector retrieval.
 
 ## Commands and a complete flow
 
@@ -26,7 +26,7 @@ Search returns ranked snippets with kind-qualified source references, source tit
 
 Both `search` and `ask` support these options anywhere outside a double-quoted phrase:
 
-- `--kind note,journal,goal,bookmark,artifact,memory,follow-up`: one or more exact singular kind names, comma-separated without spaces. Omit to search all seven kinds.
+- `--kind note,journal,goal,bookmark,artifact,memory,follow-up`: one or more exact singular kind names, comma-separated without spaces. Omit to request all seven kinds; `artifact` currently returns no records, and `memory` includes only eligible approved cards.
 - `--from YYYY-MM-DD` and `--to YYYY-MM-DD`: inclusive **last-updated** day bounds. Either bound can be omitted. These do not filter by due date, journal entry date or dates mentioned in the text.
 - `--limit N`: default 5; search accepts 1–10 and ask accepts 1–5.
 
@@ -50,19 +50,19 @@ Only titles and text are searched. Metadata, URLs, status labels, source IDs and
 - Recall consumes **0 bytes of feature storage**, so the 480,000-byte feature-state target and the shared store's 512,000-byte serialized UTF-8 limit need no quota reservation or lifecycle headroom here. The bounded in-memory context can exceed that byte size because it is never persisted. If an original tool reports a storage quota, export or delete older records in that owning tool; recall cannot delete its records. Do not add a persisted recall cache without measuring `Buffer.byteLength(JSON.stringify(value), "utf8")`, retaining lifecycle headroom and adding quota/deletion flows. The shared runtime may separately retain request fingerprints/status for deduplication, without saving recall replies.
 - Context failures are reported separately from an empty result and raw provider errors are not exposed. The shared runtime stops waiting promptly when cancellation or its 120-second deadline fires and guards late writes. Recall checks the supplied signal before reading and after service completion/rejection, and discards cancelled output. It performs no writes that a late result could apply. Direct calls without the runtime's wrapped services retain those signal checks but do not independently interrupt a hanging provider.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Register `feature` from `lib/agent-features/recall.ts` under `recall` in the shared feature registry and expose help/Home discovery. Route `/nobo-help agent recall <command>` through the existing `runAgentFeature` runtime to `feature.execute(command, context)` and deliver **all** replies privately. This preserves shared deadlines, cancellation and service budgets. Routing, access checks and delivery remain parent-owned; the current runtime requires its existing Redis backend even though recall does not use feature storage.
-2. Supply a valid user timezone and a `services.readContext(kinds)` adapter scoped to the authenticated workspace/user. Respect requested kinds when gathering data; never substitute channel history, shared/channel memory or another user's private records. Recall relies on the adapter for ownership because `AgentContextItem` contains no owner field.
-3. Map existing personal-tool records to `note`, `journal`, `goal`, `bookmark`, `artifact`, `memory` and `follow-up` with stable IDs, string titles/text, genuine last-modified timestamps and authorized provenance URLs when available. IDs must be unique within each kind. If a tool is unavailable, omit its records rather than inventing placeholder evidence. Populate useful bookmark/artifact text explicitly; recall does not fetch URLs or open artifact files. Do not derive memory IDs from mutable array positions or mutable content if a stable record ID exists.
-4. Prefer bounded, deterministic adapter ordering (for example recent sources first), and make any adapter-side completeness limits visible in the integrated product. This interface returns only an array, so recall cannot detect records omitted before delivery or distinguish an empty tool from an unavailable tool. Date filters operate after reading the supplied snapshot, not across an unbounded archive.
-5. Inject the existing text-only `services.generate` adapter for optional excerpt selection. If no model is configured, an ordinary rejected promise is supported and yields a deterministic answer. Keep ownership/privacy enforcement and timeouts in the runtime. No package, shared contract, storage key, migration, embedding service or other shared source change is required.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/recall.ts` as `recall`. `index.ts` dispatches `/nobo-help agent recall <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies a valid user timezone and a `services.readContext(kinds)` adapter scoped to the authenticated workspace/user. Respect requested kinds when gathering data; never substitute channel history, shared/channel memory or another user's private records. Recall relies on the adapter for ownership because `AgentContextItem` contains no owner field.
+3. The integrated adapter maps toolbox records to `note`, `journal`, `goal`, and `bookmark`, eligible approved cards to `memory`, and owned current-channel records to `follow-up`. `artifact` is a recognized but unconnected kind. Preserve stable IDs, string titles/text, genuine update timestamps, and safe provenance URLs. No legacy personal memory is read. Recall does not fetch URLs or open files; source IDs must not derive from mutable array positions or content.
+4. Preserve the adapter's bounded deterministic ordering and [coverage/error contract](context.md). Connected providers that fail or exceed a complete-read limit reject the read; an empty or excluded source contributes no items. The array contract has no per-source availability field. Recall separately reports its own 1,000-record/text caps, and absence from that snapshot never proves deletion. Date filters run after reading the supplied snapshot.
+5. The runtime injects the existing text-only `services.generate` adapter for optional excerpt selection. If no model is configured, an ordinary rejected promise is supported and yields a deterministic answer. Keep ownership/privacy enforcement and timeouts in the runtime. No package, shared contract, storage key, migration, embedding service or other shared source change is required.
 
 ## Verification
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-recall.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-recall.test.ts
+npm run typecheck
 git diff --check
 ```
 

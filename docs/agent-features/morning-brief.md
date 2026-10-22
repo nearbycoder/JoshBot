@@ -1,8 +1,10 @@
 # Personal morning briefing
 
+Use `/nobo-help agent morning-brief help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `morning-brief` builds an on-demand, private day-ahead summary from your reminders, follow-ups, goals, notes, and imported events. It ranks up to five priorities, shows up to four of today's imported events, cites each record's kind and original ID, and reports missing sources. It does not read channel history.
 
-The module is implemented; the parent integration must register the entry point and supply the source adapters before these commands are available in Slack.
+Briefs read your toolbox goals/notes, confirmed calendar imports, and your reminders/follow-ups in the channel where you run the command. Other channels and external calendars are outside this snapshot. See [source coverage](context.md).
 
 ## Commands
 
@@ -49,7 +51,7 @@ Date-only and positive-duration timed ranges have exclusive ends. Such ranges en
 
 Equal absolute start/end instants represent a **point event (no duration)**, including the calendar helper's representation of a timed `VEVENT` with `DTSTART` and no `DTEND`. A point belongs to its start's local date, including precisely midnight; no millisecond is subtracted from its endpoint. Future points and points at the current instant remain eligible priorities. Once the start instant passes, a point stays in that day's agenda marked `time passed`, leaves the priorities, and is excluded as a past event on subsequent days. Equal instants expressed using different offsets also count as points. A record with no supplied end at all is still marked `end unknown`; no duration is invented.
 
-Coverage reports only the records returned by the adapters. “No usable records returned” can mean empty, unavailable, or unconnected; the shared contract cannot distinguish those cases. Missing or stale imported events do not establish calendar availability. A category containing only completed or distant records is distinguished from an empty category. Invalid records, duplicate records, disabled categories and the context scan limit are disclosed.
+Coverage reports only the records in the current authorized snapshot. The integrated adapter throws on unavailable providers, malformed eligible data, and exceeded complete-read limits; these failures do not become empty sources. A successful read with no usable records can still reflect an empty source, the current-channel boundary, or feature filtering. Missing or stale imported events do not establish calendar availability. A category containing only completed or distant records is distinguished from an empty category. Invalid records, duplicate records, disabled categories and the context scan limit are disclosed.
 
 ## Limits and retention
 
@@ -62,17 +64,17 @@ Coverage reports only the records returned by the adapters. “No usable records
 - Malformed or unknown-version preferences are preserved until `settings reset confirm`; they are not silently overwritten. Source failures leave settings unchanged. Settings changes use pure synchronous atomic transforms; a brief in flight never writes over newer preferences.
 - All commands are single-line and at most 500 characters. No empty source selection or duplicate categories. Invalid timezones and clocks fail visibly without falling back to server time.
 
-## Exact parent integration requirements
+## Runtime and source contract
 
-1. Import the named `feature` (also the default export) from `lib/agent-features/morning-brief.ts`, register ID **`morning-brief`**, and add private help/Home routing for `/nobo-help agent morning-brief <command>`. The module returns text only; the parent owns identity checks and private Slack delivery. No shared-file changes or new dependencies are required by this implementation.
-2. Use the parent-owned shared runtime/store and supply `AgentFeatureContext` with a valid runtime `now`, the caller's IANA `timezone`, and workspace/user/feature-scoped storage. The existing `store.update` atomic retry semantics and cancellation write guards are sufficient. No shared contract changes or cross-feature store reads are required.
-3. Implement `services.readContext(kinds)` for **`reminder`, `follow-up`, `goal`, `note`, `event`**, returning only caller-owned, authorized records. The feature calls it once per brief, only for selected categories. Incomplete/unknown category availability currently has no separate signal; an empty category is honestly described as empty or unconnected. A thrown error produces a retryable failure response without a cached or fabricated brief.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/morning-brief.ts` as `morning-brief`. `index.ts` dispatches `/nobo-help agent morning-brief <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The shared runtime/store supplies `AgentFeatureContext` with a valid runtime `now`, the caller's IANA `timezone`, and workspace/user/feature-scoped storage. The existing `store.update` atomic retry semantics and cancellation write guards are sufficient. No shared contract changes or cross-feature store reads are required.
+3. `services.readContext(kinds)` is wired for **`reminder`, `follow-up`, `goal`, `note`, `event`**. The feature calls it once per brief for selected categories. Toolbox goals/notes and confirmed imported events are workspace/user-scoped; legacy reminders/follow-ups are additionally restricted to the signed current channel. The [shared source contract](context.md) defines complete-read limits and errors. A thrown error produces a retryable failure without a cached or fabricated brief.
 4. Map each returned record to a nonempty `title`, string `text` (empty is fine), stable original `id`, `kind`, optional `status`, `dueAt`, and `updatedAt`. IDs must be 1–160 characters without whitespace, controls, bidi controls, angle brackets, square brackets, ampersands or backticks. Citation format is `[kind original-id]`. Duplicates are collapsed by `(kind, id)`, choosing the latest valid timestamp in `updatedAt`; equal revisions prefer a terminal status, then a deterministic tie-break. Use real updated timestamps to avoid stale content winning a tie.
-5. Normalize **completed/inactive status**. The excluded values, case-insensitively, are `done`, `complete`, `completed`, `closed`, `cancelled`, `canceled`, `archived`, `deleted`, `resolved`, `paused`, `disabled`, `inactive`, and `reached`. Missing or other string statuses remain eligible. In particular, the goals adapter must mark achieved goals completed; the feature cannot infer completion from arbitrary metadata. The reminders adapter should provide the next due occurrence for active recurring reminders, not the original start date.
+5. Normalize **completed/inactive status**. The excluded values, case-insensitively, are `done`, `complete`, `completed`, `closed`, `cancelled`, `canceled`, `archived`, `deleted`, `resolved`, `paused`, `disabled`, `inactive`, and `reached`. Missing or other string statuses remain eligible. The integrated goals adapter derives `done` from validated `current >= target > 0` when no explicit status exists; the feature itself does not infer completion from arbitrary metadata. The reminder adapter supplies the stored next occurrence, not the original start date.
 6. Map a commitment's deadline to `dueAt`. Accepted dates are valid `YYYY-MM-DD` civil dates or ISO timestamps with `T` and explicit `Z`/`±HH:MM` offset, optional seconds and up to three fractional-second digits. Floating datetime strings, impossible dates and malformed offsets are rejected. Offset-free civil dates are intentional. Do not convert a date-only goal deadline into midnight UTC.
 7. Feed **imported calendar occurrences** through the existing `readCalendarEventContext(calendarScopedStore, callerTimezone)` helper in the parent-owned context adapter. Keep its `kind: "event"`, `dueAt`, `metadata.startAt`, `metadata.endAt`, `metadata.allDay`, `metadata.startDate`, `metadata.endDate`, and `metadata.timezone` fields unchanged. `dueAt` supplies the start, with `metadata.startAt` as a fallback. Timed ranges accept equal absolute endpoints as point events; positive-duration ranges retain exclusive ends, and an end before its start is invalid. For `allDay: true`, a supplied civil date pair must contain real `YYYY-MM-DD` dates with `endDate > startDate`; these dates govern the briefing. Any provided normalized timestamps must be valid, ordered midnight boundaries matching the civil dates in `metadata.timezone` (or the caller's timezone when that field is absent). They need not span a multiple of 24 hours. All-day records with civil dates alone are also supported, as are the original date-only `dueAt`/`metadata.endAt` inputs. An all-day absolute timestamp without civil metadata remains ambiguous and is rejected. Invalid or contradictory event ranges become undated context and are omitted from the agenda. A missing end remains supported for ordinary date-only or timed inputs. Expand only recurrence supported by the calendar feature, use stable occurrence IDs, and normalize cancelled statuses. This module does not import ICS or expand recurrence itself. No shared-adapter transformation is needed for this fix.
 
-Example event supplied by the parent adapter:
+Example of the event input contract:
 
 ```json
 {
@@ -92,20 +94,14 @@ No direct reminder, follow-up, toolbox or calendar service imports are needed. T
 
 ## Verification
 
-Run only the feature's tests and the typecheck in its isolated worktree:
+With Node 24, run the targeted suite and typecheck from the repository root:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-morning-brief.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-morning-brief.test.ts
+npm run typecheck
 git diff --check
 ```
 
-Three cross-feature tests invoke the real calendar `import preview`/`import confirm` flow and `readCalendarEventContext` with an isolated in-memory calendar store, then pass the unmodified event context to the morning brief. They automatically load the local calendar module in the integrated checkout. In an isolated feature checkout without calendar files, point them at a read-only checkout or temporary export of the actual calendar module and its relative dependencies:
-
-```sh
-PATH=/tmp/joshbot-node24/bin:$PATH MORNING_BRIEF_CALENDAR_MODULE=/path/to/JoshBot/lib/agent-features/calendar.ts node --import tsx --test tests/agent-morning-brief.test.ts
-```
-
-Without a local calendar module or that environment variable, only those three integration tests are explicitly skipped. A configured but missing module fails the tests. The follow-up was validated against the parent calendar helper with **26 passing tests and zero skips**. The real-import cases cover the October 22 regression, different import/viewing timezones, multi-day ranges, midnight-exclusive ends, and the 23-hour/25-hour DST days.
+Cross-feature regressions use the local calendar module's real `import preview`/`import confirm` flow and `readCalendarEventContext` with isolated in-memory stores. Cases cover imported all-day dates, differing import/viewing timezones, multi-day ranges, midnight-exclusive ends, and 23-hour/25-hour DST days. Run them from the integrated checkout.
 
 The tests use fake services and the shared in-memory store. They also cover the complete preference/brief/reset flow, bounded ranking, source selection and missing-input honesty, timezone midnight boundaries, elapsed events, malformed source and persisted data, contradictory all-day metadata, duplicate revisions, hostile excerpts, output limits, serialized UTF-8 byte usage with Unicode and JSON escaping, retained room for subsequent updates/reset, provider failures, cancellation, atomic retries and concurrent changes. No live inference, production reads or Slack sends are used.

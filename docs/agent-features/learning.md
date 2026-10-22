@@ -1,8 +1,8 @@
 # Spaced-repetition learning coach
 
-`learning` turns your pasted material into private, source-grounded flashcards. Try to recall an answer, compare it with the source excerpt, then report how well you remembered it. The coach calculates the next review time deterministically. It does not automatically judge correctness or send reminders.
+Use `/nobo-help agent learning help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
 
-The module is implemented; parent integration must register it at `/nobo-help agent learning <command>` before these commands are available in Slack. All responses must be private.
+`learning` turns your pasted material into private, source-grounded flashcards. Try to recall an answer, compare it with the source excerpt, then report how well you remembered it. The coach calculates the next review time deterministically. It does not automatically judge correctness or send reminders.
 
 ## First learning session
 
@@ -112,28 +112,28 @@ Drafts never become quiz cards until explicit acceptance. Provider failures pres
 - `list` shows saved bytes and total allocated bytes including the reserve. An addition that would exceed the quota fails atomically with explicit deletion/discard guidance. Use `delete <deck-id> confirm` to free a deck's space, or `discard <deck-id> <draft-id>` to remove pending suggestions. Smaller source and answer excerpts consume less space. Existing records are never automatically evicted to make room.
 - Titles and source labels: 100 characters each. Source material: 10,000 characters. Questions: 300; answers: 800; temporary recall: 2,000.
 - A command is limited to 12,000 characters; model output to 8,000. Replies are escaped and capped below 28,000 characters. Three-card pages and generated previews fit completely within that bound, even with escaped text.
-- Each invocation makes at most one generation call and zero searches, within the runtime's limits of eight generation calls and six searches. The parent runtime owns the 120-second deadline, prompt cancellation and guards against late writes. Aborted drafts do not save generated cards; no background work continues a learning workflow.
+- Each invocation makes at most one generation call and zero searches, within the runtime's limits of eight generation calls and six searches. The shared runtime owns the 120-second deadline, prompt cancellation and guards against late writes. Aborted drafts do not save generated cards; no background work continues a learning workflow.
 - Source text is immutable. To change source material or replace incorrect cards, create a replacement deck and delete the old deck. Individual card editing/deletion and deck imports/exports are not implemented.
 - Data stays until explicit deck deletion; there is no automatic expiry. Source and accepted-card content are bounded, and review history uses aggregate counters instead of a growing event log. Each card allows up to 1,000,000 recorded reviews, after which it must be recreated. Temporary recall disappears on rating or deck deletion.
 - Sources are pasted text only: no URL fetching, invented citations, attachment processing, public-web search, owned-context reads, automatic grading or live inference tests.
-- Invalid persisted structures or source/session references produce a repair message and are never silently reset. A storage error reports an unconfirmed operation; inspect `list` or `quiz` before retrying. Parent request deduplication is still required for repeated create/card requests after delivery failures.
+- Invalid persisted structures or source/session references produce a repair message and are never silently reset. A storage error reports an unconfirmed operation; inspect `list` or `quiz` before retrying. Runtime request deduplication is still required for repeated create/card requests after delivery failures.
 
-## Parent integration requirements
+## Runtime and source contract
 
-1. Import named `feature` or the default export from `lib/agent-features/learning.ts`; register exact ID `learning` through the parent registry/router and help/Home discovery. No shared files are changed by this feature.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/learning.ts` as `learning`. `index.ts` dispatches `/nobo-help agent learning <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
 2. Route `/nobo-help agent learning <command>` to `feature.execute(command, context)` and deliver only to the caller privately. Keep identity/access checks, request deduplication and asynchronous delivery in the runtime.
-3. Use the parent runtime's workspace/user/feature-scoped `AgentFeatureStore` persistence. The sole internal key is `learning:v1`. `update` must atomically apply pure synchronous transforms and may retry them; callback exceptions must not commit a partial value. Initial state is `{version: 1, decks: [], session: null}`. Reads return JSON data, and stored deck/session/card references are validated on every access. Feature writes enforce the stricter lifecycle-aware quota below 480,000 UTF-8 bytes; no changes to the runtime's 512,000-byte limit or shared contract are needed.
-4. Supply a valid `now` and saved IANA `timezone`. Invalid time/timezone inputs fail without mutations. The module does not read preferences, channels, Redis or system-local dates itself.
-5. Supply `services.generate` for optional `draft` only. It must remain text-only, without tools. All other commands work if generation is unavailable. `search` and `readContext` are unused. Keep the runtime's 120-second deadline, abortable service waiting and signal-guarded storage writes in place; the feature does not create its own timer or bypass these guards. No external credentials or package changes are needed.
-6. No recurring scheduler integration is required. Due checks and practice are explicitly invoked; parent should not advertise notification delivery.
+3. The shared runtime provides workspace/user/feature-scoped `AgentFeatureStore` persistence. The sole internal key is `learning:v1`. `update` must atomically apply pure synchronous transforms and may retry them; callback exceptions must not commit a partial value. Initial state is `{version: 1, decks: [], session: null}`. Reads return JSON data, and stored deck/session/card references are validated on every access. Feature writes enforce the stricter lifecycle-aware quota below 480,000 UTF-8 bytes; no changes to the runtime's 512,000-byte limit or shared contract are needed.
+4. The runtime supplies a valid `now` and saved IANA `timezone`. Invalid time/timezone inputs fail without mutations. The module does not read preferences, channels, Redis or system-local dates itself.
+5. The runtime supplies `services.generate` for optional `draft` only. It must remain text-only, without tools. All other commands work if generation is unavailable. `search` and `readContext` are unused. Keep the runtime's 120-second deadline, abortable service waiting and signal-guarded storage writes in place; the feature does not create its own timer or bypass these guards. No external credentials or package changes are needed.
+6. Due checks and practice run only on command. No scheduler is connected and no notifications are delivered.
 
 ## Verification
 
-Run in the feature worktree with Node 24:
+Run from the repository root with Node 24:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-learning.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-learning.test.ts
+npm run typecheck
 git diff --check
 ```
 

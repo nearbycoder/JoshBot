@@ -1,12 +1,14 @@
 # Weekly personal review
 
+Use `/nobo-help agent weekly-review help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+
 `weekly-review` synthesizes seven calendar days of your personal goals, habits, journal, follow-ups and notes. It shows explicitly dated completions and journal-reported wins, commitments worth checking, recorded activity, simple patterns and next-week suggestions. Every finding cites a saved source reference. It does not require a model or web search.
 
-This module is ready for parent integration; the command route below is not registered by this feature branch. All responses must be private.
+Reviews read your private toolbox goals, habits, journal, and notes, plus your follow-ups in the channel where you run the command. Other channels are outside this review. See [source coverage](context.md).
 
 ## Commands
 
-After parent integration, use `/nobo-help agent weekly-review <command>`:
+Use `/nobo-help agent weekly-review <command>`:
 
 ```text
 /nobo-help agent weekly-review help
@@ -54,11 +56,11 @@ Source titles/excerpts are quoted data, and Slack angle-bracket markup is escape
 - New snapshots merge atomically with current state. Reflections bind `latest` to a specific ID before updating, cannot recreate a deleted/expired snapshot, and cannot overwrite a reflection with a later timestamp. Equal-timestamp reflection edits use atomic commit order. No async operations, ID generation or clock reads occur inside store transforms.
 - Each `review` makes one context read and **zero generation/search calls**; all other commands make zero service calls. This stays within the runtime's eight-generation/six-search budgets. The runtime supplies the 120-second deadline, prompt cancellation and guarded storage writes; the feature respects the supplied abort signal and uses only those scoped services/store. No independent background work continues a cancelled command.
 
-## Exact parent integration needs
+## Runtime and source contract
 
-1. Import the named/default `feature` from `lib/agent-features/weekly-review.ts`, register its exact ID `weekly-review`, and wire `/nobo-help agent weekly-review …` plus private discoverable help/Home entries. Shared routing/registry is intentionally unchanged here.
-2. Supply `AgentFeatureContext` with the caller's workspace/user scope, request timestamp, timezone, optional abort signal, and atomic scoped `store`. This feature uses only the local store key `reviews`; the parent must namespace it by workspace, user and feature. Store transforms can retry and must preserve the shared atomic-update contract.
-3. Implement the read-only `services.readContext(["goal", "habit", "journal", "follow-up", "note"])` adapter using **caller-owned authorized records only**. Include both open and completed follow-ups, not just the legacy open-only list. Give each record a stable ID; namespaced IDs such as `goal:<entry-id>` and `follow-up:<record-id>` are recommended. Supported source IDs are 1–128 characters without whitespace, controls, `<`, `>` or `&`.
+1. `registry.ts` registers the named/default `feature` from `lib/agent-features/weekly-review.ts` as `weekly-review`. `index.ts` dispatches `/nobo-help agent weekly-review <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
+2. The runtime supplies `AgentFeatureContext` with the caller's workspace/user scope, request timestamp, timezone, optional abort signal, and atomic scoped `store`. This feature uses only the local store key `reviews`; the shared store namespaces it by workspace, user and feature. Store transforms can retry and must preserve the shared atomic-update contract.
+3. `services.readContext(["goal", "habit", "journal", "follow-up", "note"])` reads private toolbox records and owned follow-ups in the signed current channel, including both open and completed follow-ups. Stable IDs use `toolbox:<tool>:<entry-id>` or `follow-up:<record-id>`. Supported source IDs are 1–128 characters without whitespace, controls, `<`, `>` or `&`. Preserve the field semantics below and the [shared coverage/error contract](context.md).
 4. Populate `kind`, `title`, `text`, `updatedAt`, `dueAt` and `status` from authorized source records. Raw titles/text may be up to 10,000/100,000 characters and are truncated before persistence. Metadata fields below are optional but enable the substantive review sections. Unknown fields are ignored; arbitrary metadata is never persisted.
 
    - Goals: `metadata.target`, `metadata.current` (finite nonnegative numbers up to 1 billion); `metadata.history` with up to 366 `{ at, value }` check-ins, mapped from toolbox `entry.data.history`; `dueAt` from `entry.data.due`. Completion requires an explicit completed status plus `metadata.completedAt`. **Do not invent `completedAt` from `updatedAt` or from reaching a numeric target.** Numeric progress is still useful without completion history. A goal with no status and `current < target` is considered open.
@@ -73,11 +75,11 @@ No new packages, contract fields, account grants, background jobs or outbound me
 
 ## Verification
 
-Run only the owned test file during parallel feature development, then typecheck and check whitespace:
+With Node 24, run the targeted suite, typecheck and whitespace check:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-weekly-review.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-weekly-review.test.ts
+npm run typecheck
 git diff --check
 ```
 
