@@ -42,7 +42,10 @@ const fields = (input: string, sizes: number[]) => pipeFields(input, sizes.map(m
 const minutes = (s: string, min = 0) => { if (!/^(?:0|[1-9]\d*)(?:\.\d{1,3})?$/.test(s)) throw new Error("Minutes need a plain number with at most 3 decimal places."); return parseDecimal(s, { min, max: 1_000_000 }); };
 const get = (s: State, id: string) => { const r = s.records.find(r => r.id === id); if (!r) throw new Error(`Sample not found. Use ${route} list`); return r; };
 const median = (values: number[]) => { const a = [...values].sort((a, b) => a - b), i = Math.floor(a.length / 2); return a.length % 2 ? a[i] : (a[i - 1] + a[i]) / 2; };
-const fmt = (n: number) => Number(n.toFixed(6)).toString();
+// Significant digits retain tiny positive ratios; scientific notation is intentional.
+const fmt = (n: number) => Number(n.toPrecision(6)).toString();
+const rounded = (n: number) => Number(fmt(n)) !== n;
+const displayed = (n: number) => `${rounded(n) ? "≈ " : ""}${fmt(n)}`;
 function statistics(records: Sample[], category: string) {
   const all = records.filter(r => r.category === category);
   const excluded = all.filter(r => r.excludedReason !== null);
@@ -99,9 +102,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const forecast = command.startsWith("forecast "); const [category, value] = fields(command.slice(forecast ? 9 : 7), forecast ? [80, 24] : [80]);
     const stats = statistics(s.records, category), base = forecast ? minutes(value, 0.001) : null;
     let reply = stats.summary;
-    if (stats.count) reply += `\nMedian actual/estimate ratio: ${fmt(stats.ratio!)}. Median absolute error: ${fmt(stats.error!)} minutes. Median signed error: ${fmt(stats.signed!)} minutes (actual minus estimate).`;
+    if (stats.count) reply += `\nMedian actual/estimate ratio: ${displayed(stats.ratio!)}. Median absolute error: ${displayed(stats.error!)} minutes. Median signed error: ${displayed(stats.signed!)} minutes (actual minus estimate).`;
     if (stats.count < 3) reply += "\nNo adjustment: at least 3 complete, nonexcluded samples in this exact category are required.";
-    else reply += forecast ? `\nUnsaved forecast: ${fmt(base!)} × ${fmt(stats.ratio!)} = ${fmt(base! * stats.ratio!)} minutes (n=${stats.count}).` : `\nPreview multiplier: ${fmt(stats.ratio!)} (n=${stats.count}).`;
+    else if (forecast) {
+      const projected = base! * stats.ratio!;
+      const relation = rounded(stats.ratio!) || rounded(projected) ? "≈" : "=";
+      reply += `\nUnsaved forecast: ${base} × ${fmt(stats.ratio!)} ${relation} ${fmt(projected)} minutes (n=${stats.count}).`;
+    } else reply += `\nPreview multiplier: ${displayed(stats.ratio!)} (n=${stats.count}).`;
+    if (stats.count) reply += "\n≈ marks display rounding to 6 significant digits; forecasts use the unrounded median. Scientific notation preserves small positive values.";
     return reply + `\nSmall, self-reported sample; similar work is assumed. Medians resist outliers but do not guarantee future effort. Zero actuals are known values. Original estimates remain unchanged.\nNext: ${route} list`;
   }
   throw new Error(`Unknown or incomplete command. Syntax: ${route} help`);

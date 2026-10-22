@@ -5,6 +5,58 @@ import { createAgentFeatureFixture, createMemoryAgentBackend } from "./helpers/a
 const id = (reply: string) => { const m = reply.match(/Saved privately: ([0-9a-f-]{36})/); assert.ok(m, reply); return m[1]; };
 const exported = async (f: ReturnType<typeof createAgentFeatureFixture>, key: string) => JSON.parse(await f.run(`export ${key}`)).record;
 
+for (const example of [
+  { name: "reported tiny ratio", estimate: 10000, actual: 0.001, base: 10000, multiplier: "1e-7", forecast: "0.001" },
+  { name: "smallest positive accepted ratio", estimate: 1000000, actual: 0.001, base: 1, multiplier: "1e-9", forecast: "1e-9" },
+  { name: "largest accepted ratio and forecast", estimate: 0.001, actual: 1000000, base: 1000000, multiplier: "1000000000", forecast: "1000000000000000" },
+  { name: "known zero actual", estimate: 10000, actual: 0, base: 10000, multiplier: "0", forecast: "0" },
+]) test(`calibration displays ${example.name} without losing magnitude`, async () => {
+  const f = createAgentFeatureFixture(feature);
+  for (let i = 0; i < 3; i++) {
+    const sample = id(await f.run(`estimate Work ${i} | precision | ${example.estimate}`));
+    await f.run(`actual ${sample} | ${example.actual}`);
+  }
+  const before = f.backend.data.get(f.key("state"));
+  const report = await f.run("report precision"), forecast = await f.run(`forecast precision | ${example.base}`);
+  assert.ok(report.includes(`ratio: ${example.multiplier}.`), report);
+  assert.ok(report.includes(`Preview multiplier: ${example.multiplier} (n=3)`), report);
+  assert.ok(forecast.includes(`${example.base} × ${example.multiplier} = ${example.forecast} minutes (n=3)`), forecast);
+  assert.equal(Number(example.base) * Number(example.multiplier), Number(example.forecast));
+  assert.equal(f.backend.data.get(f.key("state")), before);
+});
+
+test("even tiny medians retain zero actuals, use corrections and exclude explicit outliers", async () => {
+  const f = createAgentFeatureFixture(feature), ids: string[] = [];
+  for (const actual of [0, 0.001, 0.003, 0.01]) {
+    const sample = id(await f.run("estimate Tiny | precision | 1000000")); ids.push(sample);
+    await f.run(`actual ${sample} | ${actual}`);
+  }
+  assert.match(await f.run("report precision"), /ratio: 2e-9/);
+  assert.match(await f.run("forecast precision | 1000000"), /1000000 × 2e-9 = 0.002 minutes \(n=4\)/);
+  await f.run(`correct ${ids[2]} | 500000 | Correct entered estimate`);
+  assert.match(await f.run("report precision"), /ratio: 3.5e-9/);
+  assert.match(await f.run("report precision"), /Explicit corrections used: 1/);
+  assert.equal((await exported(f, ids[2])).estimatedMinutes, 1000000);
+  await f.run(`exclude ${ids[3]} | Different work`);
+  assert.match(await f.run("report precision"), /ratio: 1e-9/);
+  assert.match(await f.run("forecast precision | 1000000"), /= 0.001 minutes \(n=3\)/);
+});
+
+test("rounded reports and formulas disclose approximation and retain the exact entered base", async () => {
+  const f = createAgentFeatureFixture(feature);
+  for (let i = 0; i < 3; i++) {
+    const sample = id(await f.run(`estimate Third ${i} | thirds | 3`)); await f.run(`actual ${sample} | 1`);
+  }
+  const report = await f.run("report thirds");
+  assert.match(report, /ratio: ≈ 0.333333/); assert.match(report, /Preview multiplier: ≈ 0.333333/);
+  assert.match(report, /6 significant digits/);
+  const forecast = await f.run("forecast thirds | 3");
+  assert.match(forecast, /3 × 0.333333 ≈ 1 minutes/);
+  assert.doesNotMatch(forecast, /× 0.333333 =/);
+  assert.match(forecast, /unrounded median/);
+  assert.match(await f.run("forecast thirds | 999999.999"), /999999.999 × 0.333333 ≈ 333333 minutes/);
+});
+
 test("catalog workflow computes paired errors and an unsaved 120-minute forecast", async () => {
   const f = createAgentFeatureFixture(feature);
   const a = id(await f.run(feature.example!.replace("/nobo-help agent estimate-calibration ", "")));
