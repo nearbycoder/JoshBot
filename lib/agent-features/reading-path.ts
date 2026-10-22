@@ -107,6 +107,21 @@ async function readBookmarks(ctx: AgentFeatureContext) {
 }
 async function execute(command: string, ctx: AgentFeatureContext): Promise<string> {
   boundedText(command, { label: "Command", maxBytes: 16000 }); const s = validate(await ctx.store.read("state") ?? initial), newId = randomUUID(), now = normalizeInstant(ctx.now.toISOString());
+  // Whole-root erasure is a separate operation, never an admission flag. Each
+  // root has independent lifecycle reservations, so retaining an exact subset
+  // strictly reduces actual bytes and cannot increase any projected quota.
+  const deleteRoot = (key: string) => {
+    const expected = JSON.stringify(get(s, key));
+    return ctx.store.update("state", initial, raw => {
+      const state = validate(raw), target = get(state, key);
+      if (JSON.stringify(target) !== expected) throw new Error("Record changed; inspect before deleting again.");
+      const beforeBytes = serializedBytes(state);
+      state.records = state.records.filter(r => r.id !== key);
+      validate(state);
+      if (serializedBytes(state) >= beforeBytes) throw new Error("Removal did not reduce saved data; nothing changed.");
+      return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
+    });
+  };
   const save = (key: string | undefined, change: (s: State, r?: ReadingPath) => string, content = true) => {
     const expected = key === undefined ? undefined : get(s, key).revision;
     return ctx.store.update("state", initial, raw => { const state = validate(raw), r = key === undefined ? undefined : get(state, key); if (r) assertRevision(r.revision, expected); const detail = change(state, r); if (r && state.records.includes(r)) r.revision++; validate(state); quota(state, content); return { value: state, result: `${detail}\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `show ${key}` : "list"}` }; });
@@ -116,7 +131,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   if ((m = command.match(/^show (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[1]); return render(r, `show ${r.id}`, `Reading reports are not mastery; bookmark snapshots are historical, freshness unverified.\n${JSON.stringify(envelope(r), null, 2)}`, parsePage(m[2]), m[3]); }
   if ((m = command.match(/^route (\S+)\s*\|\s*(\d+)(?: page (\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[1]), minutes = parseInteger(m[2], { min: 1, max: 10080, label: "Minute budget" }); return render(r, `route ${r.id} | ${minutes}`, plan(r, minutes), parsePage(m[3]), m[4]); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new Error("Record exceeds export limit; use show pages."); return JSON.stringify(out); }
-  if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete path and owned readings/edges/bookmark snapshots: ${route} delete ${key} confirm`; return save(key, state => { state.records = state.records.filter(r => r.id !== key); return `Deleted privately: ${key}`; }, false); }
+  if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete path and owned readings/edges/bookmark snapshots: ${route} delete ${key} confirm`; return deleteRoot(key); }
   if (command.startsWith("create ")) { const [goal] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 10) throw new Error("Maximum ten paths. Export/delete one explicitly."); state.records.push({ id: newId, goal, revision: 1, items: [], edges: [], attachments: [] }); return `Saved privately: ${newId}\nInspect: ${route} show ${newId}`; }); }
   if ((m = command.match(/^edit (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [goal] = fields(input, [160]); return save(key, (_, r) => { r!.goal = goal; return `Updated goal: ${key}. Reading reports concern unchanged material, not achievement of this goal.`; }); }
   if ((m = command.match(/^item (\S+) (add|edit) ([\s\S]+)$/))) { const [, key, action, input] = m, f = fields(input, action === "add" ? [160, 4, 200] : [36, 160, 4, 200]), iid = action === "edit" ? f.shift()! : newId, minutes = parseInteger(f[1], { min: 1, max: 1440, label: "Reading minutes" }); return save(key, (_, r) => { let reset = 0; if (action === "add") { if (r!.items.length === 24) throw new Error("Maximum 24 readings."); r!.items.push({ id: iid, title: f[0], minutes, sourceLabel: f[2], completed: false, completedAt: null }); } else { const item = getItem(r!, iid); if (item.title !== f[0] || item.sourceLabel !== f[2]) reset = invalidate(r!, [iid]); Object.assign(item, { title: f[0], minutes, sourceLabel: f[2] }); } return `Saved reading: ${iid}. ${reset} completion report(s) cleared for changed material/dependents; minutes-only edits retain reports.`; }); }

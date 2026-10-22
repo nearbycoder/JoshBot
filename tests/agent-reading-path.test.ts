@@ -74,3 +74,57 @@ test("ten actual bookmark snapshots retain exactly 10000 source-text bytes and r
  await f.run(`read ${id} ${r.items[0].id}`);r=(await state(f)).records[0];assert.match(await f.run(`attach-edit ${id} ${r.attachments[0].id} | ${r.items[0].id} | toolbox:bookmarks:bookmark010 | ${fp} | ${r.revision}`),/Saved selected/);r=(await state(f)).records[0];assert.equal(r.items[0].completed,false);assert.equal(r.attachments[0].evidence.sources[0].id,"toolbox:bookmarks:bookmark010");
  assert.match(await f.run(`remove ${id} attachment ${r.attachments[0].id} confirm`),/Removed attachment/);assert.equal((await state(f)).records[0].attachments.length,9);
 });
+
+test("schema-valid legacy aggregate recovers by exact root deletion, including CAS growth", async () => {
+  let inject: ((value: any) => void) | undefined;
+  let winning: string | undefined;
+  const backend = createMemoryAgentBackend({ beforeCompareSet(key, previous) {
+    if (inject && key.endsWith(":state")) {
+      const value = JSON.parse(previous!), change = inject; inject = undefined; change(value);
+      winning = JSON.stringify(value); backend.data.set(key, winning);
+    }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend });
+  await f.run("create Legacy root"); const id = (await state(f)).records[0].id;
+  for (let i = 0; i < 24; i++) assert.match(await f.run(`item ${id} add ${"t".repeat(160)} | 1 | ${"s".repeat(200)}`), /Saved/);
+  const root = (await state(f)).records[0];
+  // Only the aggregate is synthetic: each constituent root was admitted by real commands.
+  const clone = () => {
+    const ids = new Map<string, string>();
+    return JSON.parse(JSON.stringify(root).replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/g, old => {
+      if (!ids.has(old)) ids.set(old, randomUUID()); return ids.get(old)!;
+    }));
+  };
+  const legacy = { version: 1, records: Array.from({ length: 10 }, clone) };
+  const raw = JSON.stringify(legacy); assert.ok(Buffer.byteLength(raw) < 512000);
+  assert.ok(Buffer.byteLength(JSON.stringify({ ...legacy, records: legacy.records.slice(1) })) > 49152);
+  backend.data.set(f.key("state"), raw);
+  for (const r of legacy.records) assert.deepEqual(JSON.parse(await f.run(`export ${r.id}`)).record, r);
+  const target = legacy.records[0].id;
+  for (const owner of [{teamId:"TOTHER",userId:f.owner.userId},{teamId:f.owner.teamId,userId:"UOTHER"}]) {
+    assert.match(await f.run(`delete ${target} confirm`, { owner }), /not found/);
+    assert.equal(backend.data.get(f.key("state")), raw);
+  }
+  assert.match(await f.run(`edit ${target} | Restricted growth`), /quota/i);
+  assert.equal(backend.data.get(f.key("state")), raw);
+  const broken = " \n" + JSON.stringify({ ...legacy, version: 2 }) + "\t";
+  backend.data.set(f.key("state"), broken); await f.run(`delete ${target} confirm`);
+  assert.equal(backend.data.get(f.key("state")), broken); backend.data.set(f.key("state"), raw);
+  inject = s => { s.records[0].revision++; s.records[0].goal = "Concurrent target growth"; };
+  assert.match(await f.run(`delete ${target} confirm`), /changed/);
+  assert.equal(backend.data.get(f.key("state")), winning);
+  inject = s => { s.records[1].revision++; s.records[1].goal = "Unrelated growth retained"; };
+  assert.match(await f.run(`delete ${target} confirm`), /Deleted privately/);
+  assert.equal(backend.data.get(f.key("state")), JSON.stringify({version:1,records:JSON.parse(winning!).records.slice(1)}));
+  assert.ok(Buffer.byteLength(backend.data.get(f.key("state"))!) > 49152);
+  let remaining = (await state(f)).records;
+  while (remaining.length) {
+    const before = backend.data.get(f.key("state"))!;
+    assert.match(await f.run(`delete ${remaining[0].id} confirm`), /Deleted privately/);
+    remaining = remaining.slice(1);
+    assert.equal(backend.data.get(f.key("state")), JSON.stringify({version:1,records:remaining}));
+    assert.ok(Buffer.byteLength(backend.data.get(f.key("state"))!) < Buffer.byteLength(before));
+  }
+  assert.match(await f.run("create Recovered"), /Saved privately/);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});

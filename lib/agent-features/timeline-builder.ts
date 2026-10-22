@@ -86,6 +86,21 @@ function view(r: Timeline) {
 async function execute(command: string, ctx: AgentFeatureContext): Promise<string> {
   boundedText(command, { label: "Command", maxBytes: 16000 });
   const s = validate(await ctx.store.read("state") ?? initial), newId = randomUUID();
+  // Whole-root erasure is a separate operation, never an admission flag. Each
+  // root has independent lifecycle reservations, so retaining an exact subset
+  // strictly reduces actual bytes and cannot increase any projected quota.
+  const deleteRoot = (key: string) => {
+    const expected = JSON.stringify(get(s, key));
+    return ctx.store.update("state", initial, raw => {
+      const state = validate(raw), target = get(state, key);
+      if (JSON.stringify(target) !== expected) throw new Error("Record changed; inspect before deleting again.");
+      const beforeBytes = serializedBytes(state);
+      state.records = state.records.filter(r => r.id !== key);
+      validate(state);
+      if (serializedBytes(state) >= beforeBytes) throw new Error("Removal did not reduce saved data; nothing changed.");
+      return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
+    });
+  };
   const save = (key: string | undefined, change: (s: State, r?: Timeline) => string, content = true) => {
     const expected = key === undefined ? undefined : get(s, key).revision;
     return ctx.store.update("state", initial, raw => {
@@ -104,7 +119,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   }
   if ((m = command.match(/^(show|view) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : view(r), parsePage(m[3]), m[4]); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new Error("Record exceeds export limit; retrieve show pages."); return JSON.stringify(out); }
-  if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete timeline and all observations/orders: ${route} delete ${key} confirm`; return save(key, state => { state.records = state.records.filter(r => r.id !== key); return `Deleted privately: ${key}`; }, false); }
+  if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete timeline and all observations/orders: ${route} delete ${key} confirm`; return deleteRoot(key); }
   if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 12) throw new Error("Maximum 12 timelines. Export/delete one explicitly."); state.records.push({ id: newId, title, revision: 1, entries: [], orders: [] }); return `Saved privately: ${newId}\nInspect: ${route} view ${newId}`; }); }
   if ((m = command.match(/^edit (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [title] = fields(input, [160]); return save(key, (_, r) => { r!.title = title; return `Updated timeline: ${key}`; }); }
   if ((m = command.match(/^entry (\S+) (add|edit) ([\s\S]+)$/))) {
