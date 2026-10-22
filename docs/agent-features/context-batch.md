@@ -55,7 +55,7 @@ Version 1 stores at most 12 boards, 40 actions and 12 setup keys per board. IDs 
 
 New content must fit 32,768 serialized UTF-8 bytes. The feature ceiling is 49,152. Admission additionally constructs the worst-case state with every action `completed` and every revision at its maximum, checking both total bytes and each enveloped export. This proves room for accepted completion/status transitions rather than relying only on the 16,384-byte margin. Optional context edits and additional actions are new content. Counts can be reached after bytes. Quota errors preserve the old state; use `list`, `export`, and confirmed `delete` to recover capacity. Schema-invalid data is preserved and cannot be reset by ordinary commands; help remains available. Readable older data over the byte quota can still be inspected and removed.
 
-All writes use the actual owner-scoped store and pure synchronous atomic transforms. IDs and timestamps are created before retryable transforms; concurrent changes are preserved. No model, source adapter, web search, sibling-feature access, cache, background work, or external actions occur. URLs are inert labels. Resource budgets are 0 generations, 0 searches, 0 context reads, 8 store reads, and 4 store updates per invocation; normal commands use at most one update and one read. Cancellation uses the inherited runtime signal; a save already dispatched may have completed, so inspect before repeating an interrupted mutation.
+All writes use the actual owner-scoped store and pure synchronous atomic transforms. IDs and timestamps are created before retryable transforms; concurrent changes are preserved. No model, source adapter, web search, sibling-feature access, cache, background work, or external actions occur. URLs are inert labels. Resource budgets are 0 generations, 0 searches, 0 context reads, 8 store reads, and 4 store updates per invocation; normal commands use at most one update and two reads (saving context and returning its batch uses both reads). Cancellation uses the inherited runtime signal; a save already dispatched may have completed, so inspect before repeating an interrupted mutation.
 
 ## Validation
 
@@ -66,3 +66,7 @@ node --import tsx --test tests/agent-context-batch.test.ts
 ```
 
 These checks establish local behavior, not live Slack delivery or deployment.
+
+## Concurrent work and retry
+
+Every mutation of an existing board captures its revision before updating and checks it on every CAS attempt. A winning edit, completion, evidence correction, or reopen on that record rejects the stale command, including edit-and-restore cycles. Inspect the exact `show ID` command in the reply, review the current work/status, then issue a fresh command with appropriate evidence. Changes to another record still retry safely. This conservatively rejects changes to any child of the same record; it does not add child revisions or retained history. Schemas and command syntax are unchanged. Creation needs no initial read; existing-record changes add one bounded state read.

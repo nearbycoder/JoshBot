@@ -1,9 +1,77 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import feature from "../lib/agent-features/task-breakdown.js";
-import { createAgentFeatureFixture, deferred } from "./helpers/agent-feature-fixture.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
 const idFrom = (reply: string, prefix: string) => { const id = reply.match(new RegExp(`${prefix}-[0-9a-f-]{36}`))?.[0]; assert.ok(id, reply); return id; };
 const record = async (f: ReturnType<typeof createAgentFeatureFixture>, id: string) => JSON.parse(await f.run(`export ${id}`)).record;
+
+for (const scenario of [
+  { name: "completion versus edited work", completed: false,
+    pending: "complete WORK STEP | Old installer passed",
+    winning: ["step WORK edit STEP | Test new installer | 20 | New installer passes"],
+    retry: "complete WORK STEP | New installer passed" },
+  { name: "completion versus edit-and-restore", completed: false,
+    pending: "complete WORK STEP | Old installer passed",
+    winning: ["step WORK edit STEP | Test new installer | 20 | New installer passes", "step WORK edit STEP | Test old installer | 10 | Old installer passes"],
+    retry: "complete WORK STEP | Retested installer" },
+  { name: "completion correction versus reopen and edit", completed: true,
+    pending: "completion-edit WORK STEP | Stale correction",
+    winning: ["reopen WORK STEP confirm", "step WORK edit STEP | Test new installer | 20 | New installer passes"],
+    retry: "complete WORK STEP | New installer passed" },
+  { name: "completion correction versus newer evidence", completed: true,
+    pending: "completion-edit WORK STEP | Stale correction",
+    winning: ["completion-edit WORK STEP | Winning correction"],
+    retry: "completion-edit WORK STEP | Reviewed correction" },
+  { name: "reopen versus newer evidence", completed: true,
+    pending: "reopen WORK STEP confirm",
+    winning: ["completion-edit WORK STEP | Winning correction"],
+    retry: "reopen WORK STEP confirm" },
+  { name: "reopen versus a new completed attempt", completed: true,
+    pending: "reopen WORK STEP confirm",
+    winning: ["reopen WORK STEP confirm", "complete WORK STEP | Newly retested installer"],
+    retry: "reopen WORK STEP confirm" },
+  { name: "edit versus a newer work definition", completed: false,
+    pending: "step WORK edit STEP | Test stale installer | 10 | Stale proof",
+    winning: ["step WORK edit STEP | Test new installer | 20 | New installer passes"],
+    retry: "step WORK edit STEP | Test reviewed installer | 20 | Reviewed proof" },
+]) test(`CAS retry preserves winning ${scenario.name}; inspect and fresh retry recover`, { timeout: 5_000 }, async () => {
+  const entered = deferred<void>(), release = deferred<void>(); let armed = false;
+  const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+    if (armed && key.endsWith(":state")) { armed = false; entered.resolve(); await release.promise; }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend });
+  const work = idFrom(await f.run("create Write guide | Clean install | 30"), "work");
+  const step = idFrom(await f.run(`step ${work} add Test old installer | 10 | Old installer passes`), "step");
+  const command = (s: string) => s.replaceAll("WORK", work).replaceAll("STEP", step);
+  if (scenario.completed) await f.run(command("complete WORK STEP | Old installer passed"));
+  armed = true;
+  const pending = f.run(command(scenario.pending)); await entered.promise;
+  try { for (const winning of scenario.winning) assert.match(await f.run(command(winning)), /Saved privately/); }
+  finally { release.resolve(); }
+  const before = backend.data.get(f.key("state")), reply = await pending;
+  assert.equal(backend.calls.conflicts, 1);
+  assert.equal(backend.data.get(f.key("state")), before, "stale work must not alter the winning state or revision");
+  assert.match(reply, /changed.*saving/); assert.ok(reply.includes(`show ${work}`)); assert.match(reply, /retry/);
+  assert.match(await f.run(`show ${work}`), /revision/);
+  assert.match(await f.run(command(scenario.retry)), /Saved privately/);
+  assert.notEqual(backend.data.get(f.key("state")), before);
+});
+
+test("completion retries an unrelated-record CAS conflict without losing either write", { timeout: 5_000 }, async () => {
+  const entered = deferred<void>(), release = deferred<void>(); let armed = false;
+  const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+    if (armed && key.endsWith(":state")) { armed = false; entered.resolve(); await release.promise; }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend });
+  const work = idFrom(await f.run("create Write guide | Clean install | 30"), "work");
+  const other = idFrom(await f.run("create Other | Other proof | 30"), "work");
+  const step = idFrom(await f.run(`step ${work} add Test installer | 10 | Installer passes`), "step");
+  armed = true; const pending = f.run(`complete ${work} ${step} | Installer passed`); await entered.promise;
+  try { await f.run(`edit ${other} | Changed other | New proof | 20`); } finally { release.resolve(); }
+  assert.match(await pending, /user-reported completion/); assert.equal(backend.calls.conflicts, 1);
+  assert.equal((await record(f, work)).steps[0].completion, "Installer passed");
+  assert.equal((await record(f, other)).title, "Changed other");
+});
 
 test("first example and full lifecycle expose effort, proof, next executable action and reported completion", async () => {
   const f = createAgentFeatureFixture(feature), work = idFrom(await f.run(feature.example!.split("task-breakdown ")[1]), "work");

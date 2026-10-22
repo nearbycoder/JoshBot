@@ -223,9 +223,12 @@ async function read(context: AgentFeatureContext): Promise<State> {
 async function mutate(context: AgentFeatureContext, id: string | undefined, change: (state: State, record?: RecordData) => string,
   kind: "content" | "lifecycle" | "remove" = "content"): Promise<string> {
   const timestamp = context.now.toISOString();
+  // Capture once outside the retryable transform, including lifecycle and edit/reopen cycles.
+  const expected = id === undefined ? undefined : find(await read(context), id).revision;
   return context.store.update<State, string>("state", EMPTY, current => {
     const state = structuredClone(decode(current));
     const record = id === undefined ? undefined : find(state, id);
+    if (record && record.revision !== expected) fail(`This item changed while saving. Nothing from this command was saved. Inspect ${ROUTE} show ${id}, then retry with the current work and evidence.`);
     const result = change(state, record);
     if (record && state.records.includes(record)) {
       if (record.revision >= MAX_REVISION) fail("Revision limit reached. Export this record and create a new one.");

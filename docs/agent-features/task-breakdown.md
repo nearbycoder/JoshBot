@@ -65,3 +65,7 @@ The full schema is validated before mutations; malformed data is preserved rathe
 ```sh
 node --import tsx --test tests/agent-task-breakdown.test.ts
 ```
+
+## Concurrent work and retry
+
+Every mutation of an existing workspace captures its revision before updating and checks it on every CAS attempt. A winning edit, completion, evidence correction, or reopen on that record rejects the stale command, including edit-and-restore cycles. Inspect the exact `show ID` command in the reply, review the current work/status, then issue a fresh command with appropriate evidence. Changes to another record still retry safely. This conservatively rejects changes to any child of the same record; it does not add child revisions or retained history. Schemas and command syntax are unchanged. Creation needs no initial read; existing-record changes add one bounded state read.

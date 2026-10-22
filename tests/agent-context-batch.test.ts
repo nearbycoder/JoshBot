@@ -1,12 +1,59 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import feature from "../lib/agent-features/context-batch.js";
-import { createAgentFeatureFixture } from "./helpers/agent-feature-fixture.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
 
 const idFrom = (reply: string, prefix: string) => {
   const id = reply.match(new RegExp(`${prefix}-[0-9a-f-]{36}`))?.[0]; assert.ok(id, reply); return id;
 };
 const record = async (f: ReturnType<typeof createAgentFeatureFixture>, id: string) => JSON.parse(await f.run(`export ${id}`)).record;
+
+for (const scenario of [
+  { name: "completion versus edited work", completed: false,
+    pending: "complete BOARD ACTION", winning: ["action BOARD edit ACTION | File new receipt | 20 | - | - | -"], retry: "complete BOARD ACTION" },
+  { name: "completion versus a winning reopen", completed: false,
+    pending: "complete BOARD ACTION", winning: ["complete BOARD ACTION", "reopen BOARD ACTION"], retry: "complete BOARD ACTION" },
+  { name: "reopen versus a new completed attempt", completed: true,
+    pending: "reopen BOARD ACTION", winning: ["reopen BOARD ACTION", "complete BOARD ACTION"], retry: "reopen BOARD ACTION" },
+  { name: "edit versus winning completion", completed: false,
+    pending: "action BOARD edit ACTION | File stale receipt | 10 | - | - | -", winning: ["complete BOARD ACTION"], retry: "action BOARD edit ACTION | File reviewed receipt | 10 | - | - | -" },
+  { name: "completion versus edit-and-restore", completed: false,
+    pending: "complete BOARD ACTION", winning: ["action BOARD edit ACTION | File new receipt | 20 | - | - | -", "action BOARD edit ACTION | File old receipt | 10 | - | - | -"], retry: "complete BOARD ACTION" },
+]) test(`CAS retry preserves winning ${scenario.name}; inspect and fresh retry recover`, { timeout: 5_000 }, async () => {
+  const entered = deferred<void>(), release = deferred<void>(); let armed = false;
+  const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+    if (armed && key.endsWith(":state")) { armed = false; entered.resolve(); await release.promise; }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend });
+  const board = idFrom(await f.run("create Admin | 60"), "board");
+  const action = idFrom(await f.run(`action ${board} add File old receipt | 10 | - | - | -`), "action");
+  const command = (s: string) => s.replaceAll("BOARD", board).replaceAll("ACTION", action);
+  if (scenario.completed) await f.run(command("complete BOARD ACTION"));
+  armed = true; const pending = f.run(command(scenario.pending)); await entered.promise;
+  try { for (const winning of scenario.winning) assert.match(await f.run(command(winning)), /Saved privately/); }
+  finally { release.resolve(); }
+  const before = backend.data.get(f.key("state")), reply = await pending;
+  assert.equal(backend.calls.conflicts, 1);
+  assert.equal(backend.data.get(f.key("state")), before, "stale work must not alter the winning state or revision");
+  assert.match(reply, /changed.*saving/); assert.ok(reply.includes(`show ${board}`)); assert.match(reply, /retry/);
+  assert.match(await f.run(`show ${board}`), /revision/);
+  assert.match(await f.run(command(scenario.retry)), /Saved privately/);
+  assert.notEqual(backend.data.get(f.key("state")), before);
+});
+
+test("completion retries an unrelated-board CAS conflict without losing either write", { timeout: 5_000 }, async () => {
+  const entered = deferred<void>(), release = deferred<void>(); let armed = false;
+  const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+    if (armed && key.endsWith(":state")) { armed = false; entered.resolve(); await release.promise; }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend });
+  const board = idFrom(await f.run("create Admin | 60"), "board"), other = idFrom(await f.run("create Other | 60"), "board");
+  const action = idFrom(await f.run(`action ${board} add File receipt | 10 | - | - | -`), "action");
+  armed = true; const pending = f.run(`complete ${board} ${action}`); await entered.promise;
+  try { await f.run(`edit ${other} | Changed other | 20`); } finally { release.resolve(); }
+  assert.match(await pending, /user-reported completed/); assert.equal(backend.calls.conflicts, 1);
+  assert.equal((await record(f, board)).actions[0].status, "completed"); assert.equal((await record(f, other)).title, "Changed other");
+});
 
 test("documented workflow amortizes setup, records only explicit completion, and supports every edit/removal", async () => {
   const f = createAgentFeatureFixture(feature);
