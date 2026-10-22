@@ -140,3 +140,64 @@ test("actual saved/report continuations recover complete data and reject edits, 
   assert.match(await f.run(issued[1]), /stale continuation rejected/);
   assert.match(await f.run(`show ${id} 1 rev invalid`), /Invalid revision token/);
 });
+
+test("finite composition preserves every exact source and rejects changes, omissions, framing and structure attacks", async () => {
+  let modify = (_output: any) => {}, sources: { ref: string; quote: string }[] = [], frameText = "";
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    const data = JSON.parse(input); sources = data.sources;
+    const frame = Object.keys(data.framing)[0]; frameText = data.framing[frame];
+    const output = { sections: sources.map(s => ({ ...s, text: s.quote })), framing: [frame], layout: "compact" };
+    modify(output); return JSON.stringify(output);
+  } } }), id = await create(f);
+  await f.run(`stance ${id} | defer`); await f.run(`offer ${id} | I can share the existing outline`); await f.run(`scope ${id} | Outline only`); await f.run(`date ${id} | 2026-11-02`); await f.run(`avoid ${id} | No weekend work or Monday delivery`);
+  const command = `polish ${id} | warm`, raw = f.backend.data.get(f.key("state"));
+  const good = await f.run(command); assert.match(good, /unsaved suggestion/); assert.ok(good.includes(frameText));
+  for (const source of sources) assert.ok(good.includes(source.quote), source.ref);
+  const refs = sources.map(s => s.ref);
+  const attacks: ((o: any) => void)[] = [
+    o => { o.sections[0].ref = "unknown"; }, o => { o.sections[0].quote += " altered"; },
+    o => { o.sections[1] = o.sections[0]; }, o => { o.sections[0].attribution = "external audit"; },
+    o => { o.framing = ["unknown"]; }, o => { o.framing.push(o.framing[0]); },
+    o => { o.framing = "thanks"; }, o => { o.framing = ["__proto__"]; },
+    o => { o.layout = "approved commitment"; }, o => { o.layout = ["compact"]; },
+    o => { o.commitment = "I guarantee Monday delivery"; },
+  ];
+  for (const ref of refs) {
+    attacks.push(o => { o.sections.find((x: any) => x.ref === ref).text += " But I will work all weekend and Maya confirmed twenty users in an external audit on Tuesday."; });
+    attacks.push(o => { o.sections = o.sections.filter((x: any) => x.ref !== ref); });
+  }
+  for (modify of attacks) {
+    const calls = f.calls.generate, reply = await f.run(command);
+    assert.match(reply, /Optional assistance unavailable/); assert.equal(f.calls.generate, calls + 1);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+  // Ordering emitted by a provider cannot change roles or scope: the renderer owns it.
+  modify = o => { o.sections.reverse(); o.framing = []; o.layout = "spaced"; };
+  const spaced = await f.run(command); assert.match(spaced, /unsaved suggestion/);
+  for (const source of sources) assert.ok(spaced.includes(source.quote));
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.equal(f.calls.search, 0); assert.equal(f.calls.readContext, 0);
+});
+
+test("required exact composition refuses oversize before calling and never paginates unsaved output", async () => {
+  const f = createAgentFeatureFixture(feature), id = await create(f);
+  for (let i=0;i<6;i++) await f.run(`avoid ${id} | ${"x".repeat(900)}`);
+  const raw = f.backend.data.get(f.key("state")), reply = await f.run(`polish ${id} | direct`);
+  assert.match(reply, /complete exact content cannot fit/); assert.match(reply, /deterministic pages.*explicitly shorten/);
+  assert.ok(reply.length <= 3500); assert.doesNotMatch(reply, /Page \d/);
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("finite composition discards a removal at the revision ceiling", async () => {
+  const entered = deferred<void>(), gate = deferred<void>();
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    entered.resolve(); await gate.promise; const { sources } = JSON.parse(input);
+    return JSON.stringify({ sections: sources.map((s: { ref: string; quote: string }) => ({ ...s, text: s.quote })) });
+  } } }), id = await create(f);
+
+  const state = await f.store().read<any>("state"); state.records[0].revision = 999_999_999;
+  f.backend.data.set(f.key("state"), JSON.stringify(state));
+  const pending = f.run(`polish ${id} | warm`); await entered.promise;
+  assert.match(await f.run(`clear ${id} title confirm`), /^Saved/);
+  const raw = f.backend.data.get(f.key("state")); gate.resolve();
+  assert.match(await pending, /stale result was discarded/); assert.equal(f.backend.data.get(f.key("state")), raw);
+});
