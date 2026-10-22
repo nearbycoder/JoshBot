@@ -64,7 +64,7 @@ Shared harness verifies abort/deadline at policy, backend initialization, prefer
 - [ ] Where confirmation claims current sources, change a source after preview without changing the local record: confirmation rereads its declared kinds, compares the source fingerprint, and requires a fresh preview. Historical snapshot-only acceptance is labeled as such and does not claim live validation.
 - [ ] Failed optional generation preserves saved input and last good output. Retry/resume uses saved IDs/checkpoints and does not require the user to retype the original material. No background retry or unbounded retry queue.
 - [ ] Cancellation copy states only confirmed saves/checkpoints and does not promise to stop upstream billing. Timeout or unconfirmed commit tells the user to inspect before repeating a mutation.
-- [ ] Admission rejects over-limit work before costly startup and receipt creation. Provisionally verify eight global/two workspace-user active invocations, release on all terminal paths, help remains usable, and saturation does not accumulate queued closures/promises. Final limits follow the performance report.
+- [ ] Admission rejects over-limit work before costly startup and receipt creation. Verify the integrated foundation (`df89fdc`) defaults of **three global/two workspace-user active invocations**, release on all terminal paths, help remains usable, and saturation does not accumulate queued closures/promises. Record any configured override; use the forthcoming full performance report when evaluating changes to these defaults.
 - [ ] Follow the performance foundation's documented behavior for providers that ignore abort. Fast cancellation response alone is not proof that upstream work stopped or admission bounds abandoned upstream calls; report any such limitation and test its chosen resource accounting.
 
 ## Production-source contract checks
@@ -113,6 +113,8 @@ Tests + commands + commit; constraints and justified N/A items:
 ## Bounded performance validation
 
 Hard release gates are call counts, byte/count limits, bounded queues/concurrency, no eager implementation imports, and no idle work. Timing/RSS targets below are provisional regression budgets to calibrate with the performance agent's same-machine Node 24 baseline, not measured production promises.
+
+Parent integration reports foundation commit `df89fdc` passed **71 focused tests and root typecheck**. Its finite 96-request burst comparison accepted 9 and rejected 87, with accepted-request p95 of 117–140 ms and a reported loop measurement of 110–127 ms. These observations informed the **3 global / 2 workspace-user** default, replacing the earlier eight-global proposal. Accepted count describes the whole burst, not simultaneous concurrency. The full benchmark report, including measurement methodology, is forthcoming. This is local synthetic evidence, not a throughput or production cost-savings claim, and does not extend the design audit's own baseline test run below.
 
 | Workload | Budget / evidence |
 | --- | --- |
