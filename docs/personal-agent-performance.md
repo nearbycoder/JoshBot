@@ -170,3 +170,67 @@ All preparatory samples, including harness failures and pending states, are reta
 ```
 
 The default history is append-only at event level: prior JSON event text is preserved, errors/profiles are never replaced, and each run records exact source hashes, build artifacts, Node/Vite versions, host load, command and cleanup. A missing catalog preflight exits 2; sample errors or a failed requested gate exit 1; a successful preparatory execution exits 0 while explicitly withholding release approval. Actual paid cost, production capacity, full-server RSS reduction and upstream cancellation savings remain unmeasured.
+
+## Integrated 70-agent series: release performance targets FAILED
+
+The one planned series ran **2026-10-22T21:23:11.596Z–21:23:35.225Z**, run `11b66bdd-b0fd-4ee5-8fc6-a8fdac1c1ed0`, using the `--final --check` command above. All **30 fresh workers completed**; all raw samples remain in the release history. The command exited **1**, with twelve failed sample/target combinations. There were no favorable timing retries. Feature correctness and catalog/domain review are separate; this result does **not** authorize deployment.
+
+Exact source head: preparation commit `87da74a5416187b35c6f945ef62e030b03202777`. Its application includes the supplied final registration, domain hardening `db792e9d8f9d6181f406a82a46b00ecdf1bfa072`, and Home Reset correction `e7c5b379f4c46ee089054f93bfeaf9d3b40de1f1`; dependency commits were cherry-picked separately. The full input manifest SHA-256 is `fde10ea7696decf3620ab4a1ccb288373eaece7ab3209f272a5dc720f0efc57e`; application/config/package inputs excluding benchmark scripts hash to `3eaf4e3a897809be90c34b8d850ed1d48617532fd6645293860daef85b4a85fc`. Each file and output chunk hash is in the build event. Only the append-only history changed while the series ran. Node **24.22.1**, Vite **8.3.5**, Linux x64, AMD RYZEN AI MAX+395. The unchanged historical raw file hashes to `9b72f674cb38b4db226c87fd0214bfd7ed32c5848a6f5ff3a61d9b26c7a6cb85`.
+
+The parent coordinated a quiet window with the two reviewers; this remained a shared host. Observed 1/5/15-minute load-average ranges were 17.81–19.99 / 17.39–17.92 / 16.95–17.14 across the workers; these are host run-queue averages, not this process's CPU use. CPU below is user+system milliseconds. RSS uses MiB (1,048,576 bytes), with per-exec Linux VmHWM; historical-worker values retain its original two-decimal reporting. Build CPU is never attributed to application requests.
+
+| Comparable runtime metric | Samples 1 / 2 / 3 |
+| --- | --- |
+| Burst accepted / busy / offered | 9 / 87 / 96 in every sample |
+| Physical burst context calls / peak concurrency | 9 / 3 in every sample |
+| Mixed deterministic / recall / completed | 45 / 15 / 60 in every sample |
+| 100-list deterministic p95, ms | 0.976 / 1.170 / 0.972 |
+| Accepted burst recall p95, ms | 123.588 / 108.230 / 100.083 |
+| Mixed deterministic p95, ms | 1.806 / 1.686 / 1.641 |
+| Mixed recall p95, ms | 54.246 / 47.952 / 41.241 |
+| Burst CPU, ms | 437.970 / 378.710 / 359.100 |
+| Mixed CPU, ms | 631.750 / 666.430 / 582.070 |
+| Whole worker CPU, ms | 1364.430 / 1336.810 / 1200.480 |
+| Whole worker peak RSS, MiB | 190.730 / 199.000 / 198.740 |
+| **Event-loop maximum, ms — FAILED ≤150** | **236.454 / 232.260 / 198.705** |
+
+All 40 captures and all expected list/recall outputs were positively validated. Rejections are never counted as useful throughput. The original timer includes cold first execution, 40 captures and 100 immediate sequential lists, as it always did; the new lazy dispatcher moves runtime/Redis package imports from initial help into first execution. This changes where real cold-start work occurs, not the historical measurement definition. The 227.934207 ms preparatory rewritten-driver sample and subsequent 199.229 ms preparatory original-worker sample remain recorded.
+
+For new cases, the active window begins after fixture construction/imports and an explicit histogram-arm delay. Whole-process RSS still includes those earlier allocations; **nothing is subtracted**. Each large consumer has one accepted request per worker, so its per-worker p95 equals that one latency and is not a broad production distribution. Three fresh processes expose cold/JIT/GC variation. The six-group probe measures adapters/runtime/helper only; meeting/morning/weekly invoke the actual consumer and validate its result/state. Their exact JSON-equivalent totals are 23,575,616 / 29,339,745 / 29,339,745 / 21,945,013 bytes respectively. These values differ slightly from historical fixtures because of explicit optional metadata, owner/ID strings and summed group delimiters.
+
+| Workload | Active loop maximum, ms (1 / 2 / 3) | Active CPU, ms (1 / 2 / 3) | Whole-process peak RSS, MiB (1 / 2 / 3) |
+| --- | --- | --- | --- |
+| Six-group adapter, 1,500 records — **FAIL loop** | **169.607 / 192.807 / 168.165** | 185.436 / 208.370 / 187.235 | 163.273 / 163.285 / 163.754 |
+| Meeting preparation, 600 records | 125.698 / 124.191 / 133.235 | 133.659 / 133.292 / 141.814 | 129.859 / 125.652 / 130.156 |
+| Morning brief, 600 records — **FAIL loop** | **160.956 / 158.073 / 171.311** | 169.280 / 167.694 / 183.356 | 138.324 / 137.492 / 138.469 |
+| Weekly review, 600 records | 140.771 / 141.558 / 139.067 | 152.869 / 150.079 / 150.137 | 150.961 / 150.047 / 151.813 |
+| Over-total audit rejection, 540 records | 123.077 / 113.312 / 112.460 | 128.515 / 118.483 / 118.195 | 119.641 / 119.336 / 120.055 |
+| Repeated policy cancellation/error | 12.050 / 12.206 / 12.583 | 14.216 / 15.480 / 14.876 | 280.148 / 281.180 / 279.668 (separate Slack/import footprint) |
+| CSV lifecycle/retrieval — **FAIL loop** | **259.391 / 271.319 / 251.396** | 411.727 / 406.530 / 357.763 | 104.645 / 102.586 / 101.047 |
+
+The six-group request uses 6 logical reads, 807 fake backend gets, 4 exact production index evaluations and 4 read-only authorization calls. Meeting uses 4/406/2/2; morning 4/404/2/2; weekly 3/206/1/1. Every case declares concurrency 1 and observes at most one active physical fake dependency, each response ≤16 MiB/2,000 items and ≤8 logical reads. Meeting/weekly each save one valid bounded snapshot. The 39,574,473-byte over-total audit uses 3/541/3/3, visibly rejects the 32 MiB total, and preserves its previous state with zero writes/generations. All byte totals are measured incrementally after captured timing/RSS/CPU, with exact batch details in the raw history. No model/search call occurs.
+
+Policy repeats six cycles per worker: 60 physical reads all settled, maximum 10 pending, zero pending at completion, 96 busy attempts, another owner's third-slot access, and exact release/refill. No failed policy reaches backend/preferences/feature startup. One original policy deadline reaches later startup and prevents late continuation. Import-only RSS is 274.359 / 276.387 / 275.098 MiB; whole-worker CPU is 1040.959 / 1002.428 / 1011.900 ms. Those imports are not charged to the 12–13 ms active loop measurement or silently represented as a small whole-server process.
+
+CSV completes the maximum 40×8 grid, ten duplicate groups, preview/apply/undo, and 19 complete retrieval pages per worker. Per-command p95 is 10.204 / 13.799 / 10.028 ms, while the **continuous immediate-backend lifecycle driver** stalls the loop for 251–271 ms. A 10 ms command p95 does not erase this failure. Real Slack arrivals/Redis I/O yield differently; this fixture proves bounded deterministic CPU work and retrieval, not live throughput.
+
+Catalog checks all 70 registrations/50 new implementations, full grouped traversal, exact-ID searches and pure Home help with zero forbidden implementation/services/provider imports and zero startup calls. Catalog cold import+help is 10.074 / 10.559 / 7.223 ms, help p95 0.025 / 0.023 / 0.014 ms, idle heap 7.067 MiB each, idle RSS 55.891 / 53.969 / 56.496 MiB; whole catalog CPU 85.396 / 73.165 / 77.484 ms. Full-server health is 200 in all three samples, with readiness 844.851 / 832.715 / **1769.797** ms, idle RSS 292.199 / 290.887 / 295.449 MiB, peak RSS 308.246 / 306.258 / 310.387 MiB and CPU 1373.927 / 1370.231 / 1772.561 ms. The slower third sample is retained. Different source/build/host conditions prevent claiming a full-server RSS improvement over the historical 302–303 MiB observations. Production resource use and cloud costs remain unmeasured.
+
+## Single post-failure diagnostic and proposed next scope
+
+Exactly one separate whole-worker baseline CPU profile was recorded after the failed series: run `ede44828-96fa-4cde-9a42-b7dc0fee2c9b`, raw SHA-256 `02aa9eb21cbcc46e0525607d5a54e383357e83f0795ddce29fb4bfc152c86b83`. The full profile and its result are retained as a `profile` event, never a timing sample. Application hashes match the timed series; only harness diagnostic instrumentation differs. Profile overhead is included. No additional profile or timing retry was run.
+
+The diagnostic's 40 captures span **145.278 ms**, immediately followed by **69.331 ms** for 100 lists: **214.617 ms** of consecutive first-execution/setup/list work, before the recall burst's 10 ms fake context delays. The profiled loop maximum is 224.920 ms. This identifies a cold-import/setup/cheap-command chain as a concrete source of long turns; it supports, but does not retroactively assign an exact phase to, the earlier 227.934207 ms sample, which lacked phase markers. Setup self-samples include CommonJS `wrapSafe` 31.335 ms, inbox `execute` 16.936 ms, `realpathSync` 7.441 ms, GC 7.407 ms and Redis command-module initialization. The subsequent list window includes inbox text-validation regex 21.174 ms, scoped-store `parse` 12.129 ms, inbox `execute` 11.657 ms, `snippet` 8.502 ms and `isoDate` 5.255 ms. These are sampled stack times, not exact CPU accounting. Recall `clean`, `tokens`, `frequencies` and runtime byte counting remain significant whole-profile costs; accepted recall itself still passed its p95 target.
+
+A diagnostic label error placed the first mixed list in the `burst96` phase (97 callbacks, leaving 59 in `mixed60`). The original worker's 96/60 counts remain correct. The valid setup/list windows above are unaffected. Raw profile/windows remain unchanged, an analysis event records the error, and the future label classifier is corrected without another run.
+
+Proposed scope for a separately authorized implementation task, **not changes made by this harness**:
+
+1. In `lib/agent-features/store.ts`, investigate moving the static Redis import into `createAgentStateBackend`. The current injected-backend execution still loads Redis through `runtime → store → redis`; actual default-backend behavior, errors and cancellation must stay unchanged. This may reduce cold execution CPU, but the profile does not prove it alone clears every target.
+2. In `lib/agent-features/runtime.ts`, investigate a bounded cooperative yield while holding the admitted invocation, with the same deadline and immediate post-yield abort check. This could prevent a chain of immediate fake-backend commands from monopolizing a turn, including inbox setup/lists and the CSV lifecycle. It must not release physical-work permits early, reorder receipt safety, add an unbounded queue or renew deadlines. Yielding improves responsiveness rather than proving lower CPU or cost.
+3. In `lib/agent-features/bounded-context.ts`, investigate yielding between the existing sequential groups while retaining exact ordering/count/byte checks and the original signal. The six-group and morning active failures are measured, but the baseline profile does not locate their CPU hot spots. If needed, a parent-approved bounded profile should cover `context.ts`, `context/legacy.ts`, `budgets.ts:measureAgentContext` and `morning-brief.ts:sourceFrom/renderBrief` before algorithm edits.
+4. CSV-specific optimization remains unprofiled: inspect `data-cleanroom.ts:detailPages/pages/stamp/projectLifecycle` and bounded-state byte validation only if runtime fairness/import work leaves a measured failure. Preserve all source cells, dynamic reserve, preview/undo behavior and exact revision-bound retrieval; do not make the harness insert favorable pauses.
+
+No implementation outside the four owned paths was edited. Correctness validation is 7/7 tests, zero skips, Node 24, concurrency 1; typecheck and diff checks pass. Temporary source trees, bundles, worker children and dependency symlinks were cleaned. The remaining work is a concrete performance fix, independent review and a separately planned post-change verification; deployment and production-cost evidence are not supplied by this result.
+
+The parent subsequently reported an independent P1 finding on this measured source: shared command trimming can remove CSV trailing spaces or a final blank row. This benchmark’s 40×8 fixture uses nonblank single-digit cells and does not exercise those cases. Its exact retrieval/lifecycle oracles pass only for that explicit fixture; broad CSV correctness is not approved. A separate child owns the runtime/index/Slack payload-forwarding correction and domain regressions. Any performance change touching `runtime.ts` must be coordinated with that owner, and future timing evidence must identify the supplied corrected dependency. The recorded failed series is unchanged.

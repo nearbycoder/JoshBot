@@ -705,11 +705,20 @@ export async function runSample(build, mode, profile = false) {
 if (process.env.RELEASE_BASELINE_PRELOAD === '1') {
   const guard = installNetworkGuard();
   const audit = { setupCompleted: 0, listsCompleted: 0, recallCompleted: 0, busy: 0, failed: 0, setupWindowMs: 0, maximumCommandMs: 0 };
+  const diagnosticPhases = process.execArgv.includes('--cpu-prof') ? {} : undefined;
+  if (diagnosticPhases) Object.assign(audit, { phaseWindows: diagnosticPhases, monotonicOffsetUs: Number(process.hrtime.bigint()) / 1000 - performance.now() * 1000 });
   let firstSetup;
   globalThis.__releaseValidateCommand = (command, response, start) => {
     if (command === 'help') { assert.match(response, /^Personal agents\n/); return; }
     try {
       const outcome = classifyBaseline(command, response);
+      if (diagnosticPhases) {
+        const phase = command.startsWith('inbox capture ') ? 'setup40' : command === 'inbox list'
+          ? audit.listsCompleted < 100 ? 'cheap100' : 'mixed60'
+          : audit.listsCompleted <= 100 ? 'burst96' : 'mixed60';
+        const value = diagnosticPhases[phase] ??= { firstStartMs: start, lastEndMs: start, commands: 0 };
+        value.firstStartMs = Math.min(value.firstStartMs, start); value.lastEndMs = Math.max(value.lastEndMs, performance.now()); value.commands++;
+      }
       audit.maximumCommandMs = Math.max(audit.maximumCommandMs, performance.now() - start);
       if (outcome === 'busy') audit.busy++;
       else if (command.startsWith('inbox capture ')) { firstSetup ??= start; audit.setupCompleted++; audit.setupWindowMs = performance.now() - firstSetup; }
