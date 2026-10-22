@@ -186,3 +186,130 @@ test("actual saved/report continuations recover complete data and reject edits, 
   assert.match(await f.run(issued[1]), /stale continuation rejected/);
   assert.match(await f.run(`show ${id} 1 rev invalid`), /Invalid revision token/);
 });
+
+const escapeInput = (value: string) => value.replaceAll("\\", "\\\\").replaceAll("|", "\\|");
+const exactSections = (sources: { ref: string; quote: string }[]) => sources.map(s => ({ ...s, text: s.quote }));
+async function sparseBrief(f: ReturnType<typeof createAgentFeatureFixture>) {
+  const id = await create(f);
+  for (const field of ["title", "recipient", "outcome"]) await f.run(`clear ${id} ${field} confirm`);
+  return id;
+}
+
+test("delegation polish preflights both reviewed impossibilities with actionable complete-draft fallback", async () => {
+  for (const mode of ["checkpoint", "raw"]) {
+    const f = createAgentFeatureFixture(feature), id = await create(f);
+    if (mode === "checkpoint") assert.match(await f.run(`checkpoint ${id} | 2026-10-26 | ${"x".repeat(1000)}`), /^Saved/);
+    else for (let i = 0; i < 4; i++) assert.match(await f.run(`scope ${id} | in | ${"x".repeat(900)}`), /^Saved/);
+    const raw = f.backend.data.get(f.key("state")), reply = await f.run(`polish ${id}`);
+    assert.match(reply, /Polish cannot fit/);
+    assert.match(reply, mode === "checkpoint" ? /1023 UTF-8 bytes.*limit is 1000/ : /7795 string units.*4000 \/ 16000/);
+    assert.match(reply, /Shorten.*complete deterministic draft pages/);
+    assert.doesNotMatch(reply, /unavailable|retry/i); assert.ok(reply.length <= 3500);
+    const next = /\nNext: \/nobo-help agent delegation-brief ([^\n]+)$/.exec(reply); assert.ok(next);
+    assert.match(await f.run(next[1]), /Page 1\//);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+    assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  }
+});
+
+test("delegation exact section feasibility counts kind/date labels and UTF-8 without rejecting the 1000-byte boundary", async () => {
+  for (const value of ["x".repeat(977), "漢".repeat(325) + "xx"]) {
+    let lastSources: { ref: string; quote: string }[] = [];
+    const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+      lastSources = JSON.parse(input).sources; return JSON.stringify({ sections: exactSections(lastSources) });
+    } } }), id = await create(f);
+    await f.run(`checkpoint ${id} | 2026-10-26 | ${value}`);
+    let raw = f.backend.data.get(f.key("state"));
+    const good = await f.run(`polish ${id}`); assert.match(good, /unsaved suggestion/);
+    assert.equal(Buffer.byteLength(lastSources.at(-1)!.quote), 1000);
+    for (const source of lastSources) assert.ok(good.includes(source.quote));
+    assert.equal(f.backend.data.get(f.key("state")), raw); assert.equal(f.calls.generate, 1);
+    const entry = (await record(f,id)).entries[0].id;
+    await f.run(`entry ${id} edit ${entry} | checkpoint | 2026-10-26 | ${value}x`);
+    raw = f.backend.data.get(f.key("state"));
+    assert.match(await f.run(`polish ${id}`), /1001 UTF-8 bytes.*limit is 1000/);
+    assert.equal(f.calls.generate, 1); assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+});
+
+test("delegation sparse exact JSON at 3999/4000 units is feasible; escaped mandatory JSON above 4000 is not", async () => {
+  const escaped = '"\\\t\n'.repeat(246) + '""'; // 986 bytes; every character needs a two-unit JSON escape.
+  for (const [field, value, units] of [
+    ["authority", '"'.repeat(986), 3999],
+    ["done", escaped + "xxx", 4000],
+    ["authority", '"'.repeat(986) + "x", 4001],
+    ["done", escaped + "xxxx", 4002],
+  ] as const) {
+    let emitted = "";
+    const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+      emitted = JSON.stringify({ sections: exactSections(JSON.parse(input).sources) }); return emitted;
+    } } }), id = await sparseBrief(f);
+    assert.match(await f.run(`edit ${id} | ${field} | ${escapeInput(value)}`), /^Saved/);
+    const raw = f.backend.data.get(f.key("state"));
+    // Independently build the only mandatory section from the known sparse fixture.
+    assert.equal(JSON.stringify({ sections: [{ ref: field, quote: value, text: value }] }).length, units);
+    const reply = await f.run(`polish ${id}`);
+    if (units <= 4000) {
+      assert.match(reply, /unsaved suggestion/); assert.equal(emitted.length, units);
+      assert.ok(reply.includes(value)); assert.equal(f.calls.generate, 1);
+    } else {
+      assert.match(reply, /minimum complete required JSON/); assert.equal(f.calls.generate, 0);
+    }
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+    assert.equal(f.calls.search, 0); assert.equal(f.calls.readContext, 0);
+  }
+});
+
+test("delegation minimum complete reply allows exactly 3500 units and refuses 3501 without calling", async () => {
+  let append = false, generatedRaw = "";
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    const sections = exactSections(JSON.parse(input).sources); if (append) sections.at(-1)!.text += "!";
+    generatedRaw = JSON.stringify({ sections }); return generatedRaw;
+  } } }), id = await sparseBrief(f);
+  await f.run(`authority ${id} | ${"x".repeat(1000)}`); await f.run(`done ${id} | ${"y".repeat(623)}`);
+  let raw = f.backend.data.get(f.key("state"));
+  const good = await f.run(`polish ${id}`); assert.match(good, /unsaved suggestion/); assert.equal(good.length, 3500);
+  assert.ok(generatedRaw.length < 4000); assert.equal(f.calls.generate, 1);
+  assert.equal(f.backend.data.get(f.key("state")), raw);
+  append = true; assert.match(await f.run(`polish ${id}`), /Optional assistance unavailable/);
+  assert.equal(f.calls.generate, 2); assert.equal(f.backend.data.get(f.key("state")), raw);
+  // A two-digit revision adds one required displayed unit without changing source text.
+  for (let i = 0; i < 4; i++) await f.run(`unaccept ${id} confirm`);
+  assert.equal((await record(f,id)).revision, 10); raw = f.backend.data.get(f.key("state"));
+  assert.match(await f.run(`polish ${id}`), /minimum complete reply needs 3501.*limit is 3500/);
+  assert.equal(f.calls.generate, 2); assert.equal(f.backend.data.get(f.key("state")), raw);
+});
+
+test("delegation feasible preflight retains actual-output section and raw limits with one call and no repairs", async () => {
+  let mode = "valid";
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    const sections = exactSections(JSON.parse(input).sources);
+    if (mode === "section") sections[0].text += "漢".repeat(Math.floor((1000 - Buffer.byteLength(sections[0].text)) / 3) + 1);
+    const raw = JSON.stringify({ sections });
+    if (mode === "units") return raw.padEnd(4001, " ");
+    if (mode === "bytes") return "😀".repeat(4001);
+    return raw;
+  } } }), id = await create(f), raw = f.backend.data.get(f.key("state"));
+  assert.match(await f.run(`polish ${id}`), /unsaved suggestion/);
+  for (mode of ["section", "units", "bytes"]) {
+    const before = f.calls.generate;
+    assert.match(await f.run(`polish ${id}`), /Optional assistance unavailable/);
+    assert.equal(f.calls.generate, before + 1); assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+  assert.deepEqual(f.calls, { generate: 4, search: 0, readContext: 0 });
+});
+
+test("delegation complete contract remains one feasible unsaved call with every supplied field", async () => {
+  let sources: { ref: string; quote: string }[] = [];
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+    sources = JSON.parse(input).sources; return JSON.stringify({ sections: exactSections(sources) });
+  } } }), id = await create(f);
+  await f.run(`authority ${id} | Suggest changes; ask before publishing`);
+  await f.run(`done ${id} | Three reproducible findings`);
+  await f.run(`scope ${id} | in | First-time setup`); await f.run(`scope ${id} | out | Published copy`);
+  await f.run(`resource ${id} | Existing walkthrough`); await f.run(`checkpoint ${id} | 2026-10-26 | Share findings`);
+  const raw = f.backend.data.get(f.key("state")), reply = await f.run(`polish ${id}`);
+  assert.match(reply, /unsaved suggestion/); assert.ok(reply.length <= 3500); assert.equal(sources.length, 9);
+  for (const source of sources) assert.ok(reply.includes(`Entered: ${source.quote}\nSuggested: ${source.quote}`));
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.deepEqual(f.calls, { generate: 1, search: 0, readContext: 0 });
+});

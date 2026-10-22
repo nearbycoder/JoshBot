@@ -109,6 +109,24 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
 type Source = { ref: string; quote: string };
 async function assistance(context: AgentFeatureContext, record: RecordData, sources: Source[], instructions: string,
   fallback: string, extra: unknown = null, preserve: readonly string[] = [], prefix = ""): Promise<string> {
+  const replyFor = (sections: { ref: string; quote: string; text: string }[]) => {
+    const lines = sections.map(s => `${s.ref}\nEntered: ${s.quote}\nSuggested: ${s.text}`);
+    return `Private · unsaved suggestion · revision ${record.revision}\nReview for omissions and added meaning; nothing sent or agreed.\n${prefix}${lines.join("\n\n")}\nNext: ${ROUTE} ${fallback}`;
+  };
+  // Every source is mandatory in this delegation contract. A preserved quote is
+  // the shortest permitted suggestion; an unprotected suggestion needs one unit.
+  // Compact JSON uses the shortest legal escapes for our validated source text.
+  // Section order cannot reduce these lengths. Do not substitute a verbose draft.
+  const minimumSections = sources.map(s => ({ ...s, text: preserve.includes(s.ref) ? s.quote : "x" }));
+  const impossible = (reason: string) => `Polish cannot fit: ${reason} Shorten the indicated saved fields/entries, or use the complete deterministic draft pages. Nothing was omitted or changed; no model was called.\nNext: ${ROUTE} ${fallback}`;
+  const tooLong = minimumSections.find(s => Buffer.byteLength(s.text, "utf8") > 1000);
+  if (tooLong) return impossible(`Required exact section ${tooLong.ref} needs ${Buffer.byteLength(tooLong.text, "utf8")} UTF-8 bytes; the section limit is 1000 (including entry kind/date labels).`);
+  const minimumRaw = JSON.stringify({ sections: minimumSections });
+  if (minimumRaw.length > 4000 || Buffer.byteLength(minimumRaw, "utf8") > 16000)
+    return impossible(`The minimum complete required JSON needs ${minimumRaw.length} string units / ${Buffer.byteLength(minimumRaw, "utf8")} UTF-8 bytes; limits are 4000 / 16000. Shorten source text across the brief.`);
+  const minimumReply = replyFor(minimumSections);
+  if (minimumReply.length > 3500)
+    return impossible(`The minimum complete reply needs ${minimumReply.length} string units; the reply limit is 3500. Shorten source text across the brief.`);
   try {
     const input = JSON.stringify({ revision: record.revision, sources, extra });
     boundedText(input, { label: "Model input", maxBytes: 16000, trim: false });
@@ -119,21 +137,21 @@ async function assistance(context: AgentFeatureContext, record: RecordData, sour
     boundedText(raw, { label: "Model output", maxBytes: 16000, maxUnits: 4000, trim: false });
     const parsed: unknown = JSON.parse(raw); object(parsed, ["sections"]);
     if (!Array.isArray(parsed.sections) || !parsed.sections.length || parsed.sections.length > 32) throw new Error("Invalid sections.");
-    const refs: string[] = [], lines: string[] = [];
+    const refs: string[] = [], sections: { ref: string; quote: string; text: string }[] = [];
     for (const section of parsed.sections) {
       object(section, ["ref", "quote", "text"]);
       const source = sources.find(s => s.ref === section.ref);
       if (!source || source.quote !== section.quote) throw new Error("Unknown reference or changed quotation.");
       const suggestion = boundedText(section.text, { label: "Suggestion", maxBytes: 1000, trim: false });
       if (preserve.includes(source.ref) && !suggestion.includes(source.quote)) throw new Error("Required exact wording was omitted.");
-      refs.push(source.ref); lines.push(`${source.ref}\nEntered: ${source.quote}\nSuggested: ${suggestion}`);
+      refs.push(source.ref); sections.push({ ...source, text: suggestion });
     }
     unique(refs);
     validateAssistance(record, sources, refs, parsed.sections);
     const current = (await read(context)).records.find(r => r.id === record.id);
     context.signal?.throwIfAborted();
     if (!current || current.revision !== record.revision) return `This item changed or was deleted while assistance ran. The stale result was discarded.\nNext: ${ROUTE} list`;
-    const reply = `Private · unsaved suggestion · revision ${record.revision}\nReview for omissions and added meaning; nothing sent or agreed.\n${prefix}${lines.join("\n\n")}\nNext: ${ROUTE} ${fallback}`;
+    const reply = replyFor(sections);
     if (reply.length > 3500) throw new Error("Suggestion does not fit a complete reply.");
     return reply;
   } catch {
