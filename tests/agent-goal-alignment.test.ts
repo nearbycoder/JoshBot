@@ -201,3 +201,35 @@ test("ceiling refuses writes, permits exact removals and rejects old content-sta
   assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
   assert.equal((await state(f)).records.length, 0);
 });
+
+test("canonical saved source key order is valid; content-bound refresh survives only unrelated CAS changes", async () => {
+  const x = integrated(), g = await x.add("Key order"), id = await setup(x.f), other = await setup(x.f); await x.f.run(`select ${id} | ${g.source}`);
+  const s = await state(x.f), source = s.records[0].goals[0];
+  source.snapshot = Object.fromEntries(Object.entries(source.snapshot).reverse()); source.snapshot.metadata = Object.fromEntries(Object.entries(source.snapshot.metadata).reverse());
+  x.backend.data.set(x.f.key("state"), JSON.stringify(s)); assert.equal(JSON.parse(await x.f.run(`export ${id}`)).record.goals[0].id, g.source);
+  const cas = x.backend.compareSet;
+  for (const mode of ["unrelated", "same", "delete"]) {
+    let armed = true;
+    x.backend.compareSet = async (key, previous, next, ttl) => {
+      if (armed && key === x.f.key("state")) { armed = false; const current = JSON.parse(x.backend.data.get(key)!); if (mode === "delete") current.records = current.records.filter((r: any) => r.id !== id); else current.records.find((r: any) => r.id === (mode === "same" ? id : other)).title = mode; x.backend.data.set(key, JSON.stringify(current)); }
+      return cas(key, previous, next, ttl);
+    };
+    // Change source so the refresh really dispatches CAS even with a fixed clock.
+    await x.tool(`target ${g.raw} | ${mode === "unrelated" ? 11 : mode === "same" ? 12 : 13}`);
+    const calls = x.f.calls.readContext, reply = await x.f.run(`refresh ${id}`); assert.equal(x.f.calls.readContext - calls, 1);
+    if (mode === "unrelated") assert.match(reply, /Saved privately/); else assert.match(reply, /changed|not found/);
+  }
+  x.backend.compareSet = cas;
+  assert.ok(!(await state(x.f)).records.some((r: any) => r.id === id));
+});
+
+test("dense identifier-rich legacy details reconstruct without exhausting pagination atoms", async () => {
+  const f = createAgentFeatureFixture(feature), id = await setup(f), gid = uid(await f.run(`local ${id} | Target`), "local");
+  const s = await state(f), r = s.records[0], dense = `${gid} `.repeat(7).trim();
+  // A schema-valid legacy record above admission/export quotas remains inspectable.
+  r.goals = Array.from({ length: 10 }, (_, i) => ({ kind: "local", id: i ? `local-${randomUUID()}` : gid, label: "Target" }));
+  r.activities = Array.from({ length: 30 }, () => ({ id: `activity-${randomUUID()}`, label: "Plan", minutes: 100, shares: r.goals.map((g: any) => ({ goalId: g.id, percent: 10, reason: dense })) }));
+  f.backend.data.set(f.key("state"), JSON.stringify(s));
+  assert.deepEqual(JSON.parse(await reconstruct(f, id)).record, r);
+  assert.match(await f.run(`goal-remove ${id} ${gid} confirm`), /Saved privately/);
+});

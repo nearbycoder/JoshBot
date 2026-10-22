@@ -35,6 +35,11 @@ function source(item: unknown): Source {
   if (m.status === undefined && typeof m.target === "number" && typeof m.current === "number" && s.status !== (m.current >= m.target ? "done" : "open")) throw new Error("Goal numeric state/status disagree.");
   return { item: s, fingerprint: snapshot.fingerprint };
 }
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
 function validateRecord(v: unknown): asserts v is RecordData {
   object(v, ["id", "title", "revision", "createdAt", "updatedAt", "goals", "activities"]); validBase(v); array(v.goals, 10); array(v.activities, 30);
   for (const g of v.goals) {
@@ -42,7 +47,7 @@ function validateRecord(v: unknown): asserts v is RecordData {
     else {
       object(g, ["kind", "id", "owner", "snapshot", "fingerprint", "capturedAt", "checkedAt", "verification", "latestFingerprint"]); enumValue(g.kind, ["source"]); sourceId(g.id); object(g.owner, ["teamId", "userId"]);
       for (const k of ["teamId", "userId"]) if (typeof g.owner[k] !== "string" || !/^[A-Z0-9]{2,32}$/.test(g.owner[k])) throw new Error("Invalid source owner.");
-      const projected = source(g.snapshot); if (g.id !== projected.item.id || projected.fingerprint !== g.fingerprint || JSON.stringify(projected.item) !== JSON.stringify(g.snapshot)) throw new Error("Saved goal evidence changed shape or content.");
+      const projected = source(g.snapshot); if (g.id !== projected.item.id || projected.fingerprint !== g.fingerprint || canonical(projected.item) !== canonical(g.snapshot)) throw new Error("Saved goal evidence changed shape or content.");
       fingerprint(g.fingerprint); normalizeInstant(g.capturedAt); normalizeInstant(g.checkedAt); enumValue(g.verification, ["captured", "unchanged", "changed", "absent"]);
       if (g.verification === "absent") { if (g.latestFingerprint !== "") throw new Error("Invalid absent-source verification."); }
       else { fingerprint(g.latestFingerprint); if ((g.verification === "changed") === (g.latestFingerprint === g.fingerprint)) throw new Error("Invalid source comparison."); }
@@ -278,14 +283,18 @@ function pageNumber(r: RecordData, command: string, args: string[]): number {
 }
 // Known local/source identifiers are atomic even when embedded in prose or JSON.
 function parts(input: string): { text: string; atomic?: boolean }[] {
+  // Coalesce small atoms into bounded chunks. Dense IDs in readable legacy data
+  // must not exhaust the kit's 4096-part limit. No known ID, URL or command splits.
   const result: { text: string; atomic?: boolean }[] = [];
-  const pattern = /(?:[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|toolbox:goals:[A-Za-z0-9_.:-]+|e1:[a-f0-9]{64})/g;
-  let end = 0;
-  for (const match of input.matchAll(pattern)) {
-    result.push({ text: input.slice(end, match.index) }, { text: match[0], atomic: true });
-    end = match.index + match[0].length;
+  const tokens = /(?:[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|toolbox:goals:[A-Za-z0-9_.:-]+|(?:e1|s1):[a-f0-9]{64}|https?:\/\/[^\s]+|\/nobo-help[^\r\n]*|[\s\S])/gu;
+  let chunk = "";
+  for (const match of input.matchAll(tokens)) {
+    const token = match[0];
+    if (chunk && chunk.length + token.length > 2000) { result.push({ text: chunk, atomic: true }); chunk = ""; }
+    if (token.length > 2000) result.push({ text: token, atomic: true });
+    else chunk += token;
   }
-  result.push({ text: input.slice(end) });
+  if (chunk) result.push({ text: chunk, atomic: true });
   return result;
 }
 function pages(body: string, command: string, r: RecordData, title = "Private · saved detail") {

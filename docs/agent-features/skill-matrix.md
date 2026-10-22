@@ -15,9 +15,9 @@ Skill evidence matrix — Compare self-assessed skills with a target role and ke
 Start: /nobo-help agent skill-matrix create Backend role
 Then: skill MATRIX add NAME | TARGET_0_TO_4 | TARGET_DEFINITION; self-rate MATRIX SKILL | LEVEL; evidence MATRIX SKILL | YYYY-MM-DD | EXAMPLE; gaps MATRIX [PAGE [rev TOKEN]]; review MATRIX SKILL | REFLECTION.
 Edit: edit MATRIX | title | VALUE; clear MATRIX title confirm.
-skill MATRIX edit SKILL | name|target | VALUE; skill MATRIX clear SKILL name confirm; skill MATRIX remove SKILL confirm.
+skill MATRIX edit SKILL | FIELD | VALUE (name or target); skill MATRIX clear SKILL name confirm; skill MATRIX remove SKILL confirm.
 rubric MATRIX SKILL | LEVEL_0_TO_4 | DEFINITION; rubric-remove MATRIX SKILL LEVEL confirm.
-assessment-remove MATRIX SKILL self|reflection confirm.
+assessment-remove MATRIX SKILL FIELD confirm (self or reflection).
 evidence-edit MATRIX SKILL EVIDENCE | YYYY-MM-DD | EXAMPLE; evidence-remove MATRIX SKILL EVIDENCE confirm.
 Each skill starts with explicit five-level definitions; custom target definition replaces that level. Skill/rubric/evidence edits clear dependent self-rating/reflection; no retained assessment history. Required target is removed with its skill.
 Limits: title/name 160 bytes, each rubric/reflection 320 bytes, example 1000 bytes. Review overwrites the current reflection. No model or context reads.

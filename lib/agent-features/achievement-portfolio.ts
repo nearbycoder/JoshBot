@@ -247,14 +247,18 @@ function pageNumber(r: RecordData, command: string, args: string[]): number {
 }
 // Known local/source identifiers are atomic even when embedded in prose or JSON.
 function parts(input: string): { text: string; atomic?: boolean }[] {
+  // Coalesce small atoms into bounded chunks. Dense IDs in readable legacy data
+  // must not exhaust the kit's 4096-part limit. No known ID, URL or command splits.
   const result: { text: string; atomic?: boolean }[] = [];
-  const pattern = /(?:[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|toolbox:goals:[A-Za-z0-9_.:-]+|e1:[a-f0-9]{64})/g;
-  let end = 0;
-  for (const match of input.matchAll(pattern)) {
-    result.push({ text: input.slice(end, match.index) }, { text: match[0], atomic: true });
-    end = match.index + match[0].length;
+  const tokens = /(?:[a-z]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|toolbox:goals:[A-Za-z0-9_.:-]+|(?:e1|s1):[a-f0-9]{64}|https?:\/\/[^\s]+|\/nobo-help[^\r\n]*|[\s\S])/gu;
+  let chunk = "";
+  for (const match of input.matchAll(tokens)) {
+    const token = match[0];
+    if (chunk && chunk.length + token.length > 2000) { result.push({ text: chunk, atomic: true }); chunk = ""; }
+    if (token.length > 2000) result.push({ text: token, atomic: true });
+    else chunk += token;
   }
-  result.push({ text: input.slice(end) });
+  if (chunk) result.push({ text: chunk, atomic: true });
   return result;
 }
 function pages(body: string, command: string, r: RecordData, title = "Private · saved detail") {
