@@ -143,7 +143,9 @@ async function assistance(context: AgentFeatureContext, record: RecordData, sour
     };
     // Refuse before calling when even the smallest complete representation cannot fit.
     const minimumOutput = JSON.stringify({ sections: sources.map(s => ({ ...s, text: s.quote })) });
-    if (compose("compact", []).length > 3500 || minimumOutput.length > 4000 || Buffer.byteLength(minimumOutput) > 16000)
+    // Both layouts are permitted; with nonempty sources spaced is one unit shorter.
+    const minimumReplyUnits = Math.min(...(["compact", "spaced"] as const).map(layout => compose(layout, []).length));
+    if (minimumReplyUnits > 3500 || minimumOutput.length > 4000 || Buffer.byteLength(minimumOutput) > 16000)
       return `Optional assistance unavailable: complete exact content cannot fit the reply/model-output limits. Use the deterministic pages or explicitly shorten saved inputs; nothing was dropped and no model was called.\nNext: ${ROUTE} ${fallback}`;
     const input = JSON.stringify({ revision: record.revision, sources, extra, framing: frames, layouts: ["compact", "spaced"] });
     boundedText(input, { label: "Model input", maxBytes: 16000, trim: false });

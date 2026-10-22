@@ -230,3 +230,23 @@ test("finite composition discards a removal at the revision ceiling", async () =
   const raw = f.backend.data.get(f.key("state")); gate.resolve();
   assert.match(await pending, /stale result was discarded/); assert.equal(f.backend.data.get(f.key("state")), raw);
 });
+
+test("minimum of finite layouts admits exact 3500, rejects 3501 before generation, and checks actual layout", async () => {
+  let compact = false, wire = "";
+  const f = createAgentFeatureFixture(feature, { services: { generate: async ({input}) => {
+    const {sources} = JSON.parse(input); wire = JSON.stringify({sections:sources.map((s: {ref:string;quote:string})=>({...s,text:s.quote})), ...(compact ? {layout:"compact"}: {})}); return wire;
+  } } });
+  const id = /audiencebrief-[\da-f-]{36}/.exec(await f.run("create Update"))![0];
+  for(let i=0;i<17;i++) assert.match(await f.run(`fact ${id} add F | required`), /^Saved/);
+  assert.match(await f.run(`audience ${id} add Team | update | 1000`), /^Saved/);
+  const r = JSON.parse(await f.run(`export ${id}`)).record, aid = r.audiences[0].id;
+  assert.match(await f.run(`lead ${id} | L`), /^Saved/);
+  const baseline = await f.run(`polish ${id} ${aid}`); assert.match(baseline, /unsaved suggestion/);
+  const size = 1 + 3500-baseline.length; assert.ok(size > 0 && size <= 1000, `${size}`);
+  assert.match(await f.run(`lead ${id} | ${"L".repeat(size)}`), /^Saved/);
+  const raw = f.backend.data.get(f.key("state")), calls = f.calls.generate;
+  const reply = await f.run(`polish ${id} ${aid}`); assert.match(reply, /unsaved suggestion/); assert.equal(reply.length,3500); assert.equal(f.calls.generate,calls+1); assert.ok(wire.length < 4000);
+  compact = true; assert.match(await f.run(`polish ${id} ${aid}`), /Optional assistance unavailable/); assert.equal(f.calls.generate,calls+2); assert.equal(f.backend.data.get(f.key("state")), raw);
+  assert.match(await f.run(`lead ${id} | ${"L".repeat(size+1)}`), /^Saved/);
+  const over = f.backend.data.get(f.key("state")); assert.match(await f.run(`polish ${id} ${aid}`), /complete exact content cannot fit/); assert.equal(f.calls.generate,calls+2); assert.equal(f.backend.data.get(f.key("state")),over);
+});

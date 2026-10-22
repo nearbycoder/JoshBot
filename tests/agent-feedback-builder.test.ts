@@ -182,3 +182,20 @@ test("finite composition discards a removal at the revision ceiling", async () =
   const raw = f.backend.data.get(f.key("state")); gate.resolve();
   assert.match(await pending, /stale result was discarded/); assert.equal(f.backend.data.get(f.key("state")), raw);
 });
+
+test("both finite layouts preserve complete feedback at the raw-output boundary", async () => {
+  let compact=false, wire="";
+  const f=createAgentFeatureFixture(feature,{services:{generate:async({input})=>{const {sources}=JSON.parse(input);wire=JSON.stringify({sections:sources.map((s:{ref:string;quote:string})=>({...s,text:s.quote})),...(compact?{layout:"compact"}: {})});return wire;}}});
+  const id=await create(f);
+  await f.run(`edit ${id} | situation | ${"S".repeat(1000)}`); await f.run(`behavior ${id} | B`);
+  const baseline=await f.run(`polish ${id}`);assert.match(baseline,/unsaved suggestion/);
+  const growth=Math.floor((4000-wire.length)/2), size=1+growth;assert.ok(size<=1000);
+  await f.run(`behavior ${id} | ${"B".repeat(size)}`);
+  const raw=f.backend.data.get(f.key("state")),calls=f.calls.generate;
+  const spaced=await f.run(`polish ${id}`);assert.match(spaced,/unsaved suggestion/);assert.ok(wire.length===3999||wire.length===4000);assert.equal(f.calls.generate,calls+1);
+  // Explicit layout metadata itself pushes this near-limit provider JSON over its cap.
+  compact=true;assert.match(await f.run(`polish ${id}`),/Optional assistance unavailable/);assert.equal(f.calls.generate,calls+2);assert.equal(f.backend.data.get(f.key("state")),raw);
+  compact=false;await f.run(`behavior ${id} | ${"B".repeat(size+1)}`);const over=f.backend.data.get(f.key("state"));
+  assert.match(await f.run(`polish ${id}`),/complete exact content cannot fit/);assert.equal(f.calls.generate,calls+2);assert.equal(f.backend.data.get(f.key("state")),over);
+  await f.run(`behavior ${id} | B`);const shortSpaced=await f.run(`polish ${id}`);compact=true;const shortCompact=await f.run(`polish ${id}`);assert.match(shortCompact,/unsaved suggestion/);assert.equal(shortCompact.length,shortSpaced.length+1);
+});

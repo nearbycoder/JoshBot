@@ -201,3 +201,34 @@ test("finite composition discards a removal at the revision ceiling", async () =
   const raw = f.backend.data.get(f.key("state")); gate.resolve();
   assert.match(await pending, /stale result was discarded/); assert.equal(f.backend.data.get(f.key("state")), raw);
 });
+
+test("spaced exact 3500 is feasible, spaced 3501 is not, and longer actual layout is postrejected", async () => {
+  for (const target of [3500, 3501]) {
+    let compact = false, rawOutput = "", largest = 0;
+    const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+      const { sources } = JSON.parse(input);
+      largest = Math.max(...sources.map((s: {quote: string}) => Buffer.byteLength(s.quote)));
+      rawOutput = JSON.stringify({ sections: sources.map((s: {ref: string; quote: string}) => ({ ...s, text: s.quote })), ...(compact ? { layout: "compact" } : {}) });
+      return rawOutput;
+    } } });
+    const id = /boundary-[\da-f-]{36}/.exec(await f.run(`create Request | ${"C".repeat(700)}`))![0];
+    for (let i=0;i<(target === 3500 ? 9 : 1);i++) assert.match(await f.run(`offer ${id} | OFFER-BASE`), /^Saved/);
+    const baseline = await f.run(`polish ${id} | warm`); assert.match(baseline, /unsaved suggestion/);
+    const replacement = "OFFER-BASE" + "o".repeat(target === 3500 ? 540 : 541);
+    assert.match(await f.run(`offer ${id} | ${replacement}`), /^Saved/);
+    const r = await record(f, id);
+    const expected = baseline.replaceAll("OFFER-BASE", replacement).replace(/revision \d+\n/, `revision ${r.revision}\n`);
+    assert.equal(expected.length, target);
+    const raw = f.backend.data.get(f.key("state")), calls = f.calls.generate;
+    const reply = await f.run(`polish ${id} | warm`);
+    if (target === 3500) {
+      assert.equal(reply, expected); assert.equal(f.calls.generate, calls+1);
+      assert.equal(rawOutput.length, 2696); assert.equal(Buffer.byteLength(rawOutput), 2696); assert.equal(largest, 700);
+      compact = true;
+      assert.match(await f.run(`polish ${id} | warm`), /Optional assistance unavailable/);
+      assert.equal(f.calls.generate, calls+2); assert.ok(rawOutput.length < 4000);
+    } else { assert.match(reply, /complete exact content cannot fit/); assert.equal(f.calls.generate, calls); }
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+    assert.equal(f.calls.search, 0); assert.equal(f.calls.readContext, 0);
+  }
+});
