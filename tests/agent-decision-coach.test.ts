@@ -376,3 +376,123 @@ test("cancellation and store failures leave meaningful private errors", async ()
     assert.doesNotMatch(reply, /secret storage URL/);
   }
 });
+
+/** Fill with real commands; reject anything that would exceed the runtime cap. */
+async function nearByteQuota() {
+  const backing = retryingStore();
+  const store: AgentFeatureStore = {
+    read: key => backing.store.read(key),
+    update: (key, initial, transform) => backing.store.update(key, initial, current => {
+      const next = transform(current);
+      assert.ok(Buffer.byteLength(JSON.stringify(next.value), "utf8") <= 479_000,
+        "Every accepted write must remain below the parent's byte cap");
+      return next;
+    }),
+  };
+  const ctx = createAgentTestContext({ store });
+  const decisions: Awaited<ReturnType<typeof setup>>[] = [];
+  for (let i = 0; i < 11; i++) decisions.push(await setup(ctx));
+  let blocked: (typeof decisions)[number] | undefined;
+  let lastEvidence = "";
+  for (const decision of decisions) {
+    for (let i = 0; i < 16; i++) {
+      const before = await snapshot(ctx);
+      const reply = await run(ctx, `evidence ${decision.d} add all | ${"源".repeat(120)} | ${"界".repeat(600)}`);
+      if (reply.includes("Storage quota exceeded")) {
+        assert.match(reply, /UTF-8 bytes.*including lifecycle reservations/);
+        assert.match(reply, /delete <decision-id> confirm/);
+        assert.deepEqual(await snapshot(ctx), before, "Quota rejection cannot lose accepted data");
+        blocked = decision;
+        break;
+      }
+      lastEvidence = id(reply, "e");
+    }
+    if (blocked) break;
+  }
+  assert.ok(blocked, "Unicode content must reach byte quota before all count limits");
+  return { ctx, decisions, blocked, lastEvidence, retries: backing.retries };
+}
+
+test("UTF-8 quota reserves all accepted ratings, worst-case JSON text and archival capacity", async () => {
+  const { ctx, decisions, blocked } = await nearByteQuota();
+  const before = await snapshot(ctx);
+  const encoded = JSON.stringify(before);
+  assert.ok(Buffer.byteLength(encoded, "utf8") > encoded.length, "Measure bytes, not string length");
+  assert.match(await run(ctx, "show"), /Storage: [\d,]+ UTF-8 bytes; [\d,]+ including reserved edits \/ 479,000-byte budget/);
+  assert.match(await run(ctx, `create No room | ${"\ud800".repeat(1200)}`), /Storage quota exceeded/);
+  assert.deepEqual(await snapshot(ctx), before);
+
+  // Even after rejecting new content, every accepted option/criterion pair can
+  // receive its maximum reason; labels/weights can change and archives still fit.
+  for (const decision of decisions) {
+    const options = [decision.train, decision.bus];
+    const criteria = [decision.reliability, decision.affordability];
+    for (const [index, o] of options.entries()) {
+      assert.match(await run(ctx, `options ${decision.d} rename ${o} | ${"\ud800".repeat(78)}o${index}`), /Renamed/);
+      for (const c of criteria) {
+        assert.match(await run(ctx, `score ${decision.d} ${o} ${c} 9.99 | ${"\ud800".repeat(200)}`), /Rating saved/);
+      }
+    }
+    for (const [index, c] of criteria.entries()) {
+      assert.match(await run(ctx, `criteria ${decision.d} rename ${c} | ${"\ud800".repeat(78)}c${index}`), /Renamed/);
+      assert.match(await run(ctx, `criteria ${decision.d} weight ${c} 99.99`), /Subjective weight updated/);
+    }
+    assert.match(await run(ctx, `score ${decision.d} ${decision.train} ${decision.reliability} unknown | ${"\ud800".repeat(200)}`), /Rating saved/);
+    assert.match(await run(ctx, `archive ${decision.d}`), /Workspace archived/);
+  }
+  const processed = Buffer.byteLength(JSON.stringify(await snapshot(ctx)), "utf8");
+  assert.ok(processed > 400_000 && processed <= 479_000, `Processed state is ${processed} bytes`);
+  assert.match(await run(ctx, `delete ${blocked.d} confirm`), /deleted/);
+  id(await run(ctx, `create Freed capacity | ${"\ud800".repeat(1200)}`), "d");
+});
+
+test("concurrent Unicode additions recheck the byte reservation on transaction retry", async () => {
+  const { ctx, blocked, lastEvidence, retries } = await nearByteQuota();
+  assert.match(await run(ctx, `evidence ${blocked.d} remove ${lastEvidence} confirm`), /Supplied evidence removed/);
+  const usage = (await run(ctx, "show")).match(/; ([\d,]+) including reserved edits/);
+  assert.ok(usage);
+  const remaining = 479_000 - Number(usage[1].replaceAll(",", ""));
+  const overhead = Buffer.byteLength(JSON.stringify({ id: "e_00000000-0000-4000-8000-000000000000", optionId: null, source: "boundary", text: "" }), "utf8") + 1;
+  const excerpt = "\ud800".repeat(Math.ceil((remaining * 0.6 - overhead) / 6));
+  assert.ok(excerpt.length > 0 && excerpt.length <= 600);
+  const before = await ctx.store.read<{ decisions: { id: string; evidence: unknown[] }[] }>("workspace");
+  const retryCount = retries();
+  const replies = await Promise.all([
+    run(ctx, `evidence ${blocked.d} add all | boundary | ${excerpt}`),
+    run(ctx, `evidence ${blocked.d} add all | boundary | ${excerpt}`),
+  ]);
+  assert.equal(replies.filter(reply => reply.startsWith("Added supplied evidence")).length, 1);
+  assert.equal(replies.filter(reply => reply.includes("Storage quota exceeded")).length, 1);
+  assert.ok(retries() > retryCount);
+  const after = await ctx.store.read<NonNullable<typeof before>>("workspace");
+  assert.equal(after?.decisions.find(d => d.id === blocked.d)?.evidence.length,
+    before!.decisions.find(d => d.id === blocked.d)!.evidence.length + 1);
+});
+
+test("oversized encoded draft input gets actionable guidance without a model call or state change", async () => {
+  const { ctx, d, train, bus, reliability, affordability } = await setup();
+  const criteria = [reliability, affordability];
+  for (let i = 0; i < 3; i++) criteria.push(id(await run(ctx, `criteria ${d} add Criterion ${i} | 1`), "c"));
+  for (const o of [train, bus]) {
+    for (const c of criteria) await run(ctx, `score ${d} ${o} ${c} 8 | ${"\ud800".repeat(200)}`);
+  }
+  const evidence: string[] = [];
+  for (let i = 0; i < 16; i++) evidence.push(id(await run(ctx, `evidence ${d} add all | ${"\ud800".repeat(120)} | ${"\ud800".repeat(600)}`), "e"));
+  let calls = 0;
+  ctx.services.generate = async ({ instructions, input }) => {
+    calls++;
+    assert.ok(instructions.length <= 24_000);
+    assert.ok(input.length <= 80_000);
+    const data = JSON.parse(input);
+    return JSON.stringify({ items: [{ kind: "question", optionId: null, text: "What evidence is still missing?", evidenceIds: [data.evidence[0].id] }] });
+  };
+  const before = await snapshot(ctx);
+  assert.match(await run(ctx, `draft ${d} questions`), /80,000-character source limit after JSON encoding/);
+  assert.equal(calls, 0);
+  assert.deepEqual(await snapshot(ctx), before);
+  for (const e of evidence.slice(0, 8)) await run(ctx, `evidence ${d} remove ${e} confirm`);
+  const smaller = await snapshot(ctx);
+  assert.match(await run(ctx, `draft ${d} questions`), /Model-generated questions draft/);
+  assert.equal(calls, 1);
+  assert.deepEqual(await snapshot(ctx), smaller);
+});
