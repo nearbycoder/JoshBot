@@ -14,7 +14,7 @@ function fixture(items: AgentContextItem[] = [], overrides: Partial<AgentFeature
   const calls: AgentContextKind[][] = [];
   const context = createAgentTestContext({
     services: {
-      readContext: async (kinds) => { calls.push([...(kinds ?? [])]); return items; },
+      readContext: async (kinds) => { calls.push([...(kinds ?? [])]); return items.filter(item => !item || !["reminder", "follow-up", "goal", "note", "event"].includes(item.kind) ? kinds?.includes("note") : kinds?.includes(item.kind)); },
       generate: async () => { assert.fail("Morning briefs must work without a model."); },
       search: async () => { assert.fail("Morning briefs must not search the web."); },
     },
@@ -105,8 +105,7 @@ async function importTimedThroughRuntime(calendar: CalendarIntegration, runtime:
       const output = await runtime.runAgentFeature(feature, "brief", owner, {
         ...options, now: new Date(instant), timezone,
         services: { ...services, readContext: async (kinds) => {
-          assert.ok(kinds?.includes("event"));
-          return calendar.readCalendarEventContext(calendarStore, timezone);
+          return kinds?.includes("event") ? calendar.readCalendarEventContext(calendarStore, timezone) : [];
         } },
       });
       assert.deepEqual([...data], saved, "Briefing through the runtime must not alter calendar or feature state");
@@ -163,7 +162,7 @@ test("complete flow selects sources and focus, produces a cited brief, and reset
   assert.match(result, /11:00 GMT-5.*12:00 GMT-5.*Launch planning.*\[event event-1\]/u);
   assert.match(result, /Source excerpt: Awaiting the design sign-off\./u);
   assert.doesNotMatch(result, /Private journal/u);
-  assert.deepEqual(calls, [["reminder", "follow-up", "goal", "note", "event"]]);
+  assert.deepEqual(calls, [["goal", "note"], ["event"], ["follow-up"], ["reminder"]]);
   const saved = await context.store.read("settings");
   assert.match(await run("brief renew"), /Focus: renew/u);
   assert.deepEqual(await context.store.read("settings"), saved);
@@ -643,7 +642,8 @@ test("an in-flight brief never overwrites a newer settings edit", async () => {
   let complete!: (items: AgentContextItem[]) => void;
   let started!: () => void;
   const entered = new Promise<void>((resolve) => { started = resolve; });
-  context.services.readContext = () => { started(); return new Promise((resolve) => { complete = resolve; }); };
+  const sourceResult = new Promise<AgentContextItem[]>((resolve) => { complete = resolve; });
+  context.services.readContext = async kinds => { started(); return (await sourceResult).filter(item => kinds?.includes(item.kind)); };
   const pending = run("brief");
   await entered;
   await run("settings focus latest");

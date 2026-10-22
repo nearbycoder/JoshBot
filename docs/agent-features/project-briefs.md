@@ -1,6 +1,6 @@
 # Project context and status briefs
 
-Use `/nobo-help agent project-briefs help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent project-briefs help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `project-briefs` keeps a private context pack for a project: its purpose, constraints, open questions, user-recorded decisions, and explicitly selected personal sources. A brief refreshes those references, quotes useful excerpts and source-reported status, and optionally adds a cited synthesis. It does not infer a numeric progress score, change source records, or post to a channel.
 
@@ -90,3 +90,7 @@ git diff --check
 ```
 
 Tests use isolated JSON-cloning stores and fake context/generation services. Coverage includes the complete command flow, source selection and freshness, project/owner isolation, limits, malformed input/state, unknown citations, service failures, cancellation, retry purity, and refresh/edit/archive/delete races. Quota tests fill admission capacity, reject growth atomically, expand every accepted source to worst-case JSON-escaped Unicode, generate briefs, archive/restore across revision growth, and delete/recreate while checking that every write remains below 480,000 UTF-8 bytes.
+
+## Source capacity recovery (foundation follow-up)
+
+Source reads partition the explicitly linked/discovered kinds into bounded sequential groups. Capacity failure preserves the project and previous brief. Use `/nobo-help agent project-briefs list`, then `show <project-id> brief`; `sources note` discovers one kind, and `unlink <project-id> <kind> <source-id>` can reduce linked kinds before the next `brief <project-id>`. A single-kind failure needs fewer/smaller records in that original source tool; project relevance text does not narrow the upstream read. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

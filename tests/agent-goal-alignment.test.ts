@@ -1,0 +1,411 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
+import feature from "../lib/agent-features/goal-alignment.js";
+import metadata from "../lib/agent-features/goal-alignment.metadata.js";
+import { AgentContextCapacityError } from "../lib/agent-features/budgets.js";
+
+import { goals } from "../lib/toolbox/goals.js";
+import { runFeature } from "../lib/toolbox/core.js";
+import { createAgentFeatureServices, createProductionContextAdapters } from "../lib/agent-features/services.js";
+import type { AgentContextItem } from "../lib/agent-features/types.js";
+const CREATE = "create November effort", PREFIX = "board", TITLE = "November effort";
+const owner = { teamId: "TFIXTURE", userId: "UFIXTURE", channelId: "CFIXTURE" }, now = new Date("2026-10-22T15:00:00.000Z");
+const toolboxKey = `nobo:toolbox:v1:${owner.teamId}:${owner.userId}:goals`;
+function integrated(signal = new AbortController().signal) {
+  const reads: string[] = [], backend = createMemoryAgentBackend({ beforeGet: key => { reads.push(key); } });
+  const adapters = createProductionContextAdapters({ redis: async () => { throw new Error("No legacy Redis allowed"); }, evaluateAccess: async () => { throw new Error("No legacy channel source allowed"); } });
+  const services = createAgentFeatureServices(backend, owner, signal, { now, timezone: "America/Chicago", featureId: feature.id }, { ...adapters, readCalendar: async () => { throw new Error("No calendar"); }, readApprovedMemory: async () => { throw new Error("No memory"); } });
+  const f = createAgentFeatureFixture(feature, { backend, owner, services: { readContext: kinds => { assert.deepEqual(kinds, ["goal"]); return services.readContext(kinds); } } });
+  const tool = (command: string) => runFeature(goals, command, owner, undefined, backend, now);
+  const entries = () => JSON.parse(backend.data.get(toolboxKey)!).entries as any[];
+  const add = async (title: string) => { const reply = await tool(`create ${title} | 10 | tasks | 2026-10-30`); assert.match(reply, /0\/10 tasks/); const e = entries().find(e => e.title === title); return { raw: e.id as string, source: `toolbox:goals:${e.id}` }; };
+  return { f, reads, backend, services, tool, entries, add };
+}
+async function populate(f: ReturnType<typeof createAgentFeatureFixture>, id: string) {
+  const g = uid(await f.run(`local ${id} | Local goal`), "local");
+  for (let i = 0; i < 8; i++) { const a = uid(await f.run(`activity ${id} add Activity${i} | 120`), "activity"); await f.run(`link ${id} ${a} | ${g} | 75 | ${"界".repeat(100)}`); }
+}
+async function allSourcePages(f: ReturnType<typeof createAgentFeatureFixture>, initial: string) {
+  let command = initial, combined = "", pages = 0;
+  for (;;) { const before = f.calls.readContext, reply = await f.run(command); assert.equal(f.calls.readContext - before, 1); assert.ok(reply.length <= 3500); assert.ok(reply.isWellFormed()); assert.match(reply, /s1:[a-f0-9]{64}/); combined += reply; pages++; assert.ok(pages < 100); const next = /\nNext: (\/nobo-help agent [^\n]+)$/.exec(reply); if (!next) return { combined, pages }; assert.match(next[1], / rev \d+-[a-f0-9]{64} source s1:[a-f0-9]{64}/); command = next[1].slice(route.length); }
+}
+test("actual toolbox→production services/adapters→runtime: 90 aligned/30 unallocated with honest goal semantics", async () => {
+  const x = integrated(), { f } = x, open = await x.add("Onboarding target"), done = await x.add("Reached numeric target");
+  await x.tool(`progress ${done.raw} | 10 | Numeric current equals target`);
+  const id = await setup(f); x.reads.length = 0;
+  const discovery = await f.run(`goals ${id}`); assert.match(discovery, /Complete owned-goal discovery: 2\/100/); assert.match(discovery, /Status done; civil deadline 2026-10-30/); assert.match(discovery, /Status open/); assert.equal(x.reads.filter(k => k === toolboxKey).length, 1);
+  const before = x.backend.data.get(toolboxKey); assert.match(await f.run(`select ${id} | ${open.source}`), /Saved privately/);
+  const a = uid(await f.run(`activity ${id} add Write onboarding guide | 120`), "activity"); await f.run(`link ${id} ${a} | ${open.source} | 75 | Helps new users finish setup`);
+  const local = uid(await f.run(`local ${id} | Explicit local outcome`), "local"), savedBeforeOver = f.backend.data.get(f.key("state"));
+  assert.match(await f.run(`link ${id} ${a} | ${local} | 26 | Too much`), /exceed 100/); assert.equal(f.backend.data.get(f.key("state")), savedBeforeOver);
+  const priorCalls = f.calls.readContext, report = await f.run(`review ${id}`); assert.match(report, /aligned 90; unallocated 30/); assert.match(report, /75% × 120 = 90 minutes/); assert.match(report, /historical/); assert.match(report, /not proof of completion/); assert.equal(f.calls.readContext, priorCalls); assert.equal(x.backend.data.get(toolboxKey), before);
+  const s = (await state(f)).records[0].goals[0]; assert.equal(s.snapshot.dueAt, "2026-10-30"); assert.equal(s.snapshot.status, "open"); assert.equal(s.snapshot.metadata.current, 0); assert.equal(s.snapshot.metadata.target, 10); assert.equal(s.snapshot.metadata.completedAt, undefined); assert.deepEqual(s.owner, { teamId: owner.teamId, userId: owner.userId });
+  assert.deepEqual(JSON.parse(await reconstruct(f, id)), JSON.parse(await f.run(`export ${id}`)));
+  await f.run(`local-edit ${id} ${local} | Changed local label`); await f.run(`activity ${id} edit ${a} | label | Edited activity`); await f.run(`activity ${id} edit ${a} | minutes | 240`); await f.run(`link ${id} ${a} | ${open.source} | 50 | Changed allocation`);
+  await f.run(`unlink ${id} ${a} ${open.source} confirm`); await f.run(`activity ${id} clear ${a} label confirm`); await f.run(`activity ${id} remove ${a} confirm`); await f.run(`goal-remove ${id} ${local} confirm`); await f.run(`goal-remove ${id} ${open.source} confirm`);
+  assert.deepEqual((await state(f)).records[0].goals, []); assert.equal(x.backend.data.get(toolboxKey), before); assert.equal(f.calls.generate, 0); assert.equal(f.calls.search, 0);
+  assert.ok(x.reads.every(k => k === toolboxKey || k.startsWith(`nobo:agents:v1:${owner.teamId}:${owner.userId}:goal-alignment:`)));
+});
+test("100 real toolbox goals are fully discoverable with source-set continuations, explicit 10 selection", async () => {
+  const x = integrated(), refs: string[] = []; for (let i = 0; i < 100; i++) refs.push((await x.add(`Goal ${String(i).padStart(3, "0")}`)).source);
+  const id = await setup(x.f), { combined, pages } = await allSourcePages(x.f, `goals ${id}`); assert.ok(pages > 1); for (const ref of refs) assert.ok(combined.includes(ref));
+  assert.match(await x.f.run(`source ${id} ${refs[99]}`), /Personal toolbox \/ goals/);
+  for (const ref of refs.slice(0, 10)) assert.match(await x.f.run(`select ${id} | ${ref}`), /Saved privately/);
+  const prior = x.f.calls.readContext; assert.match(await x.f.run(`select ${id} | ${refs[10]}`), /Maximum 10/); assert.equal(x.f.calls.readContext, prior);
+  const first = await x.f.run(`goals ${id}`), next = /\nNext: (\/nobo-help agent [^\n]+)$/.exec(first)![1];
+  const entries = x.entries(); entries.reverse(); const rawState = JSON.parse(x.backend.data.get(toolboxKey)!); rawState.entries = entries; x.backend.data.set(toolboxKey, JSON.stringify(rawState));
+  assert.doesNotMatch(await x.f.run(next.slice(route.length)), /stale source/);
+  await x.tool(`due ${refs[99].slice("toolbox:goals:".length)} | 2026-11-01`);
+  assert.match(await x.f.run(next.slice(route.length)), /Goal source set changed/);
+  const over = JSON.parse(x.backend.data.get(toolboxKey)!); over.entries.push({ ...structuredClone(over.entries[0]), id: randomUUID() }); x.backend.data.set(toolboxKey, JSON.stringify(over));
+  assert.match(await x.f.run(`goals ${id}`), /could not be completed safely/);
+});
+test("fresh change/replacement/revocation/deletion preserves historical sources and uses one read each", async () => {
+  const x = integrated(), g = await x.add("Goal"), id = await setup(x.f); await x.f.run(`select ${id} | ${g.source}`);
+  const original = (await state(x.f)).records[0].goals[0]; await x.tool(`progress ${g.raw} | 10 | Recorded target reached`);
+  let before = x.f.calls.readContext; await x.f.run(`refresh ${id}`); assert.equal(x.f.calls.readContext - before, 1);
+  let saved = (await state(x.f)).records[0].goals[0]; assert.equal(saved.verification, "changed"); assert.equal(saved.snapshot.metadata.current, 0); assert.equal(saved.fingerprint, original.fingerprint); assert.notEqual(saved.latestFingerprint, original.fingerprint);
+  assert.match(await x.f.run(`select ${id} | ${g.source}`), /Already selected/);
+  before = x.f.calls.readContext; await x.f.run(`replace ${id} | ${g.source} | confirm`); assert.equal(x.f.calls.readContext - before, 1);
+  saved = (await state(x.f)).records[0].goals[0]; assert.equal(saved.snapshot.status, "done"); assert.equal(saved.snapshot.metadata.completedAt, undefined);
+  const sourceState = JSON.parse(x.backend.data.get(toolboxKey)!); sourceState.entries[0].teamId = "TFOREIGN"; x.backend.data.set(toolboxKey, JSON.stringify(sourceState));
+  await x.f.run(`refresh ${id}`); saved = (await state(x.f)).records[0].goals[0]; assert.equal(saved.verification, "absent"); assert.equal(saved.snapshot.metadata.current, 10); assert.equal(saved.latestFingerprint, "");
+  assert.match(await x.f.run(`review ${id}`), /not proven deleted everywhere/);
+  delete sourceState.entries[0].teamId; x.backend.data.set(toolboxKey, JSON.stringify(sourceState)); await x.f.run(`refresh ${id}`); assert.equal((await state(x.f)).records[0].goals[0].verification, "unchanged");
+  await x.tool(`delete ${g.raw} confirm`); await x.f.run(`refresh ${id}`); assert.equal((await state(x.f)).records[0].goals[0].verification, "absent");
+  const preserved = x.f.backend.data.get(x.f.key("state")); assert.match(await x.f.run(`replace ${id} | ${g.source} | confirm`), /absent/); assert.equal(x.f.backend.data.get(x.f.key("state")), preserved);
+});
+test("exact 8000 UTF-8 selected text boundary, source coverage and complete URL/detail retention", async () => {
+  const x = integrated(), g = await x.add("Boundary"), id = await setup(x.f);
+  // Start with a real toolbox-created goal and exercise the actual adapter. Body is
+  // source-owned serialized data; adjust its UTF-8 length, not the consumer shape.
+  let raw = JSON.parse(x.backend.data.get(toolboxKey)!); const suffix = "\n" + JSON.stringify(raw.entries[0].data), payloadBytes = 8000 - Buffer.byteLength(suffix);
+  raw.entries[0].body = "界".repeat(Math.floor(payloadBytes / 3)) + "x".repeat(payloadBytes % 3); x.backend.data.set(toolboxKey, JSON.stringify(raw));
+  assert.match(await x.f.run(`select ${id} | ${g.source}`), /Saved privately/); assert.equal(Buffer.byteLength((await state(x.f)).records[0].goals[0].snapshot.text), 8000);
+  assert.deepEqual(JSON.parse(await reconstruct(x.f, id)), JSON.parse(await x.f.run(`export ${id}`)));
+  raw.entries[0].body += "x"; x.backend.data.set(toolboxKey, JSON.stringify(raw)); const saved = x.f.backend.data.get(x.f.key("state"));
+  assert.match(await x.f.run(`replace ${id} | ${g.source} | confirm`), /8000 UTF-8/); assert.equal(x.f.backend.data.get(x.f.key("state")), saved);
+  const actual = (await x.services.readContext(["goal"]))[0]; actual.text = "exact source"; actual.sourceUrl = "https://example.test/a?x=1&y=%7C#frag"; actual.metadata!.textTruncated = true;
+  const f = createAgentFeatureFixture(feature, { services: { readContext: async kinds => { assert.deepEqual(kinds, ["goal"]); return [actual]; } } }), board = await setup(f);
+  await f.run(`select ${board} | ${g.source}`); assert.match(await f.run(`review ${board}`), /adapter excerpt \(truncated\)/); assert.ok((await reconstruct(f, board)).includes(actual.sourceUrl));
+});
+test("semantic malformed denominators, enums, due/history and owner provenance preserve whole roots", async () => {
+  const x = integrated(), g = await x.add("Malformed checks"), id = await setup(x.f); await x.f.run(`select ${id} | ${g.source}`);
+  for (const mutate of [(r: any) => { r.entries[0].data.target = 0; }, (r: any) => { r.entries[0].data.history = [{ at: now.toISOString(), value: -1, note: "negative" }]; }, (r: any) => { r.entries[0].data.due = "2026-02-30"; }]) {
+    const original = x.backend.data.get(toolboxKey)!, bad = JSON.parse(original); mutate(bad); x.backend.data.set(toolboxKey, JSON.stringify(bad)); const before = x.backend.data.get(x.f.key("state"));
+    assert.doesNotMatch(await x.f.run(`refresh ${id}`), /Saved privately/); assert.equal(x.backend.data.get(x.f.key("state")), before); x.backend.data.set(toolboxKey, original);
+  }
+  const original = x.f.backend.data.get(x.f.key("state"))!;
+  for (const mutate of [(r: any) => { r.records[0].goals[0].snapshot.metadata.target = 0; }, (r: any) => { r.records[0].goals[0].verification = ["captured"]; }, (r: any) => { r.records[0].goals[0].owner.userId = "UFOREIGN"; }]) {
+    const bad = JSON.parse(original); mutate(bad); const encoded = JSON.stringify(bad); x.backend.data.set(x.f.key("state"), encoded); assert.match(await x.f.run(`delete ${id} confirm`), /preserved/i); assert.equal(x.backend.data.get(x.f.key("state")), encoded);
+  }
+});
+test("late context edit/delete/abort and source failure do not save stale snapshots", async () => {
+  const x = integrated(); await x.add("One goal"); const snapshot = await x.services.readContext(["goal"]);
+  for (const mode of ["edit", "delete", "abort", "error"]) {
+    const started = deferred<void>(), done = deferred<AgentContextItem[]>();
+    const f = createAgentFeatureFixture(feature, { services: { readContext: async () => { started.resolve(); return done.promise; } } }), id = await setup(f), controller = new AbortController(), pending = f.run(`select ${id} | ${snapshot[0].id}`, { signal: controller.signal }); await started.promise;
+    if (mode === "edit") await f.run(`edit ${id} | title | Changed`); if (mode === "delete") await f.run(`delete ${id} confirm`); if (mode === "abort") controller.abort();
+    if (mode === "error") done.reject(new Error("FAKE_SECRET_context")); else done.resolve(snapshot);
+    if (mode === "abort") await assert.rejects(pending, /abort/i); else assert.doesNotMatch(await pending, /FAKE_SECRET|Saved privately/);
+    assert.ok((await state(f)).records.every((r: any) => !r.goals.length)); assert.equal(f.calls.readContext, 1);
+  }
+});
+test("max activity/local counts, lifecycle ceiling, capacity and legacy deletion", async () => {
+  const f = createAgentFeatureFixture(feature), id = await setup(f);
+  for (let i = 0; i < 10; i++) await f.run(`local ${id} | Local ${i}`); assert.match(await f.run(`local ${id} | Extra`), /Maximum 10/);
+  for (let i = 0; i < 30; i++) await f.run(`activity ${id} add Activity${i} | 120`); assert.match(await f.run(`activity ${id} add Extra | 1`), /Maximum 30/);
+  const s = await state(f); for (const a of s.records[0].activities) a.shares = s.records[0].goals.map((g: any) => ({ goalId: g.id, percent: 10, reason: "界".repeat(100) }));
+  f.backend.data.set(f.key("state"), JSON.stringify(s)); assert.ok(Buffer.byteLength(JSON.stringify(s)) > 49152);
+  assert.match(await f.run(`edit ${id} | title | Ordinary`), /quota/);
+  assert.match(await f.run(`unlink ${id} ${s.records[0].activities[0].id} ${s.records[0].goals[0].id} confirm`), /Saved privately/); assert.ok(Buffer.byteLength(JSON.stringify(await state(f))) > 49152);
+  assert.match(await f.run(`goal-remove ${id} ${s.records[0].goals[0].id} confirm`), /Saved privately/);
+  const g = createAgentFeatureFixture(feature); for (let i = 0; i < 10; i++) await setup(g); assert.match(await g.run(CREATE), /Maximum 10/);
+  const x = integrated(), source = await x.add("Ceiling refresh"), board = await setup(x.f); await x.f.run(`select ${board} | ${source.source}`); const ceiling = await state(x.f); ceiling.records[0].revision = 999999999; x.f.backend.data.set(x.f.key("state"), JSON.stringify(ceiling));
+  assert.match(await x.f.run(`refresh ${board}`), /Revision limit/); assert.match(await x.f.run(`goal-remove ${board} ${source.source} confirm`), /Saved privately/);
+});
+
+const route = `/nobo-help agent ${feature.id} `;
+const uid = (reply: string, prefix: string) => { const m = reply.match(new RegExp(`${prefix}-[0-9a-f-]{36}`)); assert.ok(m, reply); return m[0]; };
+const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+async function state(f: ReturnType<typeof createAgentFeatureFixture>): Promise<any> { return f.store().read("state"); }
+async function setup(f: ReturnType<typeof createAgentFeatureFixture>) { return uid(await f.run(CREATE), PREFIX); }
+async function reconstruct(f: ReturnType<typeof createAgentFeatureFixture>, id: string): Promise<string> {
+  let command = `show ${id}`, body = "";
+  for (let i = 0; i < 100; i++) {
+    const reply = await f.run(command); assert.ok(reply.length <= 3500, reply.length.toString()); assert.ok(reply.isWellFormed());
+    const h = /^.*\nPage \d+\/\d+\n/.exec(reply); assert.ok(h, reply);
+    const next = /\nNext: (\/nobo-help agent [^\n]+)$/.exec(reply);
+    body += reply.slice(h[0].length, next?.index ?? reply.length);
+    if (!next) return body;
+    assert.match(next[1], / rev \d+-[a-f0-9]{64}$/);
+    command = next[1].slice(route.length);
+  }
+  assert.fail("Continuation did not terminate.");
+}
+test("whole-root schema failures preserve bytes; owner and workspace scopes stay isolated", async () => {
+  const f = createAgentFeatureFixture(feature), id = await setup(f), original = f.backend.data.get(f.key("state"))!;
+  for (const owner of [{ userId: "UOTHER", teamId: "TFIXTURE" }, { userId: "UFIXTURE", teamId: "TOTHER" }]) {
+    assert.match(await f.run(`show ${id}`, { owner }), /not found/i);
+    assert.match(await f.run(`delete ${id} confirm`, { owner }), /not found/i);
+  }
+  for (const corrupt of ['null', '{broken', JSON.stringify({ version: 2, records: [] }), JSON.stringify({ version: 1, records: [{ ...JSON.parse(original).records[0], revision: "1" }] })]) {
+    f.backend.data.set(f.key("state"), corrupt);
+    assert.match(await f.run(`delete ${id} confirm`), /saved data|preserved|read safely/i);
+    assert.equal(f.backend.data.get(f.key("state")), corrupt);
+  }
+  f.backend.data.set(f.key("state"), original);
+  assert.equal(JSON.parse(await reconstruct(f, id)).record.id, id);
+});
+test("backend synchronous, rejected and after-dispatch exceptions never expose diagnostics", async () => {
+  for (const operation of ["get-sync", "get-reject", "cas-sync", "cas-reject", "cas-after"]) {
+    const backend = createMemoryAgentBackend(), f = createAgentFeatureFixture(feature, { backend });
+    const id = await setup(f), oldGet = backend.get, oldCas = backend.compareSet;
+    const secret = "FAKE_SECRET_diagnostic_9321";
+    if (operation === "get-sync") backend.get = () => { throw new Error(secret); };
+    if (operation === "get-reject") backend.get = () => Promise.reject(new Error(secret));
+    if (operation === "cas-sync") backend.compareSet = () => { throw new Error(secret); };
+    if (operation === "cas-reject") backend.compareSet = () => Promise.reject(new Error(secret));
+    if (operation === "cas-after") backend.compareSet = async (...args) => { await oldCas(...args); throw new Error(secret); };
+    const reply = await f.run(`edit ${id} | title | Updated`);
+    assert.doesNotMatch(reply, new RegExp(secret)); assert.match(reply, /inspect.*before repeating/i);
+    backend.get = oldGet; backend.compareSet = oldCas;
+    assert.equal((await state(f)).records[0].title, operation === "cas-after" ? "Updated" : TITLE);
+  }
+});
+test("real CAS conflicts retry unrelated records but reject same-target edits and deletion", async () => {
+  for (const kind of ["unrelated", "same", "delete"]) {
+    let armed = false, key = "", target = "", other = "";
+    const backend = createMemoryAgentBackend({ beforeCompareSet(k) {
+      if (!armed || k !== key) return; armed = false;
+      const s = JSON.parse(backend.data.get(k)!);
+      if (kind === "delete") s.records = s.records.filter((r: any) => r.id !== target);
+      else s.records.find((r: any) => r.id === (kind === "same" ? target : other)).title = "Concurrent";
+      backend.data.set(k, JSON.stringify(s));
+    } });
+    const f = createAgentFeatureFixture(feature, { backend }); target = await setup(f); other = await setup(f); key = f.key("state"); armed = true;
+    const reply = await f.run(`edit ${target} | title | Intended`), s = await state(f);
+    assert.equal(backend.calls.conflicts, 1);
+    if (kind === "unrelated") { assert.match(reply, /Saved privately/); assert.equal(s.records.find((r: any) => r.id === other).title, "Concurrent"); assert.equal(s.records.find((r: any) => r.id === target).title, "Intended"); }
+    else { assert.match(reply, /changed|not found/i); assert.ok(!s.records.some((r: any) => r.title === "Intended")); }
+  }
+});
+test("ceiling refuses writes, permits exact removals and rejects old content-stamped continuation", async () => {
+  const f = createAgentFeatureFixture(feature), id = await setup(f); await populate(f, id);
+  const s = await state(f); s.records[0].revision = 999999999; f.backend.data.set(f.key("state"), JSON.stringify(s));
+  const before = await f.run(`show ${id}`), continuation = /Next: (\/nobo-help agent [^\n]+)/.exec(before)?.[1]; assert.ok(continuation, before);
+  assert.match(await f.run(`edit ${id} | title | Refuse`), /Revision limit/);
+  const reply = await f.run(`clear ${id} title confirm`); assert.match(reply, /Saved privately/);
+  assert.equal((await state(f)).records[0].revision, 999999999);
+  assert.match(await f.run(continuation.slice(route.length)), /stale continuation/i);
+  assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
+  assert.equal((await state(f)).records.length, 0);
+});
+
+test("canonical saved source key order is valid; content-bound refresh survives only unrelated CAS changes", async () => {
+  const x = integrated(), g = await x.add("Key order"), id = await setup(x.f), other = await setup(x.f); await x.f.run(`select ${id} | ${g.source}`);
+  const s = await state(x.f), source = s.records[0].goals[0];
+  source.snapshot = Object.fromEntries(Object.entries(source.snapshot).reverse()); source.snapshot.metadata = Object.fromEntries(Object.entries(source.snapshot.metadata).reverse());
+  x.backend.data.set(x.f.key("state"), JSON.stringify(s)); assert.equal(JSON.parse(await x.f.run(`export ${id}`)).record.goals[0].id, g.source);
+  const cas = x.backend.compareSet;
+  for (const mode of ["unrelated", "same", "delete"]) {
+    let armed = true;
+    x.backend.compareSet = async (key, previous, next, ttl) => {
+      if (armed && key === x.f.key("state")) { armed = false; const current = JSON.parse(x.backend.data.get(key)!); if (mode === "delete") current.records = current.records.filter((r: any) => r.id !== id); else current.records.find((r: any) => r.id === (mode === "same" ? id : other)).title = mode; x.backend.data.set(key, JSON.stringify(current)); }
+      return cas(key, previous, next, ttl);
+    };
+    // Change source so the refresh really dispatches CAS even with a fixed clock.
+    await x.tool(`target ${g.raw} | ${mode === "unrelated" ? 11 : mode === "same" ? 12 : 13}`);
+    const calls = x.f.calls.readContext, reply = await x.f.run(`refresh ${id}`); assert.equal(x.f.calls.readContext - calls, 1);
+    if (mode === "unrelated") assert.match(reply, /Saved privately/); else assert.match(reply, /changed|not found/);
+  }
+  x.backend.compareSet = cas;
+  assert.ok(!(await state(x.f)).records.some((r: any) => r.id === id));
+});
+
+test("dense identifier-rich legacy details reconstruct without exhausting pagination atoms", async () => {
+  const f = createAgentFeatureFixture(feature), id = await setup(f), gid = uid(await f.run(`local ${id} | Target`), "local");
+  const s = await state(f), r = s.records[0], dense = `${gid} `.repeat(7).trim();
+  // A schema-valid legacy record above admission/export quotas remains inspectable.
+  r.goals = Array.from({ length: 10 }, (_, i) => ({ kind: "local", id: i ? `local-${randomUUID()}` : gid, label: "Target" }));
+  r.activities = Array.from({ length: 30 }, () => ({ id: `activity-${randomUUID()}`, label: "Plan", minutes: 100, shares: r.goals.map((g: any) => ({ goalId: g.id, percent: 10, reason: dense })) }));
+  f.backend.data.set(f.key("state"), JSON.stringify(s));
+  assert.deepEqual(JSON.parse(await reconstruct(f, id)).record, r);
+  assert.match(await f.run(`goal-remove ${id} ${gid} confirm`), /Saved privately/);
+});
+
+for (const role of [
+  { name: 'root', prefix: 'board', corrupt: (r: any, bad: unknown) => { r.id = bad; } },
+  { name: 'local goal with coherent reference', prefix: 'local', corrupt: (r: any, bad: unknown) => { r.goals[0].id = bad; r.activities[0].shares[0].goalId = bad; } },
+  { name: 'activity', prefix: 'activity', corrupt: (r: any, bad: unknown) => { r.activities[0].id = bad; } },
+  { name: 'goal reference alone', prefix: 'local', corrupt: (r: any, bad: unknown) => { r.activities[0].shares[0].goalId = bad; } },
+] as const) test(`strict generated ID role ${role.name} preserves raw state across reads, edits and service commands`, async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await setup(f); const local = uid(await f.run(`local ${id} | Local evidence`), "local"); const activity = uid(await f.run(`activity ${id} add Work | 120`), "activity"); await f.run(`link ${id} ${activity} | ${local} | 75 | Entered allocation`);
+  const original = f.backend.data.get(f.key("state"))!;
+  assert.equal(JSON.parse(await f.run(`export ${id}`)).record.id, id);
+  const uuid = randomUUID(), valid = `${role.prefix}-${uuid}`;
+  const wrongRole = role.prefix === PREFIX ? "local" : PREFIX;
+  for (const bad of [`wrongprefix-${uuid}`, `${wrongRole}-${uuid}`, `${role.prefix}${"x".repeat(100)}-${uuid}`, `${valid}a`, valid.slice(0, -1), [valid], { id: valid }, 42, null]) {
+    const corrupted = JSON.parse(original); role.corrupt(corrupted.records[0], bad);
+    const raw = ` \n${JSON.stringify(corrupted, null, 1)}\t `; f.backend.data.set(f.key("state"), raw);
+    const calls = { ...f.calls }, writes = f.backend.calls.compareSets;
+    for (const command of ["list", `show ${id}`, `export ${id}`, `edit ${id} | title | Forbidden`, `delete ${id} confirm`, `review ${id}`, `goals ${id}`, `source ${id} toolbox:goals:legacy_01`, `select ${id} | toolbox:goals:legacy_01`, `refresh ${id}`]) {
+      assert.match(await f.run(command), /preserved|read safely/i, `${role.name}: ${command}`);
+      assert.equal(f.backend.data.get(f.key("state")), raw);
+      assert.equal(f.backend.calls.compareSets, writes); assert.deepEqual(f.calls, calls);
+    }
+  }
+  f.backend.data.set(f.key("state"), original);
+  assert.match(await f.run(`edit ${id} | title | Valid again`), /Saved privately/);
+  assert.match(await f.run(`delete ${id} confirm`), /Deleted privately/);
+});
+
+test("owned toolbox source IDs retain their non-local legacy contract through selection and allocation", async () => {
+  const x = integrated(); await x.add("Legacy source");
+  const source = JSON.parse(x.backend.data.get(toolboxKey)!); source.entries[0].id = "Legacy_goal-01";
+  const raw = JSON.stringify(source); x.backend.data.set(toolboxKey, raw);
+  const id = await setup(x.f), sid = "toolbox:goals:Legacy_goal-01";
+  assert.match(await x.f.run(`select ${id} | ${sid}`), /Saved privately/);
+  const activity = uid(await x.f.run(`activity ${id} add Work | 120`), "activity");
+  assert.match(await x.f.run(`link ${id} ${activity} | ${sid} | 75 | Entered allocation`), /Saved privately/);
+  assert.match(await x.f.run(`refresh ${id}`), /Saved privately/);
+  assert.match(await x.f.run(`replace ${id} | ${sid} | confirm`), /Saved privately/);
+  const record = JSON.parse(await x.f.run(`export ${id}`)).record;
+  assert.equal(record.goals[0].id, sid); assert.equal(record.activities[0].shares[0].goalId, sid);
+  assert.equal(x.backend.data.get(toolboxKey), raw);
+  assert.match(await x.f.run(`goal-remove ${id} ${sid} confirm`), /Saved privately/);
+});
+
+function assertIncompleteGoalRead(reply: string) {
+  assert.match(reply, /goal context could not be read completely/i);
+  assert.match(reply, /100 goals/); assert.match(reply, /historical.*preserved/i);
+  assert.match(reply, /No board save was dispatched/); assert.doesNotMatch(reply, /Any dispatched save|inspect.*before repeating|FAKE_SECRET|nobo:toolbox/);
+  for (const command of ["/nobo-help tools goals list", "/nobo-help tools goals export ID", "/nobo-help tools goals delete ID confirm", "/nobo-help agent goal-alignment local"]) assert.ok(reply.includes(command), command);
+  assert.match(reply, /retry/i); assert.ok(reply.length <= 3500);
+}
+const sourceCommands = (id: string, selected: string, unselected: string) => [
+  `goals ${id}`, `source ${id} ${selected}`, `select ${id} | ${unselected}`, `replace ${id} | ${selected} | confirm`, `refresh ${id}`,
+];
+
+test("actual 101-goal adapter failure is actionable on every source route and preserves selected history", async () => {
+  const x = integrated(), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f);
+  assert.match(await x.f.run(`select ${id} | ${selected.source}`), /Saved privately/);
+  for (let i = 2; i < 100; i++) await x.add(`Complete ${i}`);
+  const complete = await allSourcePages(x.f, `goals ${id}`); assert.match(complete.combined, /100\/100/);
+  const sourceState = JSON.parse(x.backend.data.get(toolboxKey)!);
+  const extra = { ...structuredClone(sourceState.entries[0]), id: randomUUID() }; sourceState.entries.push(extra);
+  const sourceRaw = ` \n${JSON.stringify(sourceState)}\t `, boardRaw = ` \n${x.backend.data.get(x.f.key("state"))}\t `;
+  x.backend.data.set(toolboxKey, sourceRaw); x.backend.data.set(x.f.key("state"), boardRaw);
+  const writes = x.backend.calls.compareSets;
+  for (const command of sourceCommands(id, selected.source, unselected.source)) {
+    const reads = x.f.calls.readContext; x.reads.length = 0;
+    assertIncompleteGoalRead(await x.f.run(command)); assert.equal(x.f.calls.readContext - reads, 1);
+    assert.equal(x.reads.filter(k => k === toolboxKey).length, 1);
+    assert.equal(x.backend.calls.compareSets, writes);
+    assert.equal(x.backend.data.get(toolboxKey), sourceRaw); assert.equal(x.backend.data.get(x.f.key("state")), boardRaw);
+  }
+  const reads = x.f.calls.readContext;
+  for (const command of ["list", `show ${id}`, `review ${id}`, `export ${id}`]) assert.doesNotMatch(await x.f.run(command), /could not be read/);
+  assert.equal(x.f.calls.readContext, reads);
+  // Recovery commands are verified against the actual toolbox writer/help.
+  const help = await x.tool("help"); for (const grammar of ["list [search]", "export <id>", "delete <id> confirm"]) assert.ok(help.includes(grammar));
+  assert.equal(JSON.parse(await x.tool(`export ${extra.id}`)).id, extra.id);
+  assert.match(await x.tool(`delete ${extra.id} confirm`), /Deleted/);
+  assert.match(await x.f.run(`goals ${id}`), /100\/100/);
+  assert.match(await x.f.run(`local ${id} | Local planning alternative`), /Saved privately/);
+  assert.equal(x.f.calls.generate, 0); assert.equal(x.f.calls.search, 0);
+});
+
+test("actual goal source read sanitizes typed context/index/total capacity and arbitrary backend failures", async () => {
+  const x = integrated(), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f);
+  await x.f.run(`select ${id} | ${selected.source}`);
+  const read = x.backend.get, sourceRaw = x.backend.data.get(toolboxKey)!, boardRaw = x.backend.data.get(x.f.key("state"))!;
+  const failures = [
+    new Error("FAKE_SECRET_backend_key"),
+    new Error("FAKE_SECRET_wrapped", { cause: new AgentContextCapacityError("Personal context is too large to load completely.") }),
+    new AgentContextCapacityError("Personal owner index exceeds the complete-read limit (200)."),
+    new AgentContextCapacityError("This command reached its total context byte budget (32 MiB)."),
+    new AgentContextCapacityError("FAKE_SECRET_even_typed_message"),
+    Object.assign(new Error("FAKE_SECRET_spoof"), { name: "AgentContextCapacityError" }),
+  ];
+  for (const error of failures) {
+    let sourceReads = 0;
+    x.backend.get = async key => { if (key === toolboxKey) { sourceReads++; throw error; } return read(key); };
+    const writes = x.backend.calls.compareSets;
+    for (const command of sourceCommands(id, selected.source, unselected.source)) {
+      const before = sourceReads, reads = x.f.calls.readContext, reply = await x.f.run(command);
+      assertIncompleteGoalRead(reply); assert.equal(sourceReads - before, 1); assert.equal(x.f.calls.readContext - reads, 1);
+      if (error instanceof AgentContextCapacityError || (error as Error).cause instanceof AgentContextCapacityError) assert.match(reply, /complete-read capacity limit/);
+      else assert.doesNotMatch(reply, /capacity limit was reached/);
+      assert.equal(x.backend.calls.compareSets, writes); assert.equal(x.backend.data.get(x.f.key("state")), boardRaw); assert.equal(x.backend.data.get(toolboxKey), sourceRaw);
+    }
+  }
+  x.backend.get = read;
+  // Exercise a genuine typed failure in the actual goal adapter's raw byte guard.
+  const large = JSON.parse(sourceRaw); large.entries[0].body = "x".repeat(2_000_001); x.backend.data.set(toolboxKey, JSON.stringify(large));
+  const reply = await x.f.run(`refresh ${id}`); assertIncompleteGoalRead(reply); assert.match(reply, /complete-read capacity limit/);
+  assert.equal(x.backend.data.get(x.f.key("state")), boardRaw);
+  assert.match(await x.f.run(`local ${id} | Usable without source reads`), /Saved privately/);
+});
+
+test("actual production source reads preserve abort reason and reject stale saves on every route", async () => {
+  for (const operation of ["goals", "source", "select", "replace", "refresh"]) for (const outcome of ["abort", "edit", "delete", "reject"] as const) {
+    const controller = new AbortController(), x = integrated(controller.signal), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f);
+    await x.f.run(`select ${id} | ${selected.source}`);
+    const command = sourceCommands(id, selected.source, unselected.source).find(command => command.startsWith(operation + " "))!;
+    const originalGet = x.backend.get, entered = deferred<void>(), source = deferred<string | null>();
+    x.backend.get = key => { if (key === toolboxKey) { entered.resolve(); return source.promise; } return originalGet(key); };
+    const beforeReads = x.f.calls.readContext, pending = x.f.run(command, { signal: controller.signal });
+    const reason = new Error("Source read explicitly cancelled");
+    const aborted = outcome === "abort" ? assert.rejects(pending, error => error === reason) : undefined;
+    await entered.promise;
+    if (outcome === "edit") assert.match(await x.f.run(`edit ${id} | title | Concurrent winner`), /Saved privately/);
+    if (outcome === "delete") assert.match(await x.f.run(`delete ${id} confirm`), /Deleted privately/);
+    const raw = x.backend.data.get(x.f.key("state")), writes = x.backend.calls.compareSets;
+    if (outcome === "abort") { controller.abort(reason); await aborted; }
+    if (outcome === "reject") source.reject(new Error("FAKE_SECRET_deferred")); else source.resolve(x.backend.data.get(toolboxKey)!);
+    if (outcome !== "abort") {
+      const reply = await pending; if (outcome === "reject") assertIncompleteGoalRead(reply); else assert.match(reply, /changed|not found/i);
+      assert.doesNotMatch(reply, /Saved privately|FAKE_SECRET/);
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(x.f.calls.readContext - beforeReads, 1); assert.equal(x.backend.calls.compareSets, writes); assert.equal(x.backend.data.get(x.f.key("state")), raw);
+    x.backend.get = originalGet;
+  }
+});
+
+test("source recovery help stays literal, bounded and equal to feature/runtime help", async () => {
+  const f = createAgentFeatureFixture(feature);
+  assert.equal(feature.help, metadata.help); assert.equal(await f.run("help"), metadata.help); assert.equal(await feature.execute("help", {} as never), metadata.help);
+  assert.ok(metadata.help.length <= 3500); assert.match(metadata.help, /100 goals/); assert.match(metadata.help, /tools goals delete ID confirm/);
+  assert.equal(f.backend.calls.gets, 0); assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("actual source-await writes bind full board through CAS conflicts and keep genuine save uncertainty", async () => {
+  for (const operation of ["select", "replace", "refresh"]) for (const conflict of ["unrelated", "same", "deleted", "after-dispatch"] as const) {
+    const x = integrated(), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f), other = await setup(x.f);
+    await x.f.run(`select ${id} | ${selected.source}`);
+    const sourceRaw = x.backend.data.get(toolboxKey), previousCas = x.backend.compareSet;
+    let armed = true, winner = "";
+    x.backend.compareSet = async (...args) => {
+      if (armed && args[0] === x.f.key("state")) {
+        armed = false;
+        if (conflict === "after-dispatch") { await previousCas(...args); throw new Error("FAKE_SECRET_dispatched_save"); }
+        const current = JSON.parse(x.backend.data.get(args[0])!);
+        if (conflict === "deleted") current.records = current.records.filter((record: any) => record.id !== id);
+        else current.records.find((record: any) => record.id === (conflict === "same" ? id : other)).title = "Concurrent winner";
+        winner = JSON.stringify(current); x.backend.data.set(args[0], winner);
+      }
+      return previousCas(...args);
+    };
+    const command = sourceCommands(id, selected.source, unselected.source).find(command => command.startsWith(operation + " "))!;
+    const reads = x.f.calls.readContext, reply = await x.f.run(command);
+    assert.equal(x.f.calls.readContext - reads, 1); assert.equal(x.backend.data.get(toolboxKey), sourceRaw);
+    if (conflict === "unrelated") assert.match(reply, /Saved privately/);
+    else if (conflict === "after-dispatch") { assert.match(reply, /Any dispatched save may have completed/); assert.doesNotMatch(reply, /No board save|FAKE_SECRET/); }
+    else { assert.match(reply, /changed|not found/i); assert.equal(x.backend.data.get(x.f.key("state")), winner); }
+  }
+});

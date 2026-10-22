@@ -1,0 +1,1233 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "7a30db374bf3df702af5e28413468a04dc571862",
+  "foundationCommit": "19bff050a0862e8f0fc41abcc9b339ba07e30dbe",
+  "notes": [
+    "All valid local samples retained, including the foundation extended strict150ms check failure.",
+    "Initial invalid resourceUsage.maxRSS readings inherited the Vite parent highwater; corrected to Linux VmHWM before these reports.",
+    "foundationExtended overload.contextCalls incorrectly included15 mixed calls (24 total); accepted9/rejected87 counts are accurate. Script now snapshots burst count before mixed workload.",
+    "baselineExtended used a git archive of baselineCommit with the same extended benchmark script; archive lacks .git, hence its reported commit=archive."
+  ],
+  "initialBaseline": {
+    "recordedAt": "2026-10-22T17:34:09.166Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 93.4,
+        "idleRssMiB": 68.73,
+        "idleHeapMiB": 12.97,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.476,
+          "p95Ms": 0.835
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 96,
+          "rejected": 0,
+          "p50Ms": 677.964,
+          "p95Ms": 1287.126,
+          "busyP95Ms": null,
+          "peakContextCalls": 32,
+          "contextCalls": 96,
+          "stressWallMs": 3996.19,
+          "stressCpuMs": 4355.28
+        },
+        "eventLoopP95Ms": 1286.603,
+        "eventLoopMaxMs": 1411.383,
+        "peakRssMiB": 278.24,
+        "cpuMs": 4640.48,
+        "backend": {
+          "reads": 140,
+          "writes": 232,
+          "keys": 97
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 105.35,
+        "idleRssMiB": 68.25,
+        "idleHeapMiB": 12.97,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.475,
+          "p95Ms": 1.042
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 96,
+          "rejected": 0,
+          "p50Ms": 660.811,
+          "p95Ms": 1253.751,
+          "busyP95Ms": null,
+          "peakContextCalls": 32,
+          "contextCalls": 96,
+          "stressWallMs": 3864.08,
+          "stressCpuMs": 4236.07
+        },
+        "eventLoopP95Ms": 1240.465,
+        "eventLoopMaxMs": 1398.8,
+        "peakRssMiB": 278.44,
+        "cpuMs": 4545.28,
+        "backend": {
+          "reads": 140,
+          "writes": 232,
+          "keys": 97
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 98.38,
+        "idleRssMiB": 69.56,
+        "idleHeapMiB": 12.97,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.419,
+          "p95Ms": 0.687
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 96,
+          "rejected": 0,
+          "p50Ms": 687.119,
+          "p95Ms": 1275.524,
+          "busyP95Ms": null,
+          "peakContextCalls": 32,
+          "contextCalls": 96,
+          "stressWallMs": 3942.71,
+          "stressCpuMs": 4319.92
+        },
+        "eventLoopP95Ms": 1330.643,
+        "eventLoopMaxMs": 1348.469,
+        "peakRssMiB": 278.74,
+        "cpuMs": 4611.86,
+        "backend": {
+          "reads": 140,
+          "writes": 232,
+          "keys": 97
+        }
+      }
+    ],
+    "server": {
+      "mode": "server",
+      "readyMs": 796.12,
+      "idleRssMiB": 293.23,
+      "idleHeapMiB": 83.86,
+      "peakRssMiB": 304.94,
+      "cpuMs": 1221
+    }
+  },
+  "globalEight": {
+    "recordedAt": "2026-10-22T17:36:54.515Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 57.47,
+        "idleRssMiB": 64.09,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.345,
+          "p95Ms": 0.771
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 24,
+          "rejected": 72,
+          "p50Ms": 144.387,
+          "p95Ms": 248.595,
+          "busyP95Ms": 0.149,
+          "peakContextCalls": 8,
+          "contextCalls": 24,
+          "stressWallMs": 755.84,
+          "stressCpuMs": 832.08
+        },
+        "eventLoopP95Ms": 249.823,
+        "eventLoopMaxMs": 257.294,
+        "peakRssMiB": 225.72,
+        "cpuMs": 1009.7,
+        "backend": {
+          "reads": 140,
+          "writes": 88,
+          "keys": 25
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 57.59,
+        "idleRssMiB": 64.59,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.338,
+          "p95Ms": 0.475
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 24,
+          "rejected": 72,
+          "p50Ms": 141.023,
+          "p95Ms": 264.669,
+          "busyP95Ms": 0.138,
+          "peakContextCalls": 8,
+          "contextCalls": 24,
+          "stressWallMs": 789.81,
+          "stressCpuMs": 898.61
+        },
+        "eventLoopP95Ms": 244.58,
+        "eventLoopMaxMs": 253.231,
+        "peakRssMiB": 214.97,
+        "cpuMs": 1080.05,
+        "backend": {
+          "reads": 140,
+          "writes": 88,
+          "keys": 25
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 65.86,
+        "idleRssMiB": 65.49,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.368,
+          "p95Ms": 0.66
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 24,
+          "rejected": 72,
+          "p50Ms": 145.692,
+          "p95Ms": 266.224,
+          "busyP95Ms": 0.141,
+          "peakContextCalls": 8,
+          "contextCalls": 24,
+          "stressWallMs": 795.55,
+          "stressCpuMs": 894.15
+        },
+        "eventLoopP95Ms": 257.032,
+        "eventLoopMaxMs": 264.503,
+        "peakRssMiB": 226.13,
+        "cpuMs": 1111.85,
+        "backend": {
+          "reads": 140,
+          "writes": 88,
+          "keys": 25
+        }
+      }
+    ],
+    "server": {
+      "mode": "server",
+      "readyMs": 597.12,
+      "idleRssMiB": 311.87,
+      "idleHeapMiB": 82.66,
+      "peakRssMiB": 332.58,
+      "cpuMs": 1031.68
+    }
+  },
+  "globalFour": {
+    "recordedAt": "2026-10-22T17:39:38.166Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 58.26,
+        "idleRssMiB": 62.86,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.543,
+          "p95Ms": 1.022
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 12,
+          "rejected": 84,
+          "p50Ms": 112.71,
+          "p95Ms": 188.952,
+          "busyP95Ms": 0.285,
+          "peakContextCalls": 4,
+          "contextCalls": 12,
+          "stressWallMs": 505.29,
+          "stressCpuMs": 566.07
+        },
+        "eventLoopP95Ms": 162.136,
+        "eventLoopMaxMs": 173.67,
+        "peakRssMiB": 205.97,
+        "cpuMs": 775.6,
+        "backend": {
+          "reads": 140,
+          "writes": 64,
+          "keys": 13
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 55.74,
+        "idleRssMiB": 64.51,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.381,
+          "p95Ms": 0.733
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 12,
+          "rejected": 84,
+          "p50Ms": 91.468,
+          "p95Ms": 157.851,
+          "busyP95Ms": 0.171,
+          "peakContextCalls": 4,
+          "contextCalls": 12,
+          "stressWallMs": 456.01,
+          "stressCpuMs": 505.3
+        },
+        "eventLoopP95Ms": 145.359,
+        "eventLoopMaxMs": 146.67,
+        "peakRssMiB": 206.32,
+        "cpuMs": 693.64,
+        "backend": {
+          "reads": 140,
+          "writes": 64,
+          "keys": 13
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 62.87,
+        "idleRssMiB": 64.44,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.379,
+          "p95Ms": 0.88
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 12,
+          "rejected": 84,
+          "p50Ms": 105.644,
+          "p95Ms": 205.659,
+          "busyP95Ms": 0.305,
+          "peakContextCalls": 4,
+          "contextCalls": 12,
+          "stressWallMs": 486.28,
+          "stressCpuMs": 543.67
+        },
+        "eventLoopP95Ms": 143,
+        "eventLoopMaxMs": 190.448,
+        "peakRssMiB": 206.8,
+        "cpuMs": 735.68,
+        "backend": {
+          "reads": 140,
+          "writes": 64,
+          "keys": 13
+        }
+      }
+    ],
+    "server": {
+      "mode": "server",
+      "readyMs": 596.9,
+      "idleRssMiB": 300.01,
+      "idleHeapMiB": 82.66,
+      "peakRssMiB": 318.46,
+      "cpuMs": 896.44
+    }
+  },
+  "globalThree": {
+    "recordedAt": "2026-10-22T17:40:59.291Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 57.56,
+        "idleRssMiB": 64.54,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.363,
+          "p95Ms": 0.534
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 84.091,
+          "p95Ms": 116.718,
+          "busyP95Ms": 0.171,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 342.52,
+          "stressCpuMs": 389.55
+        },
+        "eventLoopP95Ms": 105.251,
+        "eventLoopMaxMs": 109.642,
+        "peakRssMiB": 140.98,
+        "cpuMs": 578.1,
+        "backend": {
+          "reads": 140,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 59.13,
+        "idleRssMiB": 64.12,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.365,
+          "p95Ms": 0.519
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 81.71,
+          "p95Ms": 117.722,
+          "busyP95Ms": 0.171,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 346.75,
+          "stressCpuMs": 394.53
+        },
+        "eventLoopP95Ms": 113.967,
+        "eventLoopMaxMs": 117.375,
+        "peakRssMiB": 141.36,
+        "cpuMs": 580.43,
+        "backend": {
+          "reads": 140,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 70.71,
+        "idleRssMiB": 62.79,
+        "idleHeapMiB": 11.04,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.459,
+          "p95Ms": 0.625
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 81.38,
+          "p95Ms": 139.803,
+          "busyP95Ms": 0.193,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 352.89,
+          "stressCpuMs": 409.92
+        },
+        "eventLoopP95Ms": 114.164,
+        "eventLoopMaxMs": 126.812,
+        "peakRssMiB": 141.94,
+        "cpuMs": 629.91,
+        "backend": {
+          "reads": 140,
+          "writes": 58,
+          "keys": 10
+        }
+      }
+    ],
+    "server": {
+      "mode": "server",
+      "readyMs": 606.48,
+      "idleRssMiB": 301.05,
+      "idleHeapMiB": 82.68,
+      "peakRssMiB": 319.12,
+      "cpuMs": 951.75
+    }
+  },
+  "foundationExtended": {
+    "recordedAt": "2026-10-22T17:45:53.844Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "commit": "19bff050a0862e8f0fc41abcc9b339ba07e30dbe",
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 87.74,
+        "idleRssMiB": 62.94,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.386,
+          "p95Ms": 0.571
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 92.629,
+          "p95Ms": 196.61,
+          "busyP95Ms": 0.175,
+          "peakContextCalls": 3,
+          "contextCalls": 24,
+          "stressWallMs": 444.09,
+          "stressCpuMs": 442.91
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.544,
+          "recallP95Ms": 85.102,
+          "wallMs": 1162.35,
+          "cpuMs": 725.02,
+          "completedPerSecond": 51.62
+        },
+        "eventLoopP95Ms": 79.102,
+        "eventLoopMaxMs": 187.564,
+        "peakRssMiB": 207.73,
+        "cpuMs": 1371.02,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 108.01,
+        "idleRssMiB": 61.47,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.474,
+          "p95Ms": 0.784
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 116.638,
+          "p95Ms": 205.62,
+          "busyP95Ms": 0.195,
+          "peakContextCalls": 3,
+          "contextCalls": 24,
+          "stressWallMs": 512.51,
+          "stressCpuMs": 483.84
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 2.12,
+          "recallP95Ms": 84.433,
+          "wallMs": 1070.54,
+          "cpuMs": 674.01,
+          "completedPerSecond": 56.05
+        },
+        "eventLoopP95Ms": 81.134,
+        "eventLoopMaxMs": 202.244,
+        "peakRssMiB": 207.92,
+        "cpuMs": 1411.38,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 111.84,
+        "idleRssMiB": 61.59,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.725,
+          "p95Ms": 1.688
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 85.141,
+          "p95Ms": 220.796,
+          "busyP95Ms": 0.275,
+          "peakContextCalls": 3,
+          "contextCalls": 24,
+          "stressWallMs": 442.75,
+          "stressCpuMs": 451.23
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.454,
+          "recallP95Ms": 82.123,
+          "wallMs": 1096.9,
+          "cpuMs": 698.45,
+          "completedPerSecond": 54.7
+        },
+        "eventLoopP95Ms": 73.466,
+        "eventLoopMaxMs": 206.176,
+        "peakRssMiB": 208.32,
+        "cpuMs": 1422.77,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      }
+    ],
+    "maximum": [
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 186.788,
+        "eventLoopMaxMs": 186.909,
+        "peakRssMiB": 110.79,
+        "cpuMs": 334.24
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 86.268,
+        "eventLoopMaxMs": 86.376,
+        "peakRssMiB": 128.68,
+        "cpuMs": 258.84
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 81.407,
+        "eventLoopMaxMs": 81.527,
+        "peakRssMiB": 128.1,
+        "cpuMs": 211.29
+      }
+    ],
+    "server": [
+      {
+        "mode": "server",
+        "readyMs": 853.9,
+        "idleRssMiB": 309.82,
+        "idleHeapMiB": 82.67,
+        "peakRssMiB": 330.18,
+        "cpuMs": 1314.76
+      },
+      {
+        "mode": "server",
+        "readyMs": 818.76,
+        "idleRssMiB": 301.73,
+        "idleHeapMiB": 82.72,
+        "peakRssMiB": 317.23,
+        "cpuMs": 1060.74
+      },
+      {
+        "mode": "server",
+        "readyMs": 557.08,
+        "idleRssMiB": 335.09,
+        "idleHeapMiB": 82.64,
+        "peakRssMiB": 339,
+        "cpuMs": 953.52
+      }
+    ]
+  },
+  "baselineExtended": {
+    "recordedAt": "2026-10-22T17:51:32.491Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "commit": "archive",
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 68.04,
+        "idleRssMiB": 68.4,
+        "idleHeapMiB": 13.02,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.362,
+          "p95Ms": 0.556
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 96,
+          "rejected": 0,
+          "p50Ms": 487.687,
+          "p95Ms": 915.116,
+          "busyP95Ms": null,
+          "peakContextCalls": 32,
+          "contextCalls": 96,
+          "stressWallMs": 2836.96,
+          "stressCpuMs": 3108.47
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.3,
+          "recallP95Ms": 40.183,
+          "wallMs": 917.84,
+          "cpuMs": 565.15,
+          "completedPerSecond": 65.37
+        },
+        "eventLoopP95Ms": 33.047,
+        "eventLoopMaxMs": 1004.536,
+        "peakRssMiB": 280.96,
+        "cpuMs": 3889.41,
+        "backend": {
+          "reads": 185,
+          "writes": 232,
+          "keys": 97
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 66.89,
+        "idleRssMiB": 68.77,
+        "idleHeapMiB": 13.02,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.341,
+          "p95Ms": 0.64
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 96,
+          "rejected": 0,
+          "p50Ms": 483.029,
+          "p95Ms": 905.157,
+          "busyP95Ms": null,
+          "peakContextCalls": 32,
+          "contextCalls": 96,
+          "stressWallMs": 2794.87,
+          "stressCpuMs": 3075.82
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.418,
+          "recallP95Ms": 52.609,
+          "wallMs": 1068.49,
+          "cpuMs": 748.01,
+          "completedPerSecond": 56.15
+        },
+        "eventLoopP95Ms": 45.81,
+        "eventLoopMaxMs": 942.67,
+        "peakRssMiB": 278.96,
+        "cpuMs": 4032.67,
+        "backend": {
+          "reads": 185,
+          "writes": 232,
+          "keys": 97
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 90.07,
+        "idleRssMiB": 66.81,
+        "idleHeapMiB": 13.02,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.376,
+          "p95Ms": 0.787
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 96,
+          "rejected": 0,
+          "p50Ms": 592.777,
+          "p95Ms": 1104.321,
+          "busyP95Ms": null,
+          "peakContextCalls": 32,
+          "contextCalls": 96,
+          "stressWallMs": 3410.91,
+          "stressCpuMs": 3728.25
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.348,
+          "recallP95Ms": 52.048,
+          "wallMs": 1029.15,
+          "cpuMs": 713.44,
+          "completedPerSecond": 58.3
+        },
+        "eventLoopP95Ms": 82.182,
+        "eventLoopMaxMs": 1168.114,
+        "peakRssMiB": 281.14,
+        "cpuMs": 4698.71,
+        "backend": {
+          "reads": 185,
+          "writes": 232,
+          "keys": 97
+        }
+      }
+    ],
+    "maximum": [
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 45.853,
+        "eventLoopMaxMs": 46.006,
+        "peakRssMiB": 118.38,
+        "cpuMs": 191.81
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 40.25,
+        "eventLoopMaxMs": 40.468,
+        "peakRssMiB": 118.84,
+        "cpuMs": 182.02
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 44.31,
+        "eventLoopMaxMs": 44.401,
+        "peakRssMiB": 118.66,
+        "cpuMs": 189.17
+      }
+    ],
+    "server": [
+      {
+        "mode": "server",
+        "readyMs": 642.56,
+        "idleRssMiB": 317.78,
+        "idleHeapMiB": 83.9,
+        "peakRssMiB": 339.3,
+        "cpuMs": 1083.56
+      },
+      {
+        "mode": "server",
+        "readyMs": 716.76,
+        "idleRssMiB": 307.43,
+        "idleHeapMiB": 83.96,
+        "peakRssMiB": 327.6,
+        "cpuMs": 1157.49
+      },
+      {
+        "mode": "server",
+        "readyMs": 730.01,
+        "idleRssMiB": 316.43,
+        "idleHeapMiB": 83.91,
+        "peakRssMiB": 336.74,
+        "cpuMs": 1229.73
+      }
+    ]
+  },
+  "strictFoundationCheck": {
+    "passed": false,
+    "targetEventLoopMaxMs": 150,
+    "observedMs": [
+      187.564,
+      202.244,
+      206.176
+    ]
+  },
+  "profile": {
+    "sampledMs": 356.722,
+    "recallInclusiveMs": 260.238,
+    "contextValidationInclusiveMs": 21.109,
+    "gcMs": 21.121,
+    "idleMs": 24.231,
+    "otherRuntimeStartupProfilerMs": 30.023,
+    "recallBreakdownOverlapping": {
+      "retrieveMs": 206.565,
+      "excerptMs": 109.941,
+      "normalizationMs": 47.38,
+      "frequenciesMs": 47.415
+    },
+    "offered": 96,
+    "accepted": 9,
+    "rejected": 87
+  },
+  "production": {
+    "app": {
+      "window": {
+        "since": "2026-10-22T16:45:00+00:00",
+        "until": "2026-10-22T17:45:00+00:00"
+      },
+      "service": "joshbot",
+      "environment": "production",
+      "metrics": {
+        "CPU_USAGE": {
+          "unit": "vCPU",
+          "samples": 120,
+          "intervalSeconds": 30,
+          "first": "2026-10-22T16:45:00+00:00",
+          "last": "2026-10-22T17:44:30+00:00",
+          "mean": 0.0011218975,
+          "min": 0.0,
+          "max": 0.08075153333333333,
+          "latest": 0.0002316
+        },
+        "MEMORY_USAGE_GB": {
+          "unit": "GB",
+          "samples": 120,
+          "intervalSeconds": 30,
+          "first": "2026-10-22T16:45:00+00:00",
+          "last": "2026-10-22T17:44:30+00:00",
+          "mean": 0.23887854933333333,
+          "min": 0.0,
+          "max": 0.440385536,
+          "latest": 0.177496064
+        }
+      }
+    },
+    "redis": {
+      "window": {
+        "since": "2026-10-22T16:45:00+00:00",
+        "until": "2026-10-22T17:45:00+00:00"
+      },
+      "service": "Redis-IZjm",
+      "environment": "production",
+      "metrics": {
+        "CPU_USAGE": {
+          "unit": "vCPU",
+          "samples": 120,
+          "intervalSeconds": 30,
+          "first": "2026-10-22T16:45:00+00:00",
+          "last": "2026-10-22T17:44:30+00:00",
+          "mean": 0.0026378141666666666,
+          "min": 0.0,
+          "max": 0.003944366666666667,
+          "latest": 0.0029231
+        },
+        "MEMORY_USAGE_GB": {
+          "unit": "GB",
+          "samples": 120,
+          "intervalSeconds": 30,
+          "first": "2026-10-22T16:45:00+00:00",
+          "last": "2026-10-22T17:44:30+00:00",
+          "mean": 0.008482065066666667,
+          "min": 0.008286208,
+          "max": 0.008818688,
+          "latest": 0.008548352
+        }
+      }
+    }
+  },
+  "adapterMaxima": {
+    "supportedRecords": 1500,
+    "mediumTextBytes": 2611611,
+    "narrowMaxNote": {
+      "count": 100,
+      "bytes": 1220581
+    },
+    "narrowMaxReminder": {
+      "count": 200,
+      "bytes": 4926491
+    },
+    "combined12000CharBodies": "visible complete-read budget failure; no writes"
+  },
+  "recallOptimized": {
+    "recordedAt": "2026-10-22T17:56:38.881Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "commit": "f549a02576ef5243a5a2f459787dafed7834036e",
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 76.22,
+        "idleRssMiB": 64.73,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.424,
+          "p95Ms": 0.642
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 64.495,
+          "p95Ms": 96.038,
+          "busyP95Ms": 0.234,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 280.18,
+          "stressCpuMs": 328.08
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.523,
+          "recallP95Ms": 40.632,
+          "wallMs": 873.08,
+          "cpuMs": 552.05,
+          "completedPerSecond": 68.72
+        },
+        "eventLoopP95Ms": 32.063,
+        "eventLoopMaxMs": 94.831,
+        "peakRssMiB": 196.26,
+        "cpuMs": 1093.74,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 86.25,
+        "idleRssMiB": 64.86,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.456,
+          "p95Ms": 0.979
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 55.405,
+          "p95Ms": 85.6,
+          "busyP95Ms": 0.186,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 244.06,
+          "stressCpuMs": 296.75
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.499,
+          "recallP95Ms": 37.997,
+          "wallMs": 841.11,
+          "cpuMs": 510.24,
+          "completedPerSecond": 71.33
+        },
+        "eventLoopP95Ms": 31.474,
+        "eventLoopMaxMs": 107.02,
+        "peakRssMiB": 196.05,
+        "cpuMs": 1047.61,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 74.24,
+        "idleRssMiB": 64.55,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.438,
+          "p95Ms": 0.749
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 56.441,
+          "p95Ms": 80.718,
+          "busyP95Ms": 0.228,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 230.92,
+          "stressCpuMs": 274.49
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.547,
+          "recallP95Ms": 35.534,
+          "wallMs": 831.48,
+          "cpuMs": 504.86,
+          "completedPerSecond": 72.16
+        },
+        "eventLoopP95Ms": 28.18,
+        "eventLoopMaxMs": 100.598,
+        "peakRssMiB": 197.79,
+        "cpuMs": 1007.03,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      }
+    ],
+    "maximum": [
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 107.599,
+        "eventLoopMaxMs": 107.741,
+        "peakRssMiB": 124.99,
+        "cpuMs": 268.12
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 96.797,
+        "eventLoopMaxMs": 96.928,
+        "peakRssMiB": 124.79,
+        "cpuMs": 252.45
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 106.841,
+        "eventLoopMaxMs": 106.955,
+        "peakRssMiB": 125.27,
+        "cpuMs": 266.38
+      }
+    ],
+    "server": [
+      {
+        "mode": "server",
+        "readyMs": 725.43,
+        "idleRssMiB": 302.4,
+        "idleHeapMiB": 82.71,
+        "peakRssMiB": 318.27,
+        "cpuMs": 1119.95
+      },
+      {
+        "mode": "server",
+        "readyMs": 745.83,
+        "idleRssMiB": 302.51,
+        "idleHeapMiB": 82.72,
+        "peakRssMiB": 319.57,
+        "cpuMs": 1130.38
+      },
+      {
+        "mode": "server",
+        "readyMs": 775.21,
+        "idleRssMiB": 303.21,
+        "idleHeapMiB": 82.73,
+        "peakRssMiB": 319.53,
+        "cpuMs": 1160.58
+      }
+    ],
+    "sourceNote": "Measured uncommitted narrow recall optimization atop f549a02; committed together with this report update."
+  },
+  "strictRecallOptimizedCheck": {
+    "passed": true,
+    "targetEventLoopMaxMs": 150,
+    "observedMs": [
+      94.831,
+      107.02,
+      100.598
+    ]
+  }
+}

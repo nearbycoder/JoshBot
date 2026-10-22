@@ -14,7 +14,7 @@ const task: AgentContextItem = {
 };
 function fixture(items: AgentContextItem[] = []) {
   const context = createAgentTestContext();
-  context.services.readContext = async () => items;
+  context.services.readContext = async kinds => items.filter(item => !kinds || kinds.includes(item.kind));
   return context;
 }
 function run(context: AgentFeatureContext, command: string) { return feature.execute(command, context); }
@@ -101,7 +101,7 @@ test("refresh marks changed, stale, unknown, future and missing sources without 
   const id = await create(context);
   await run(context, `link ${id} note launch-spec`);
   await run(context, `link ${id} follow-up customer-check`);
-  context.services.readContext = async () => [{ ...note, text: "New billing evidence", updatedAt: "2026-08-01T00:00:00Z" }];
+  context.services.readContext = async kinds => kinds?.includes("note") ? [{ ...note, text: "New billing evidence", updatedAt: "2026-08-01T00:00:00Z" }] : [];
   const brief = await run(context, `brief ${id}`);
   assert.match(brief, /New billing evidence/);
   assert.match(brief, /CHANGED since last refresh/);
@@ -109,13 +109,13 @@ test("refresh marks changed, stale, unknown, future and missing sources without 
   assert.match(brief, /MISSING from returned owned context; excluded from synthesis/);
   assert.match(brief, /1\/2 linked sources available; 1 stale; 1 unavailable/);
   assert.doesNotMatch(brief, /Ask the pilot customer/);
-  context.services.readContext = async () => [{ ...note, updatedAt: "not a date" }, { ...task, updatedAt: "2027-01-01T00:00:00Z" }];
+  context.services.readContext = async kinds => [{ ...note, updatedAt: "not a date" }, { ...task, updatedAt: "2027-01-01T00:00:00Z" }].filter(item => kinds?.includes(item.kind));
   const recovered = await run(context, `brief ${id}`);
   assert.match(recovered, /freshness unknown/);
   assert.match(recovered, /source date is in the future; verify/);
   assert.match(recovered, /2\/2 linked sources available/);
   assert.match(recovered, /Ask the pilot customer/);
-  context.services.readContext = async () => [{ ...note, updatedAt: "2026-02-30T12:00:00Z" }, task];
+  context.services.readContext = async kinds => [{ ...note, updatedAt: "2026-02-30T12:00:00Z" }, task].filter(item => kinds?.includes(item.kind));
   assert.match(await run(context, `brief ${id}`), /freshness unknown/);
 });
 
@@ -209,7 +209,7 @@ test("empty, malformed, unavailable, duplicate and oversized context gets honest
   assert.match(await run(context, `brief ${id}`), /AMBIGUOUS source data; excluded from synthesis/);
   const before = await raw(context);
   context.services.readContext = async () => Array.from({ length: 2_001 }, () => note);
-  assert.match(await run(context, `brief ${id}`), /invalid or excessive data/);
+  assert.match(await run(context, `brief ${id}`), /complete-read budget/);
   assert.deepEqual(await raw(context), before);
   context.services.readContext = async () => null as unknown as AgentContextItem[];
   assert.match(await run(context, `brief ${id}`), /invalid or excessive data/);

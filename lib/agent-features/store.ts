@@ -1,9 +1,22 @@
-import { getRedisClient } from "../redis.js";
-import type { AgentFeatureStore } from "./types.js";
+import { validateAgentIdentity } from "./identity.js";
+export { validateAgentIdentity } from "./identity.js";
+import { resolveAgentBudgets } from "./budgets.js";
+import { contextRead } from "./context/shared.js";
+import type { AgentFeatureStore, AgentFeatureResourceBudgets } from "./types.js";
 
 export interface AgentStateBackend {
   get(key: string): Promise<string | null>;
   compareSet(key: string, previous: string | null, next: string, ttlSeconds?: number): Promise<boolean>;
+}
+
+/** Present unreadable bytes are never the read<T>() absence sentinel. No raw data is retained. */
+export class AgentStateCorruptionError extends Error {
+  override readonly name = "AgentStateCorruptionError";
+  readonly scope: Readonly<{ teamId: string; userId: string; featureId: string; key: string }>;
+  constructor(scope: { teamId: string; userId: string; featureId: string; key: string }, readonly reason: "stored-null" | "invalid-json") {
+    super(`Saved data for ${scope.featureId} could not be read safely in your workspace/user scope (${reason === "stored-null" ? "stored JSON null" : "invalid JSON"}). No automatic repair was attempted. Contact the app operator for the scoped recovery procedure in docs/agent-features/state-recovery.md. Ordinary commands cannot repair this state; help remains available. Any earlier dispatched save may have completed.`);
+    this.scope = Object.freeze({ ...scope });
+  }
 }
 
 const CAS = `
@@ -17,6 +30,7 @@ else redis.call('SET',KEYS[1],ARGV[3]) end
 return 1`;
 
 export async function createAgentStateBackend(): Promise<AgentStateBackend | null> {
+  const { getRedisClient } = await import("../redis.js");
   const redis = await getRedisClient();
   if (!redis) return null;
   return {
@@ -29,11 +43,6 @@ export async function createAgentStateBackend(): Promise<AgentStateBackend | nul
   };
 }
 
-export function validateAgentIdentity<T extends { teamId?: string; userId?: string }>(owner: T): asserts owner is T & { teamId: string; userId: string } {
-  if (!owner.teamId || !owner.userId || !/^[A-Z0-9]{2,32}$/.test(owner.teamId) || !/^[A-Z0-9]{2,32}$/.test(owner.userId)) {
-    throw new Error("Personal agents need a signed Slack workspace and user context.");
-  }
-}
 
 export function agentStorePrefix(owner: { teamId: string; userId: string }, featureId: string) {
   validateAgentIdentity(owner);
@@ -46,30 +55,43 @@ export function createAgentFeatureStore(
   owner: { teamId: string; userId: string },
   featureId: string,
   signal?: AbortSignal,
+  limits?: Pick<AgentFeatureResourceBudgets, "storeReads" | "storeUpdates">,
 ): AgentFeatureStore {
   const prefix = agentStorePrefix(owner, featureId);
+  const budgets = resolveAgentBudgets(limits);
+  let reads = 0, updates = 0;
   const scopedKey = (key: string) => {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(key)) throw new Error("Invalid personal agent storage key.");
     return prefix + key;
   };
-  const parse = <T>(raw: string): T => {
+  const parse = <T>(raw: string, key: string, stored = true): T => {
     if (Buffer.byteLength(raw) > 512_000) throw new Error("Personal agent data exceeds the storage limit.");
-    return JSON.parse(raw) as T;
+    let value: unknown;
+    try { value = JSON.parse(raw); }
+    catch (error) {
+      if (!stored) throw error;
+      throw new AgentStateCorruptionError({ teamId: owner.teamId, userId: owner.userId, featureId, key }, "invalid-json");
+    }
+    if (stored && value === null) throw new AgentStateCorruptionError({ teamId: owner.teamId, userId: owner.userId, featureId, key }, "stored-null");
+    return value as T;
   };
   return {
     async read<T>(key: string) {
       signal?.throwIfAborted();
-      const raw = await backend.get(scopedKey(key));
+      if (++reads > budgets.storeReads) throw new Error(`This command reached its limit of ${budgets.storeReads} state reads.`);
+      const raw = await contextRead(signal, () => backend.get(scopedKey(key)));
       signal?.throwIfAborted();
-      return raw === null ? null : parse<T>(raw);
+      return raw === null ? null : parse<T>(raw, key);
     },
     async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      signal?.throwIfAborted();
+      if (++updates > budgets.storeUpdates) throw new Error(`This command reached its limit of ${budgets.storeUpdates} state updates.`);
       const fullKey = scopedKey(key);
       for (let attempt = 0; attempt < 32; attempt++) {
         signal?.throwIfAborted();
-        const previous = await backend.get(fullKey);
+        const previous = await contextRead(signal, () => backend.get(fullKey));
         signal?.throwIfAborted();
-        const current = parse<T>(previous ?? JSON.stringify(initial));
+        const current = parse<T>(previous ?? JSON.stringify(initial), key, previous !== null);
         const next = transform(current);
         if (!next || typeof next !== "object" || !("value" in next)) throw new Error("Invalid personal agent state update.");
         const encoded = JSON.stringify(next.value);
@@ -77,7 +99,7 @@ export function createAgentFeatureStore(
           throw new Error("Personal agent storage is full. Export or remove older entries first.");
         }
         signal?.throwIfAborted();
-        if (encoded === previous || await backend.compareSet(fullKey, previous, encoded)) return next.result;
+        if (encoded === previous || await contextRead(signal, () => backend.compareSet(fullKey, previous, encoded))) return next.result;
       }
       throw new Error("Your data changed repeatedly while saving. Please retry this command.");
     },

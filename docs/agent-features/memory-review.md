@@ -1,6 +1,6 @@
 # Memory review and provenance
 
-Use `/nobo-help agent memory-review help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent memory-review help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `memory-review` keeps private, user-owned memory cards with a source, capture time,
 optional expiry, optional confidence rating, and a short revision history. You
@@ -169,7 +169,14 @@ characters each; facts are at most 1,200; sources at most 300. Commands are at
 most 4,000 characters. Replies are capped at 27,500 characters, below the runtime's
 28,000-character output limit. There is no automatic cleanup: `forget` removes
 a card and its retained history. Malformed persisted data is rejected without
-resetting it.
+resetting it. Every retained history action must be an actual string enum:
+`capture` or `import` for the first revision according to its origin, and
+`correct` or `confirm` afterward. Arrays (including nested arrays), objects,
+numbers, booleans, and unknown strings are invalid; no coercion or repair occurs.
+Malformed history blocks reads, rendering, correction, confirmation, and even
+confirmed forgetting, preserving the original stored bytes. The production
+approved-memory adapter also rejects the entire invalid source, so consumers
+cannot receive a currently confirmed card with malformed earlier history.
 
 There are no model calls, semantic conflict guesses, automatic legacy sync,
 reminders, external writes, or outbound messages. Claim text and source content
@@ -228,4 +235,13 @@ deterministic retryable transforms, and untrusted text. Additional quota tests
 exercise Unicode and JSON escaping, repeated confirmations at capacity, rejected
 corrections/imports, deletion recovery, and cancelled late imports against fake
 services and a fake 512,000-byte store ceiling. They do not access Slack, Redis,
-models, or production accounts.
+models, or production accounts. A real-runtime capture → confirm → correct →
+confirm regression corrupts the earlier correction action and checks raw-byte
+preservation and command refusal for each invalid type. The same cases use
+`createAgentFeatureServices` with `createProductionContextAdapters` and a fake
+backend to verify approved-memory rejection for `concept-links`, valid-history
+recovery, and workspace/user isolation.
+
+## Source capacity recovery (foundation follow-up)
+
+Legacy-import capacity failures are distinct from temporary outages and preserve all cards. Production legacy import remains unconnected and has no candidates; approved cards are not fed back into it. Use `/nobo-help agent memory-review capture Atlas | decision | Launch on Friday | My confirmation`, then `confirm <returned-card-id> 1` to confirm an explicitly supplied fact. Saved `list`/`show` paths remain available. No production byte violation is claimed for legacy import. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

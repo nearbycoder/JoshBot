@@ -1,6 +1,6 @@
 # Time-blocked day planner
 
-Use `/nobo-help agent day-planner help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent day-planner help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Build an on-demand, deterministic proposal around your tasks, working hours, fixed breaks, and owned calendar events. It never writes to a calendar or calls a model. Tasks remain in the planner until you remove them; scheduling does not mark them complete.
 
@@ -105,3 +105,7 @@ git diff --check
 The integrated regression loads the local calendar module by default; it is never skipped. It imports pasted ICS through the real calendar preview/confirm flow and calls `readCalendarEventContext` with a separate in-memory calendar store. It verifies a timed event without `DTEND` remains a busy point in source context, does not obstruct a task crossing that instant, and does not invalidate plans for another day. Normal meetings still block time and reversed intervals remain errors.
 
 Tests use only in-memory stores and fake services, plus that local calendar parser/adapter; no production services or network calls occur. They also cover complete command flows, priority/deadline ordering, merged blockers, empty/error states, UTF-8 byte quotas and lifecycle headroom with Unicode data, quota recovery without partial writes, bounded retention/output, invalid persisted state, DST gaps/overlaps and non-hour changes, all-day/overnight event boundaries, retries, concurrent changes, cancellation, and provider failure preservation.
+
+## Source capacity recovery (foundation follow-up)
+
+A context capacity failure is reported distinctly; tasks, settings and any saved plan remain unchanged. Events already use one kind and current production quotas normally fit the response limit. If event data exceeds a complete-read bound, use `/nobo-help agent calendar list`, then `remove <event-id> confirm` for an unneeded event, or import a smaller calendar. Planning another date does not shrink the complete event read. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

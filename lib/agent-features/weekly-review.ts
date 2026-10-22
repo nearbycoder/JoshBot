@@ -1,5 +1,9 @@
+import { readBoundedContext } from "./bounded-context.js";
+import { contextCapacityMessage } from "./budgets.js";
 import { randomUUID } from "node:crypto";
 import type { AgentContextKind, AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "No review was saved. Use /nobo-help agent weekly-review show latest for the saved review. Reduce relevant records in the original source tools, for example /nobo-help tools notes list then /nobo-help tools notes edit <note-id> | <shorter body>. Changing the review date cannot shrink the source read.";
 
 const KEY = "reviews";
 const KINDS = ["goal", "habit", "journal", "follow-up", "note"] as const;
@@ -312,8 +316,13 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       // Validate storage before a provider read, and revalidate inside the atomic transform.
       validateState(await context.store.read<unknown>(KEY));
       let raw: unknown;
-      try { raw = await context.services.readContext([...KINDS] as AgentContextKind[]); }
-      catch { throw new ReviewError("Could not read your personal sources. No review was saved; your existing reviews and reflections are unchanged. Retry review later."); }
+      try { raw = await readBoundedContext(context, KINDS); }
+      catch (error) {
+        if (context.signal?.aborted) throw new ReviewError("Weekly review cancelled; no review saved.");
+        const capacity = contextCapacityMessage(error, CAPACITY_RECOVERY);
+        if (capacity) throw new ReviewError(capacity);
+        throw new ReviewError("Could not read your personal sources. No review was saved; your existing reviews and reflections are unchanged. Retry review later.");
+      }
       if (!Array.isArray(raw)) throw new ReviewError("Personal sources returned an invalid response. No review was saved; retry later.");
       if (context.signal?.aborted) throw new ReviewError("Weekly review cancelled; no review saved.");
       const { rows, ignored } = normalize(raw, format);

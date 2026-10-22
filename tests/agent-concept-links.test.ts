@@ -1,0 +1,323 @@
+import { AgentContextCapacityError } from "../lib/agent-features/budgets.js";
+import assert from "node:assert/strict";
+import test from "node:test";
+import { randomUUID } from "node:crypto";
+import feature from "../lib/agent-features/concept-links.js";
+import memory from "../lib/agent-features/memory-review.js";
+import { createAgentFeatureServices, createProductionContextAdapters } from "../lib/agent-features/services.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
+const prefix = "/nobo-help agent concept-links ", now = new Date("2026-10-22T15:00:00Z");
+const state = async (f:ReturnType<typeof createAgentFeatureFixture>) => (await f.store().read<any>("state"))!;
+async function walk(f:ReturnType<typeof createAgentFeatureFixture>, cmd:string) { let all="",first="",count=0; while(cmd) { const reply=await f.run(cmd); assert.ok(reply.length<=3500); first ||= reply; all+=reply; const next=reply.match(/Next: (\/nobo-help agent concept-links [^\n]+)/)?.[1]; cmd=next?.includes(" rev ")?next.slice(prefix.length):""; assert.ok(++count<100); } return {all,first,count}; }
+async function setup(f:ReturnType<typeof createAgentFeatureFixture>) { await f.run("create Reliable systems"); const r=(await state(f)).records[0]; for(const t of ["Idempotency","Retries","Timeouts","Isolated"]) await f.run(`concept ${r.id} add ${t} | ${t} annotation`); return (await state(f)).records[0]; }
+function production() { const backend=createMemoryAgentBackend(); const owner={teamId:"TCONCEPT",userId:"UCONCEPT"}; const services=createAgentFeatureServices(backend,owner,new AbortController().signal,{now,timezone:"America/Chicago",featureId:feature.id},createProductionContextAdapters({redis:async()=>{throw Error("Unexpected index read");}})); const f=createAgentFeatureFixture(feature,{backend,owner,services:{readContext:services.readContext}}); const key=`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`; const notes=(n:number,body="Idempotency excerpt")=>({entries:Array.from({length:n},(_,i)=>({id:`note${String(i).padStart(3,"0")}`,title:`Note ${i}`,body,createdAt:now.toISOString(),updatedAt:now.toISOString(),data:{}}))}); return {f,backend,key,notes,owner}; }
+test("typed directed BFS chooses stable shortest paths and handles cycles/shared/disconnected nodes", async()=>{
+ const f=createAgentFeatureFixture(feature),r=await setup(f),[a,b,c,d]=r.nodes;
+ await f.run(`connect ${r.id} ${b.id} | depends-on | ${a.id} | Avoid duplicate effects`);
+ await f.run(`connect ${r.id} ${a.id} | supports | ${c.id} | First path`);
+ await f.run(`connect ${r.id} ${b.id} | contrasts | ${c.id} | Direct wins`);
+ await f.run(`connect ${r.id} ${c.id} | example | ${b.id} | Cycle`);
+ assert.match(await f.run(`path ${r.id} ${b.id} | ${c.id}`),/1 hop\(s\)[\s\S]*Direct wins/);
+ assert.match(await f.run(`path ${r.id} ${a.id} | ${d.id}`),/No directed path/);
+ assert.match(await f.run(`path ${r.id} ${a.id} | ${a.id}`),/0 hop/);
+ const e=(await state(f)).records[0].edges[0];
+ await f.run(`connect-edit ${r.id} ${e.id} | ${b.id} | supports | ${a.id} | Changed label`);
+ await f.run(`concept ${r.id} edit ${a.id} | Idempotent | Changed annotation`);
+ await f.run(`edit ${r.id} | Updated graph`);
+ assert.match(await f.run(`path ${r.id} ${b.id} | ${a.id}`),/Changed label/);
+ await f.run(`remove ${r.id} concept ${a.id} confirm`); assert.equal((await state(f)).records[0].edges.length,2);
+ assert.deepEqual(f.calls,{generate:0,search:0,readContext:0});
+});
+test("real production adapters expose all 200 items, source pages bind source and map revisions",async()=>{
+ const {f,backend,key,notes,owner}=production(),r=await setup(f); backend.data.set(key,JSON.stringify(notes(100)));
+ const mf=createAgentFeatureFixture(memory,{backend,owner,now}); await mf.run("capture me | subject | A memory fact | User note"); const ms=(await mf.store().read<any>("cards"))!; await mf.run(`confirm ${ms.cards[0].id} 1`); const template=(await mf.store().read<any>("cards"))!.cards[0];
+ const cards=Array.from({length:100},(_,i)=>({...structuredClone(template),id:`mr_${randomUUID()}`,key:`key${i}`})); backend.data.set(mf.key("cards"),JSON.stringify({version:1,cards}));
+ const result=await walk(f,`sources ${r.id}`); assert.match(result.all,/200 matches of 200/); assert.match(result.all,/toolbox:notes:note099/); assert.ok(result.count>10); assert.equal(f.calls.readContext,result.count);
+ const next=result.first.match(/Next: (.+)/)![1].slice(prefix.length); backend.data.set(key,JSON.stringify(notes(100,"Changed"))); assert.match(await f.run(next),/Source snapshot changed/);
+ backend.data.set(key,JSON.stringify(notes(100))); await f.run(`edit ${r.id} | New revision`); assert.match(await f.run(next),/Map changed/);
+ const data=notes(1,"X".repeat(12010)); backend.data.set(key,JSON.stringify(data)); const detail=await walk(f,`sources ${r.id} --kind note --source toolbox:notes:note000`); assert.match(detail.all,/textTruncated[^\n]*true/); assert.ok(detail.count>3);
+ backend.data.set(key,JSON.stringify(notes(101))); assert.match(await f.run(`sources ${r.id} --kind note`),/could not be read completely/);
+});
+test("explicit fresh selection retains exact metadata, rejects stale/revoked references and quotas",async()=>{
+ const {f,backend,key,notes,owner}=production(),r=await setup(f); const entries=notes(11,"界".repeat(600)); entries.entries[0].data={}; backend.data.set(key,JSON.stringify(entries));
+ for(let i=0;i<6;i++){ const sid=`toolbox:notes:note00${i}`,p=await f.run(`sources ${r.id} --kind note --source ${sid}`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1],rev=(await state(f)).records[0].revision; assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${sid} | ${fp} | ${rev} | ${"界".repeat(600)}`),/Saved selected/); }
+ const sid="toolbox:notes:note006",p=await f.run(`sources ${r.id} --kind note --source ${sid}`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1],rev=(await state(f)).records[0].revision;
+ const raw=backend.data.get(f.key("state")); assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${sid} | ${fp} | ${rev} | ${"界".repeat(600)}`),/12000/); assert.equal(backend.data.get(f.key("state")),raw);
+ assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${sid} | ${fp} | ${rev} | fabricated`),/exact nonempty span/);
+ entries.entries[6].body="changed";backend.data.set(key,JSON.stringify(entries)); assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${sid} | ${fp} | ${rev} | changed`),/stale/);
+ const a=(await state(f)).records[0].attachments[0]; assert.equal(a.evidence.sources[0].id,"toolbox:notes:note000"); assert.equal(a.evidence.sources[0].metadata.source,"Personal toolbox / notes"); assert.equal(a.evidence.sources[0].metadata.textTruncated,false);
+ (entries.entries[0] as any).teamId="TFOREIGN"; backend.data.set(key,JSON.stringify(entries)); assert.match((await walk(f,`sources ${r.id} --kind note`)).all,/absent\/unavailable/);
+ entries.entries[1].body="new"; backend.data.set(key,JSON.stringify(entries)); assert.match((await walk(f,`sources ${r.id} --kind note`)).all,/STALE/);
+ assert.match(await f.run(`show ${r.id}`,{owner:{teamId:owner.teamId,userId:"UOTHER"}}),/not found/);
+ assert.match(await f.run(`show ${r.id}`,{owner:{teamId:"TOTHER",userId:owner.userId}}),/not found/);
+ for(const a of (await state(f)).records[0].attachments) await f.run(`remove ${r.id} attachment ${a.id} confirm`); assert.equal((await state(f)).records[0].attachments.length,0);
+});
+test("all graph counts and long report continuations are complete and revision-bound",async()=>{
+ const f=createAgentFeatureFixture(feature); await f.run("create Max graph"); const id=(await state(f)).records[0].id;
+ for(let i=0;i<40;i++) assert.match(await f.run(`concept ${id} add N${i} | A${i}`),/Saved concept/);
+ let r=(await state(f)).records[0];
+ for(let i=0;i<80;i++) assert.match(await f.run(`connect ${id} ${r.nodes[i%40].id} | ${i<40?"supports":"contrasts"} | ${r.nodes[(i+1)%40].id} | E${i}`),/Saved edge/);
+ assert.match((await walk(f,`show ${id}`)).all,/E79/); assert.match(await f.run(`concept ${id} add excess | x`),/Maximum 40/);
+ for(let i=0;i<20;i++) await f.run(`remove ${id} edge ${(await state(f)).records[0].edges.at(-1).id} confirm`);
+ r=(await state(f)).records[0]; for(let i=0;i<20;i++) await f.run(`connect-edit ${id} ${r.edges[i].id} | ${r.edges[i].from} | supports | ${r.edges[i].to} | ${"x".repeat(250)}`);
+ const viewed=await walk(f,`path ${id} ${r.nodes[0].id} | ${r.nodes[20].id}`); assert.ok(viewed.count>1);
+ const next=viewed.first.match(/Next: (.+)/)![1].slice(prefix.length); await f.run(`edit ${id} | Changed`); assert.match(await f.run(next),/Restart/);
+ const exported=await f.run(`export ${id}`); assert.ok(Buffer.byteLength(exported)<=24576); assert.equal(JSON.parse(exported).record.nodes.length,40);
+});
+test("strict persisted enums/evidence preserve bytes, CAS conflict protects edits/removals/attachments",async()=>{
+ let conflict:((s:any)=>void)|undefined; const backend=createMemoryAgentBackend({beforeCompareSet(key,previous){if(conflict&&key.endsWith(":state")){const s=JSON.parse(previous!);const fn=conflict;conflict=undefined;fn(s);backend.data.set(key,JSON.stringify(s));}}});
+ const f=createAgentFeatureFixture(feature,{backend}),r=await setup(f); await f.run(`connect ${r.id} ${r.nodes[0].id} | supports | ${r.nodes[1].id} | label`); const good=await state(f);
+ for(const bad of [["supports"],{toString:"supports"},"causes"]){const s=structuredClone(good);s.records[0].edges[0].type=bad;const raw=JSON.stringify(s);backend.data.set(f.key("state"),raw);await f.run(`delete ${r.id} confirm`);assert.equal(backend.data.get(f.key("state")),raw);}
+ for(const raw of ["null","{bad"]){backend.data.set(f.key("state"),raw);await f.run(`delete ${r.id} confirm`);assert.equal(backend.data.get(f.key("state")),raw);} backend.data.set(f.key("state"),JSON.stringify(good));
+ for(const cmd of [`concept ${r.id} edit ${r.nodes[0].id} | edited | a`,`remove ${r.id} concept ${r.nodes[0].id} confirm`,`delete ${r.id} confirm`]){conflict=s=>s.records[0].revision++;assert.match(await f.run(cmd),/changed/);}
+ await f.run("create Other"); conflict=s=>{s.records[1].revision++;s.records[1].title="concurrent other";}; assert.match(await f.run(`edit ${r.id} | Changed safely`),/Updated map/); assert.equal((await state(f)).records[1].title,"concurrent other");
+});
+test("selection detects edits/deletion across awaited source read and every CAS retry",async()=>{
+ let gate:ReturnType<typeof deferred<any[]>>|undefined; let conflict=false;const source={id:"toolbox:notes:n",kind:"note" as const,title:"Note",text:"exact",metadata:{source:"Personal toolbox / notes"}};
+ const backend=createMemoryAgentBackend({beforeCompareSet(key,previous){if(conflict&&key.endsWith(":state")){conflict=false;const s=JSON.parse(previous!);s.records[0].revision++;backend.data.set(key,JSON.stringify(s));}}});
+ const f=createAgentFeatureFixture(feature,{backend,services:{readContext:async()=>gate?gate.promise:[source]}}),r=await setup(f);
+ const p=await f.run(`sources ${r.id}`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1]; let rev=(await state(f)).records[0].revision;
+ conflict=true; assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${source.id} | ${fp} | ${rev} | exact`),/changed/);
+ rev=(await state(f)).records[0].revision;gate=deferred(); const pending=f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${source.id} | ${fp} | ${rev} | exact`); await new Promise(resolve=>setImmediate(resolve));await f.run(`delete ${r.id} confirm`);gate.resolve([source]);assert.match(await pending,/not found/); assert.equal((await state(f)).records.length,0);
+});
+
+test("ten selected sources, replacement/removal, and production memory revocation preserve exact provenance",async()=>{
+ const {f,backend,key,notes,owner}=production(),r=await setup(f);backend.data.set(key,JSON.stringify(notes(11)));
+ for(let i=0;i<10;i++){const sid=`toolbox:notes:note${String(i).padStart(3,"0")}`,p=await f.run(`sources ${r.id} --kind note --source ${sid}`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1],rev=(await state(f)).records[0].revision;assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${sid} | ${fp} | ${rev} | Idempotency excerpt`),/Saved selected/);}
+ let p=await f.run(`sources ${r.id} --kind note --source toolbox:notes:note010`),fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1],rev=(await state(f)).records[0].revision;
+ assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | toolbox:notes:note010 | ${fp} | ${rev} | Idempotency excerpt`),/Maximum ten/);
+ let a=(await state(f)).records[0].attachments[0];assert.match(await f.run(`attach-edit ${r.id} ${a.id} | ${r.nodes[1].id} | note | toolbox:notes:note010 | ${fp} | ${rev} | Idempotency excerpt`),/Saved selected/);
+ for(const a of(await state(f)).records[0].attachments)await f.run(`remove ${r.id} attachment ${a.id} confirm`);
+ const mf=createAgentFeatureFixture(memory,{backend,owner,now});await mf.run("capture me | key | Exact memory fact | My source note");let ms=(await mf.store().read<any>("cards"))!;const mid=ms.cards[0].id;await mf.run(`confirm ${mid} 1`);
+ p=await f.run(`sources ${r.id} --kind memory --source memory-review:${mid}`);fp=p.match(/Fingerprint: (e1:[a-f0-9]{64})/)![1];rev=(await state(f)).records[0].revision;
+ assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | memory | memory-review:${mid} | ${fp} | ${rev} | Exact memory fact`),/Saved selected/);
+ const saved=(await state(f)).records[0].attachments[0].evidence.sources[0];assert.equal(saved.metadata.cardId,mid);assert.equal(saved.metadata.source,"My source note");assert.deepEqual(saved.metadata.origin,{kind:"user"});
+ await mf.run(`correct ${mid} 2 | Corrected fact | Corrected source`);assert.match((await walk(f,`sources ${r.id} --kind memory`)).all,/absent\/unavailable/);assert.match((await walk(f,`show ${r.id}`)).all,/Exact memory fact/);
+});
+test("mislabeled foreign adapter provenance is refused before selection",async()=>{
+ const f=createAgentFeatureFixture(feature,{services:{readContext:async()=>[{id:"artifact:foreign",kind:"note",title:"Fake",text:"text",metadata:{source:"Personal toolbox / notes"}}]}}),r=await setup(f);
+ assert.match(await f.run(`sources ${r.id} --kind note`),/provenance/);assert.equal((await state(f)).records[0].attachments.length,0);
+});
+
+test("schema-valid legacy aggregate recovers by exact root deletion, including CAS growth", async () => {
+  let inject: ((value: any) => void) | undefined;
+  let winning: string | undefined;
+  const backend = createMemoryAgentBackend({ beforeCompareSet(key, previous) {
+    if (inject && key.endsWith(":state")) {
+      const value = JSON.parse(previous!), change = inject; inject = undefined; change(value);
+      winning = JSON.stringify(value); backend.data.set(key, winning);
+    }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend });
+  await f.run("create Legacy root"); const id = (await state(f)).records[0].id;
+  for (let i = 0; i < 13; i++) assert.match(await f.run(`concept ${id} add ${"t".repeat(160)} | ${"a".repeat(600)}`), /Saved/);
+  const root = (await state(f)).records[0];
+  // Only the aggregate is synthetic: each constituent root was admitted by real commands.
+  const clone = () => {
+    const ids = new Map<string, string>();
+    return JSON.parse(JSON.stringify(root).replace(/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}/g, old => {
+      if (!ids.has(old)) ids.set(old, randomUUID()); return ids.get(old)!;
+    }));
+  };
+  const legacy = { version: 1, records: Array.from({ length: 8 }, clone) };
+  const raw = JSON.stringify(legacy); assert.ok(Buffer.byteLength(raw) < 512000);
+  assert.ok(Buffer.byteLength(JSON.stringify({ ...legacy, records: legacy.records.slice(1) })) > 49152);
+  backend.data.set(f.key("state"), raw);
+  for (const r of legacy.records) assert.deepEqual(JSON.parse(await f.run(`export ${r.id}`)).record, r);
+  const target = legacy.records[0].id;
+  for (const owner of [{teamId:"TOTHER",userId:f.owner.userId},{teamId:f.owner.teamId,userId:"UOTHER"}]) {
+    assert.match(await f.run(`delete ${target} confirm`, { owner }), /not found/);
+    assert.equal(backend.data.get(f.key("state")), raw);
+  }
+  assert.match(await f.run(`edit ${target} | Restricted growth`), /quota/i);
+  assert.equal(backend.data.get(f.key("state")), raw);
+  const broken = " \n" + JSON.stringify({ ...legacy, version: 2 }) + "\t";
+  backend.data.set(f.key("state"), broken); await f.run(`delete ${target} confirm`);
+  assert.equal(backend.data.get(f.key("state")), broken); backend.data.set(f.key("state"), raw);
+  inject = s => { s.records[0].revision++; s.records[0].title = "Concurrent target growth"; };
+  assert.match(await f.run(`delete ${target} confirm`), /changed/);
+  assert.equal(backend.data.get(f.key("state")), winning);
+  inject = s => { s.records[1].revision++; s.records[1].title = "Unrelated growth retained"; };
+  assert.match(await f.run(`delete ${target} confirm`), /Deleted privately/);
+  assert.equal(backend.data.get(f.key("state")), JSON.stringify({version:1,records:JSON.parse(winning!).records.slice(1)}));
+  assert.ok(Buffer.byteLength(backend.data.get(f.key("state"))!) > 49152);
+  let remaining = (await state(f)).records;
+  while (remaining.length) {
+    const before = backend.data.get(f.key("state"))!;
+    assert.match(await f.run(`delete ${remaining[0].id} confirm`), /Deleted privately/);
+    remaining = remaining.slice(1);
+    assert.equal(backend.data.get(f.key("state")), JSON.stringify({version:1,records:remaining}));
+    assert.ok(Buffer.byteLength(backend.data.get(f.key("state"))!) < Buffer.byteLength(before));
+  }
+  assert.match(await f.run("create Recovered"), /Saved privately/);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+test("backend errors are sanitized before and after dispatch while validation stays actionable", async () => {
+  const marker = "FAKE_BACKEND_DIAGNOSTIC_PASSWORD_DO_NOT_DISPLAY";
+  for (const operation of ["get", "compareSet", "committed"] as const) for (const rejected of [false, true]) {
+    const backend = createMemoryAgentBackend(), f = createAgentFeatureFixture(feature, { backend });
+    await f.run("create Original"); const r = (await state(f)).records[0];
+    const original = backend.data.get(f.key("state")), get = backend.get, compareSet = backend.compareSet;
+    let dispatched: string | undefined;
+    const fail = () => { if (rejected) return Promise.reject(new Error(marker)); throw new Error(marker); };
+    if (operation === "get") backend.get = () => fail();
+    else backend.compareSet = (key, previous, next) => {
+      if (operation === "committed") {
+        assert.equal(backend.data.get(key), previous); backend.data.set(key, next); dispatched = next;
+      }
+      return fail();
+    };
+    const reply = await f.run(operation === "get" ? "list" : `edit ${r.id} | Changed`);
+    assert.doesNotMatch(reply, new RegExp(marker)); assert.match(reply, /Inspect before retrying/);
+    assert.match(reply, /dispatched save may have completed/); assert.ok(reply.length <= 3500);
+    assert.equal(backend.data.get(f.key("state")), operation === "committed" ? dispatched : original);
+    backend.get = get; backend.compareSet = compareSet;
+    assert.equal(JSON.parse(await f.run(`export ${r.id}`)).record.title, operation === "committed" ? "Changed" : "Original");
+    const raw = backend.data.get(f.key("state"));
+    for (const cmd of ["create " + "x".repeat(161), "create A | surplus", "list 0"]) {
+      const bad = await f.run(cmd); assert.match(bad, /Field|field|page|Page/);
+      assert.doesNotMatch(bad, /could not be read|unavailable/); assert.equal(backend.data.get(f.key("state")), raw);
+    }
+    assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+  }
+});
+
+test("source failures hide diagnostics and preserve typed capacity recovery", async () => {
+  const marker = "FAKE_SOURCE_DIAGNOSTIC_PASSWORD_DO_NOT_DISPLAY";
+  for (const capacity of [false, true]) {
+    const f = createAgentFeatureFixture(feature, {services:{readContext:async () => {
+      throw capacity ? new AgentContextCapacityError() : new Error(marker);
+    }}});
+    await f.run("create Sources"); const r = (await state(f)).records[0], raw = f.backend.data.get(f.key("state"));
+    const reply = await f.run(`sources ${r.id}`);
+    assert.doesNotMatch(reply, new RegExp(marker));
+    assert.match(reply, capacity ? /complete-read budget.*No source data was truncated/ : /could not be read completely/);
+    assert.match(reply, capacity ? /Narrow|Reduce/ : /owning source/);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+    assert.deepEqual(f.calls,{generate:0,search:0,readContext:1});
+  }
+});
+
+async function erasureFixture(f: ReturnType<typeof createAgentFeatureFixture>) {
+  assert.match(await f.run("create Reliable systems"), /Saved/);
+  const read = async () => (await f.store().read<any>("state"))!;
+  const id = (await read()).records[0].id;
+  for (let i = 0; i < 8; i++) assert.match(await f.run(`concept ${id} add Concept | ${"E".repeat(500)}`), /Saved/);
+  return { id, read };
+}
+
+for (const ceiling of [false, true]) test(`selective erasure retains other children and invalidates complete pages (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  const f = createAgentFeatureFixture(feature), {id, read} = await erasureFixture(f);
+  if (ceiling) { const s = await read(); s.records[0].revision = 999999999; f.backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const before = (await read()).records[0], child = before.nodes[0].id;
+  assert.deepEqual(JSON.parse(await f.run(`export ${id}`)).record, before);
+  const first = await f.run(`show ${id}`), continuation = first.match(/\nNext: \/nobo-help agent [\w-]+ ([^\n]+)$/)?.[1];
+  assert.ok(continuation, "fixture exercises real continuation");
+  assert.match(continuation, / rev \d+:[a-f0-9]{64}$/);
+  assert.match(await f.run(continuation), /Page 2\//);
+  assert.match(await f.run(`remove ${id} concept ${child} confirm`), /Saved|Removed/);
+  const after = (await read()).records[0];
+  assert.equal(after.revision, ceiling ? 999999999 : before.revision + 1);
+  assert.deepEqual(after.nodes, before.nodes.slice(1));
+  assert.match(await f.run(continuation), /changed|snapshot|Restart/i);
+  assert.match(await f.run(continuation.replace(/:[a-f0-9]{64}/, "")), /changed|snapshot|Restart/i);
+  // New pages remain complete and lossless after a saturated revision removal.
+  let cmd = `show ${id}`, body = "";
+  while (cmd) {
+    const reply = await f.run(cmd); assert.ok(reply.length <= 3500 && reply.isWellFormed());
+    const marker = reply.match(/\nPage \d+\/\d+\n/); assert.ok(marker);
+    body += reply.slice(marker.index! + marker[0].length).replace(/\nNext: \/nobo-help agent [^\n]+$/, "");
+    cmd = reply.match(/\nNext: \/nobo-help agent [\w-]+ ([^\n]+)$/)?.[1] ?? "";
+  }
+  assert.deepEqual(JSON.parse(body.slice(body.indexOf("{"))), JSON.parse(await f.run(`export ${id}`)));
+  if (ceiling) {
+    const raw = f.backend.data.get(f.key("state")); assert.match(await f.run(`edit ${id} | Changed`), /Revision limit/);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+  await f.run(`delete ${id} confirm`); assert.equal((await read()).records.length, 0);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+for (const ceiling of [false, true]) test(`real CAS protects erasure intent and retries unrelated changes (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  let action: (() => Promise<void>) | undefined, winning: string | undefined;
+  const backend = createMemoryAgentBackend({async beforeCompareSet(key) {
+    if (key.endsWith(":state") && action) { const work = action; action = undefined; await work(); winning = backend.data.get(key); }
+  }});
+  const f = createAgentFeatureFixture(feature, {backend}), {id, read} = await erasureFixture(f);
+  await f.run("create Reliable systems");
+  if (ceiling) { const s = await read(); s.records[0].revision = 999999999; backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const original = backend.data.get(f.key("state"))!, r = (await read()).records[0], child = r.nodes[0].id;
+  const remove = (child: string) => `remove ${id} concept ${child} confirm`;
+  // A real same-record removal wins while the original operation is awaiting CAS.
+  for (const pending of [remove(child), `delete ${id} confirm`]) {
+    backend.data.set(f.key("state"), original);
+    action = async () => { assert.match(await f.run(remove(r.nodes[1].id)), /Saved|Removed/); };
+    assert.match(await f.run(pending), /changed/); assert.equal(backend.data.get(f.key("state")), winning);
+  }
+  // A competing writer reintroduces the child ID with changed content. The exact
+  // numeric revision can be unchanged; intent must still bind the full snapshot.
+  backend.data.set(f.key("state"), original);
+  action = async () => {
+    assert.match(await f.run(remove(child)), /Saved|Removed/);
+    const s = await read(), replacement = structuredClone(r.nodes[0]);
+    replacement.annotation = "Reintroduced evidence";
+    s.records[0].nodes.push(replacement); backend.data.set(f.key("state"), JSON.stringify(s));
+    assert.equal(JSON.parse(await f.run(`export ${id}`)).record.nodes.at(-1).id, child);
+  };
+  assert.match(await f.run(remove(child)), /changed/); assert.equal(backend.data.get(f.key("state")), winning);
+  backend.data.set(f.key("state"), original);
+  action = async () => { await f.run(`delete ${id} confirm`); };
+  assert.match(await f.run(remove(child)), /not found/); assert.equal(backend.data.get(f.key("state")), winning);
+  backend.data.set(f.key("state"), original);
+  action = async () => { const other = (await read()).records[1].id; await f.run(`delete ${other} confirm`); };
+  assert.match(await f.run(remove(child)), /Saved|Removed/);
+  const after = await read(); assert.equal(after.records.length, 1);
+  assert.deepEqual(after.records[0].nodes, r.nodes.slice(1));
+  assert.ok(backend.calls.conflicts >= 5);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+for (const ceiling of [false, true]) for (const operation of ["read", "replace"] as const)
+test(`pending source ${operation} cannot repeat or restore removed attachment (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  const marker = "ERASED_SOURCE_MARKER", source = {id:"toolbox:notes:erasure",kind:"note" as const,title:"Note",text:marker,metadata:{source:"Personal toolbox / notes"}};
+  const entered = deferred<void>(), gate = deferred<typeof source[]>(); let waiting = false;
+  const f = createAgentFeatureFixture(feature, {services:{readContext:async kinds => {
+    assert.deepEqual(kinds, ["note"]); if (waiting) { entered.resolve(); return gate.promise; } return [source];
+  }}});
+  await setup(f); let r = (await state(f)).records[0];
+  const list = `sources ${r.id} --kind note --source ${source.id}`;
+  const fp = (await f.run(list)).match(/Fingerprint: (e1:[a-f0-9]{64})/)![1];
+  assert.match(await f.run(`attach ${r.id} ${r.nodes[0].id} | note | ${source.id} | ${fp} | ${r.revision} | ${marker}`), /Saved selected/);
+  const s = await state(f); if (ceiling) { s.records[0].revision = 999999999; f.backend.data.set(f.key("state"), JSON.stringify(s)); }
+  r = (await state(f)).records[0];
+  const attachment = r.attachments[0], calls = f.calls.readContext;
+  waiting = true;
+  const pending = f.run(operation === "read" ? list : `attach-edit ${r.id} ${attachment.id} | ${r.nodes[0].id} | note | ${source.id} | ${fp} | ${r.revision} | ${marker}`);
+  await entered.promise;
+  assert.match(await f.run(`remove ${r.id} attachment ${attachment.id} confirm`), /Removed/);
+  const raw = f.backend.data.get(f.key("state")), writes = f.backend.calls.writes;
+  gate.resolve([source]);
+  const reply = await pending; assert.match(reply, /changed/); assert.doesNotMatch(reply, new RegExp(marker));
+  assert.equal(f.backend.data.get(f.key("state")), raw); assert.equal(f.backend.calls.writes, writes);
+  assert.equal(f.calls.readContext, calls + 1); assert.equal(f.calls.generate + f.calls.search, 0);
+});
+
+test("all field and relationship erasures remain valid at the root revision ceiling", async () => {
+  const f = createAgentFeatureFixture(feature);
+  const r = await setup(f), id = r.id;
+  await f.run(`connect ${id} ${r.nodes[0].id} | supports | ${r.nodes[1].id} | Evidence`);
+  const edge = (await state(f)).records[0].edges[0];
+  const s = (await f.store().read<any>("state"))!; s.records[0].revision = 999999999;
+  const original = JSON.stringify(s);
+  for (const cmd of [`remove ${id} concept ${r.nodes[0].id} confirm`,
+    `remove ${id} edge ${edge.id} confirm`]) {
+    f.backend.data.set(f.key("state"), original);
+    assert.match(await f.run(cmd), /Saved|Removed|Cleared/);
+    assert.notEqual(f.backend.data.get(f.key("state")), original, cmd);
+    const exported = JSON.parse(await f.run(`export ${id}`));
+    assert.equal(exported.record.revision, 999999999);
+    assert.ok(Buffer.byteLength(JSON.stringify(exported)) <= 24576);
+  }
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});

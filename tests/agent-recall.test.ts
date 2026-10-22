@@ -577,3 +577,77 @@ test("production qualified references keep owner isolation, exact kind and origi
   assert.deepEqual([...f.data], before);
   assert.equal(f.writes.length, writes);
 });
+
+
+test("ranking and selected excerpts exactly match pre-optimization evidence across ties, phrases and Unicode", async () => {
+  const h = setup([
+    source("tie-b", { title: "Atlas rollout", text: "Atlas rollout follows the review." }),
+    source("tie-a", { title: "Atlas rollout", text: "Atlas rollout follows the review." }),
+    source("late/東京", { kind: "journal", title: "CAFÉ 東京 review", text: "Background. ".repeat(35) + "Atlas audit café 東京 — evidence with café\u0301 variants. " + "Context. ".repeat(45), updatedAt: "2026-10-23T12:00:00Z" }),
+    source("partial", { title: "Atlas ".repeat(25), text: "Atlas ".repeat(120), updatedAt: "2026-10-24T12:00:00Z" }),
+    source("phrase", { kind: "goal", title: "Milestone", text: "The Atlas rollout needs an audit. " + "Evidence. ".repeat(80), updatedAt: "2026-10-21T12:00:00Z" }),
+  ]);
+  // Captured from f549a02 before the optimization; no mirrored ranking algorithm.
+  const expected = [
+  {
+    "command": "search Atlas rollout --limit 3",
+    "rows": [
+      " [note/tie-a] Atlas rollout\nnote · updated 2026-10-22 · matched 2/2 words\n“Atlas rollout follows the review.”",
+      " [note/tie-b] Atlas rollout\nnote · updated 2026-10-22 · matched 2/2 words\n“Atlas rollout follows the review.”",
+      " [goal/phrase] Milestone\ngoal · updated 2026-10-21 · matched 2/2 words\n“The Atlas rollout needs an audit. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence.…”"
+    ]
+  },
+  {
+    "command": "search Atlas audit --limit 2",
+    "rows": [
+      " [journal/late%2F%E6%9D%B1%E4%BA%AC] CAFÉ 東京 review\njournal · updated 2026-10-23 · matched 2/2 words\n“…Background. Background. Background. Background. Background. Background. Atlas audit café 東京 — evidence with café́ variants. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context.…”",
+      " [goal/phrase] Milestone\ngoal · updated 2026-10-21 · matched 2/2 words\n“The Atlas rollout needs an audit. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence.…”"
+    ]
+  },
+  {
+    "command": "search \"Atlas rollout\" --limit 2",
+    "rows": [
+      " [note/tie-a] Atlas rollout\nnote · updated 2026-10-22 · matched 2/2 words\n“Atlas rollout follows the review.”",
+      " [note/tie-b] Atlas rollout\nnote · updated 2026-10-22 · matched 2/2 words\n“Atlas rollout follows the review.”"
+    ]
+  },
+  {
+    "command": "search café 東京 --limit 2",
+    "rows": [
+      " [journal/late%2F%E6%9D%B1%E4%BA%AC] CAFÉ 東京 review\njournal · updated 2026-10-23 · matched 2/2 words\n“…Background. Background. Background. Background. Background. Atlas audit café 東京 — evidence with café́ variants. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context.…”"
+    ]
+  },
+  {
+    "command": "ask Atlas audit --limit 2",
+    "rows": [
+      " [journal/late%2F%E6%9D%B1%E4%BA%AC] CAFÉ 東京 review\njournal · updated 2026-10-23 · matched 2/2 words\n“Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Background. Atlas audit café 東京 — evidence with café́ variants. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context. Context.…”",
+      " [goal/phrase] Milestone\ngoal · updated 2026-10-21 · matched 2/2 words\n“The Atlas rollout needs an audit. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence. Evidence.…”"
+    ]
+  }
+];
+  for (const { command, rows } of expected) {
+    const response = await h.run(command);
+    const actual = (response.match(/^\d+\. \[[^\n]+\n[^\n]+\n“[^\n]*”/gm) ?? []).map(row => row.replace(/^\d+\./, ""));
+    assert.deepEqual(actual, rows, command);
+  }
+});
+
+test("excerpt scans scale with displayed top K, not the number of matching sources", async (t) => {
+  const h = setup(Array.from({ length: 600 }, (_, i) => source(`match-${i}`, { text: "Atlas rollout evidence. ".repeat(40) })));
+  const original = String.prototype.matchAll;
+  let scans = 0;
+  // Observe the unchanged excerpt algorithm's full-body word scan at the JS
+  // boundary. Tokenization for ranking uses match(), not this iterator.
+  t.mock.method(String.prototype, "matchAll", function(this: string, expression: RegExp) {
+    if (expression.source === "[\\p{L}\\p{M}\\p{N}]+" && expression.flags === "gu") scans++;
+    return original.call(this, expression);
+  });
+  assert.match(await h.run("search Atlas --limit 3"), /Showing 3 of 600 lexical matches/);
+  assert.equal(scans, 3);
+  scans = 0;
+  assert.match(await h.run("ask Atlas --limit 5"), /Showing 5 of 600 lexical matches/);
+  assert.equal(scans, 5);
+  scans = 0;
+  assert.match(await h.run("source note/match-0"), /Original ID: match-0/);
+  assert.equal(scans, 0);
+});

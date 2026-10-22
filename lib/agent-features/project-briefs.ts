@@ -1,5 +1,9 @@
+import { readBoundedContext } from "./bounded-context.js";
+import { contextCapacityMessage } from "./budgets.js";
 import { randomUUID } from "node:crypto";
 import type { AgentContextKind, AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "Saved projects and briefs are unchanged. Use /nobo-help agent project-briefs list then show <project-id> brief. Narrow linked kinds with unlink <project-id> <kind> <source-id>, then brief <project-id>. Use sources note to discover one kind; a single-kind failure requires fewer/smaller records in that original tool.";
 
 const KEY = "packs";
 const MAX_PROJECTS = 20;
@@ -214,8 +218,12 @@ function unchanged(p: Project, expected: Project): void {
 }
 async function contextItems(context: AgentFeatureContext, kinds: AgentContextKind[]): Promise<unknown[]> {
   let items: unknown;
-  try { items = await context.services.readContext(kinds); }
-  catch { throw new InputError("Owned sources could not be refreshed. Saved project data and the previous brief are unchanged. Try again, or use show <project-id> brief for the saved version."); }
+  try { items = await readBoundedContext(context, kinds); }
+  catch (error) {
+    const capacity = contextCapacityMessage(error, CAPACITY_RECOVERY);
+    if (capacity) throw new InputError(capacity);
+    throw new InputError("Owned sources could not be refreshed. Saved project data and the previous brief are unchanged. Try again, or use show <project-id> brief for the saved version.");
+  }
   if (!Array.isArray(items) || items.length > MAX_CONTEXT) throw new InputError("The context provider returned invalid or excessive data (maximum 2,000 items). Nothing was changed; the runtime adapter must return bounded owned context.");
   return items;
 }

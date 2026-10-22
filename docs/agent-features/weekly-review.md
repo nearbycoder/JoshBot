@@ -1,6 +1,6 @@
 # Weekly personal review
 
-Use `/nobo-help agent weekly-review help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent weekly-review help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `weekly-review` synthesizes seven calendar days of your personal goals, habits, journal, follow-ups and notes. It shows explicitly dated completions and journal-reported wins, commitments worth checking, recorded activity, simple patterns and next-week suggestions. Every finding cites a saved source reference. It does not require a model or web search.
 
@@ -84,3 +84,7 @@ git diff --check
 ```
 
 The tests use the supplied scoped in-memory store and fake context services. They cover complete/empty flows, source provenance, input/persisted-data validation, timezone and DST boundaries, historical uncertainty, bounded retention/output, provider errors, cancellation, retry-safe transforms, simultaneous saves and reflection/delete races. Quota tests measure serialized UTF-8 bytes with Unicode-heavy snapshots and worst-case escaped reflections, enforce the runtime/feature limits on every fake-store write, verify full-quota rejection preserves state, and prove deletion permits another review without concurrent overfilling. No live inference or external writes are tested.
+
+## Source capacity recovery (foundation follow-up)
+
+Reviews read the same fixed kinds in bounded sequential groups. Capacity failure saves no review and preserves reflections. `/nobo-help agent weekly-review show latest` remains available. Reduce relevant records in their original tools, such as `/nobo-help tools notes list`, then `edit <note-id> | <shorter body>`. The seven-day filter is applied after the source read; changing the end date cannot fix source capacity. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

@@ -1,6 +1,6 @@
 # User-taught reusable playbooks
 
-Use `/nobo-help agent playbooks help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent playbooks help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `playbooks` saves private text procedures with typed inputs, explicit placeholders,
 ordered steps, revision history, previews and saved run results. Each step receives

@@ -1,6 +1,6 @@
 # Personal cross-tool recall
 
-Use `/nobo-help agent recall help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent recall help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Recall searches your private toolbox notes, journal entries, goals and bookmarks, eligible approved memory-review cards, and your follow-ups in the channel where you run the command. The `artifact` filter is recognized but has no connected source; legacy personal memory is also unconnected. See [source coverage](context.md). It uses lexical word matching over the context supplied by NoBo; it does not search channel history, crawl links, use embeddings or claim semantic/vector retrieval.
 
@@ -37,6 +37,8 @@ Both `search` and `ask` support these options anywhere outside a double-quoted p
 Timestamp offsets are converted to the runtime-supplied timezone before date comparison. For example, `2026-10-22T04:30:00Z` belongs to October 21 in America/Chicago. Explicit date-only timestamps retain their recorded calendar day. Missing timestamps, invalid dates and datetimes without a timezone offset display as unknown and are excluded when a date filter is present. A missing or invalid runtime timezone produces an actionable error, never a server-timezone fallback.
 
 Words are Unicode-normalized and case-insensitive. Common English question/function words are ignored unless inside a quoted phrase. Unquoted words use any-word matching; the number of distinct matched query words ranks first. Remaining ranking uses bounded word frequency, higher title weight, rarer words and whole-query phrase matches, followed by updated time and a stable reference tie-break. A double-quoted phrase is required as a consecutive word sequence in the title or body; punctuation and letter case are ignored. Phrases cannot span the title/body boundary. There is no stemming, typo correction, synonym expansion or translation, so try alternate wording when needed. Punctuation splits terms (for example, `C++` and `C#` both include the word `c`).
+
+Ranking reuses title/body tokenization only within the current invocation. Excerpts are generated after ranking, for the selected results only (up to 10 for search or 5 for ask). This does not change the ranking weights, tie-breaks, cited text or source reopening; it avoids scanning every matching body for an excerpt that will never be displayed. No normalized text or search results are cached across requests.
 
 Only titles and text are searched. Metadata, URLs, status labels, source IDs and timestamps do not secretly become searchable evidence. Status is displayed when supplied. Titles are used as excerpts when a source has no body text.
 
@@ -75,3 +77,9 @@ The source-reopening regression uses the production context/services/runtime/sto
 In an isolated feature worktree lacking the shared integration modules, set `JOSHBOT_RECALL_CONTEXT_ROOT` to a read-only integrated checkout when running the targeted test command. After integration the tests load local shared modules automatically; no override is needed.
 
 Other tests use the shared context fixture and fake services. They cover the complete flow, all seven kinds, lexical ranking and Unicode/phrases, timezone and DST boundaries, invalid input, missing evidence, generation failures and fabricated citations, conflicting evidence, inert source content, context validation, stable source IDs, live source edits/deletion, coverage/reply limits and cancellation. A Unicode snapshot whose serialized UTF-8 bytes exceed 512,000 verifies that each command performs zero store reads/writes, at most one generation and no web search. The fake store counts and rejects every read/write; deadline-rejection tests verify cancellation without exposing provider errors or starting follow-on work.
+
+The performance regression also captures exact selected outputs from before the optimization for ties, quoted phrases, late evidence and Unicode, including both search and ask excerpt widths. With 600 matching sources, instrumentation verifies that `search --limit 3` performs three excerpt scans, `ask --limit 5` performs five, and source reopening performs none. See the [shared performance report](../personal-agent-performance.md) for all before/after samples, including the earlier failed event-loop checks and the unresolved complete-context recovery review item.
+
+## Source capacity recovery (foundation follow-up)
+
+Capacity errors give narrowing guidance instead of a temporary-outage retry. Use `/nobo-help agent recall search Atlas --kind note`, or reopen the full `kind/id` reference returned by search. Kind selection happens before reading; date, query and result-limit filters happen afterward and cannot fix an oversized source read. If one kind itself exceeds capacity, reduce its records in the original source tool. No ranking, tie-breaking, excerpt, qualified-reference or fallback behavior changed. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

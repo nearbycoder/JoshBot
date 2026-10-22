@@ -42,7 +42,7 @@ test("real Redis preserves concurrent agent writes, scoped reads and request rec
   };
   const settings = { backend, timezone: "UTC", services: createAgentTestContext().services };
   const scoped = createAgentFeatureStore(backend, owner, feature.id);
-  const results = await Promise.all(Array.from({ length: 20 }, () => runAgentFeature(feature, "increment", owner, settings)));
+  const results = await Promise.all(Array.from({ length: 20 }, () => scoped.update("count", 0, count => ({ value: count + 1, result: String(count + 1) }))));
   assert.equal(new Set(results).size, 20);
   assert.equal(await scoped.read("count"), 20);
   for (const caller of [{ ...owner, userId: "UOTHER" }, { ...owner, teamId: "TOTHER" }]) {

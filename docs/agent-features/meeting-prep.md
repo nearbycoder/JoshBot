@@ -1,6 +1,6 @@
 # Meeting preparation briefs (`meeting-prep`)
 
-Use `/nobo-help agent meeting-prep help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent meeting-prep help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Prepare for a meeting you explicitly describe using relevant information already owned by you. A packet includes your stated purpose and attendees, matching owner-context excerpts, source-reported open commitments, a proposed agenda, and suggested questions. Facts and suggestions appear in separate sections. This is preparation before a meeting; it does not process transcripts or modify the toolbox's manual agendas.
 
@@ -21,7 +21,7 @@ All examples use the private entry point `/nobo-help agent meeting-prep`. Replac
 /nobo-help agent meeting-prep delete <id> confirm
 ```
 
-1. `prepare <title> | <details>` reads permitted owner context once and saves packet 1. Both title and details are required. Plain details work too: `prepare Atlas launch | Decide whether the rollout is ready.` The free text becomes the purpose when `purpose:` is omitted.
+1. `prepare <title> | <details>` reads permitted owner context in bounded sequential groups and saves packet 1. Both title and details are required. Plain details work too: `prepare Atlas launch | Decide whether the rollout is ready.` The free text becomes the purpose when `purpose:` is omitted.
 2. `show <id>` reads the latest saved packet without calling a provider. `list` displays the retained meetings and flags pending context.
 3. `add-context <id> | <text>` saves an additional supplied source and marks it pending. It does not rewrite a historical packet. `show` displays pending text so it is inspectable immediately.
 4. `refresh <id>` rereads owner context, uses all added notes in matching, and saves the next packet. Source excerpts from previous packets remain available through `show <id> <packet-number>` until they age out of retention.
@@ -77,3 +77,7 @@ git diff --check
 ```
 
 The tests use the shared fake store/services and cover the complete flow, source provenance, unknown/closed commitment status, input/date validation (including extreme timestamps), user-timezone boundaries, historical excerpts, retention and byte limits, failure preservation, concurrent edits/refresh/deletion, repeatable atomic transforms, corrupted persisted data, untrusted source text, response bounds, and cancellation. No live APIs or inference tests are needed.
+
+## Source capacity recovery (foundation follow-up)
+
+Prepare/refresh read the same fixed source kinds in bounded sequential groups. A capacity failure is distinct from temporary unavailability and preserves every saved packet and added note. Use `/nobo-help agent meeting-prep list`, then `show <meeting-id>` for the saved packet. Reduce relevant source records in their original tools, such as `/nobo-help tools notes list`, then `edit <note-id> | <shorter body>`. Meeting-title/details filters apply after reading; changing them cannot reduce source-read bytes. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

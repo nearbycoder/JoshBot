@@ -1,6 +1,9 @@
+import { contextCapacityMessage } from "./budgets.js";
 import { randomUUID } from "node:crypto";
 import { Buffer } from "node:buffer";
 import type { AgentContextItem, AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "No cards were changed. Legacy import is not connected in production. Use /nobo-help agent memory-review capture Atlas | decision | Launch on Friday | My confirmation, then confirm the returned card; existing cards remain available with list/show.";
 
 const STORE_KEY = "cards";
 const MAX_CARDS = 100;
@@ -114,7 +117,8 @@ function validCard(value: unknown): value is Card {
       || item.revision !== (value.revision as number) - value.history.length + index + 1
       || !isInstant(item.at) || item.at < previousAt || item.at > value.updatedAt) return false;
     const action = item.revision === 1 ? value.origin.kind === "user" ? "capture" : "import" : null;
-    if (action ? item.action !== action || item.at !== value.capturedAt : !["correct", "confirm"].includes(String(item.action))) return false;
+    if (typeof item.action !== "string"
+      || (action ? item.action !== action || item.at !== value.capturedAt : !["correct", "confirm"].includes(item.action))) return false;
     if (item.action === "confirm" ? item.confirmedAt !== item.at : item.confirmedAt !== null) return false;
     previousAt = item.at;
   }
@@ -386,7 +390,9 @@ async function importCommand(input: string, context: AgentFeatureContext, now: C
   // All asynchronous source work finishes before the atomic add. No legacy writes.
   let raw: unknown;
   try { raw = await context.services.readContext(["memory"]); }
-  catch { return fail("Owned legacy memory is unavailable. No memory-review cards were changed; retry import later."); }
+  catch (error) {
+    return fail(contextCapacityMessage(error, CAPACITY_RECOVERY) ?? "Owned legacy memory is unavailable. No memory-review cards were changed; retry import later.");
+  }
   if (!Array.isArray(raw) || raw.length > 500) fail("Legacy context must be an owned, bounded list of at most 500 candidates. No cards were changed.");
   const parsed = raw.map(candidate);
   const occurrences = new Map<string, number>();

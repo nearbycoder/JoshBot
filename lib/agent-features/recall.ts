@@ -1,4 +1,7 @@
+import { contextCapacityMessage } from "./budgets.js";
 import type { AgentContextKind, AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "No source data was changed. Narrow with /nobo-help agent recall search Atlas --kind note, or reopen a returned full reference with /nobo-help agent recall source note/toolbox:notes:<note-id>. Query/date/limit filters run after reading and do not reduce source bytes. If one kind is too large, reduce its records in the original source tool.";
 
 const KINDS: AgentContextKind[] = ["note", "journal", "goal", "bookmark", "artifact", "memory", "follow-up"];
 const MAX_ITEMS = 1_000;
@@ -44,7 +47,8 @@ type Source = {
   truncated: boolean;
 };
 type Snapshot = { sources: Source[]; notes: string[] };
-type Hit = { source: Source; matched: string[]; score: number; excerpt: string };
+type RankedHit = { source: Source; matched: string[]; score: number };
+type Hit = RankedHit & { excerpt: string };
 class InputError extends Error {}
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -202,9 +206,9 @@ function normalizeContext(raw: unknown, kinds: AgentContextKind[], formatter: In
   return { sources: sources.filter((source) => !duplicates.has(source.ref)), notes };
 }
 
-function frequencies(value: string): Map<string, number> {
+function frequencies(words: readonly string[]): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const token of tokens(value)) counts.set(token, (counts.get(token) ?? 0) + 1);
+  for (const token of words) counts.set(token, (counts.get(token) ?? 0) + 1);
   return counts;
 }
 
@@ -239,13 +243,18 @@ function excerpt(source: Source, terms: string[], width: number): string {
   return `${best ? "…" : ""}${text.slice(best, end)}${end < text.length || source.truncated ? "…" : ""}`;
 }
 
-function retrieve(query: Query, sources: Source[]): Hit[] {
+function retrieve(query: Query, sources: Source[]): RankedHit[] {
   const candidates = sources.filter((source) => (!query.from && !query.to) || (source.day !== undefined && (!query.from || source.day >= query.from) && (!query.to || source.day <= query.to)))
-    .map((source) => ({ source, title: frequencies(source.title), body: frequencies(source.text) }));
+    .map((source) => {
+      // Reuse normalization only inside this invocation. No source cache survives
+      // a new read, edit, revocation or owner change.
+      const title = tokens(source.title), body = tokens(source.text);
+      return { source, title: frequencies(title), body: frequencies(body),
+        titlePhrase: ` ${title.join(" ")} `, bodyPhrase: ` ${body.join(" ")} ` };
+    });
   const df = new Map(query.terms.map((term) => [term, candidates.filter(({ title, body }) => title.has(term) || body.has(term)).length]));
   const wholePhrase = phrase(query.text);
-  return candidates.flatMap(({ source, title, body }): Hit[] => {
-    const titlePhrase = phrase(source.title), bodyPhrase = phrase(source.text);
+  return candidates.flatMap(({ source, title, body, titlePhrase, bodyPhrase }): RankedHit[] => {
     if (query.phrases.some((required) => !titlePhrase.includes(required) && !bodyPhrase.includes(required))) return [];
     const matched = query.terms.filter((term) => title.has(term) || body.has(term));
     if (!matched.length) return [];
@@ -256,7 +265,7 @@ function retrieve(query: Query, sources: Source[]): Hit[] {
     }
     if (titlePhrase.includes(wholePhrase)) score += 8;
     if (bodyPhrase.includes(wholePhrase)) score += 4;
-    return [{ source, matched, score, excerpt: excerpt(source, query.terms, query.verb === "ask" ? 650 : 360) }];
+    return [{ source, matched, score }];
   }).sort((a, b) => b.matched.length - a.matched.length || b.score - a.score || b.source.stamp - a.source.stamp || (a.source.ref < b.source.ref ? -1 : a.source.ref > b.source.ref ? 1 : 0));
 }
 
@@ -341,9 +350,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         ],
       };
     }
-  } catch {
+  } catch (error) {
     if (context.signal?.aborted) return "Recall cancelled.";
-    return "Your personal context could not be read. Try recall again later; no source data was changed.";
+    return contextCapacityMessage(error, CAPACITY_RECOVERY) ?? "Your personal context could not be read. Try recall again later; no source data was changed.";
   }
   const notes = snapshot.notes.length ? `\n\nCoverage notes: ${snapshot.notes.join(" ")}` : "";
   if (parsed.verb === "source") {
@@ -365,7 +374,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
   const ranked = retrieve(parsed, snapshot.sources);
   const header = `${scope(parsed, context.timezone)}\nSearched ${snapshot.sources.length} valid source(s) in the current owned snapshot.`;
   if (!ranked.length) return bounded(`No matching personal sources for “${escape(parsed.text)}”.${parsed.verb === "ask" ? " I cannot answer from the available evidence." : ""}\n${header}\nTry fewer distinctive words, broaden the kind/date filters, or add a note in the original tool. Recall cannot search data that the context adapter did not supply.${notes}`);
-  const hits = ranked.slice(0, parsed.limit);
+  // Excerpt selection does not affect ranking. Scan only the displayed top K,
+  // preserving the existing exact excerpt and Unicode/word-boundary algorithm.
+  const hits: Hit[] = ranked.slice(0, parsed.limit).map(hit => ({
+    ...hit, excerpt: excerpt(hit.source, parsed.terms, parsed.verb === "ask" ? 650 : 360),
+  }));
   const result = parsed.verb === "ask" ? await ask(parsed, hits, context) : [
     `Personal recall results for: ${escape(parsed.text)}`,
     ...hits.map((hit, index) => formatHit(hit, index, parsed.terms.length)),

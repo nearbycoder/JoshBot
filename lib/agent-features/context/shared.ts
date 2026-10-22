@@ -1,11 +1,14 @@
+import { trackAgentWork } from "../admission.js";
+import { AgentContextCapacityError } from "../budgets.js";
+
 /** Run read-only work with an active cancellation guard, including hung providers. */
 export async function contextRead<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
   signal?.throwIfAborted();
-  if (!signal) return work();
+  if (!signal) return trackAgentWork(work);
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    const abort = () => { signal.removeEventListener("abort", abort); reject(signal.reason); };
     signal.addEventListener("abort", abort, { once: true });
-    Promise.resolve().then(() => { signal.throwIfAborted(); return work(); }).then(
+    Promise.resolve().then(() => { signal.throwIfAborted(); return trackAgentWork(work); }).then(
       value => { signal.removeEventListener("abort", abort); signal.aborted ? reject(signal.reason) : resolve(value); },
       error => { signal.removeEventListener("abort", abort); reject(signal.aborted ? signal.reason : error); },
     );
@@ -16,7 +19,7 @@ export const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
 export function parseContextRecord(raw: string, maxBytes: number): Record<string, unknown> {
-  if (Buffer.byteLength(raw) > maxBytes) throw new Error("Personal context is too large to load completely.");
+  if (Buffer.byteLength(raw) > maxBytes) throw new AgentContextCapacityError("Personal context is too large to load completely.");
   const value: unknown = JSON.parse(raw);
   if (!record(value)) throw new Error("Personal context contains unsupported data.");
   return value;

@@ -1,6 +1,6 @@
 # Personal automation review
 
-Use `/nobo-help agent automation-audit help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent automation-audit help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `automation-audit` is an on-demand, private health and history review of your permitted reminders, monitors and digests. It explains suspicious timing, old records, vague purposes and duplicate candidates. It never runs, edits, disables or deletes jobs, and never sends a message to another person. No model or web access is required.
 
@@ -13,7 +13,7 @@ Prefix every command with `/nobo-help agent automation-audit`.
 | Command | Behavior |
 | --- | --- |
 | `help` | Show commands without reading automation context. |
-| `review` | Read owner-scoped context once, save a dated snapshot, and show upcoming occurrences and up to 12 open recommendations. |
+| `review` | Read owner-scoped context in bounded sequential groups, save a dated snapshot, and show upcoming occurrences and up to 12 open recommendations. |
 | `inspect <source-id> [snapshot-id\|latest]` | Show saved source metadata, provenance, validation warnings and related suggestions. Defaults to the latest snapshot. |
 | `history` | List up to eight retained snapshots and the current UTF-8 storage usage. |
 | `show [snapshot-id\|latest]` | Show a saved review, including dismissed suggestions. |
@@ -50,7 +50,7 @@ Comparison is observational. A source or suggestion disappearing may mean an ada
 
 1. `registry.ts` registers the named/default `feature` from `lib/agent-features/automation-audit.ts` as `automation-audit`. `index.ts` dispatches `/nobo-help agent automation-audit <command>` through the shared runtime; the Slack route returns private text and Home exposes its help. The shared route preserves multiline command text; individual commands still enforce their input rules.
 2. The runtime supplies the existing `AgentFeatureContext` with a workspace/user/feature-scoped atomic store, a valid `now`, and the user's timezone. The only feature-local storage key is `audit`. Updates must preserve the contract's synchronous, retryable, atomic semantics. The shared runtime remains responsible for request deduplication and private delivery.
-3. `readContext(["reminder", "monitor", "digest"])` is connected to bounded owner indexes with record ownership, access-policy, and signed-current-channel checks. It reads metadata only; it does not scan global Redis keys or read channel messages. The shared adapter returns complete eligible sources within its per-index 200-ID limits, ordered by earliest next occurrence, then actual update time and ID. This feature examines the first **80** entries and discloses omissions. Empty eligible records and source failures remain distinct. See [source coverage](context.md).
+3. Sequential `readContext([kind])` calls for reminder, monitor and digest are connected to bounded owner indexes with record ownership, access-policy, and signed-current-channel checks. It reads metadata only; it does not scan global Redis keys or read channel messages. The shared adapter returns complete eligible sources within its per-index 200-ID limits, ordered by earliest next occurrence, then actual update time and ID. This feature examines the first **80** entries and discloses omissions. Empty eligible records and source failures remain distinct. See [source coverage](context.md).
 4. Use stable, globally unique source IDs across the three kinds, preferably `reminder:<id>`, `monitor:<id>`, and `digest:<id>`. IDs must match `[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}`. Duplicate IDs among the inspected entries are all excluded as ambiguous.
 5. Map records to `AgentContextItem` and the following optional, top-level `metadata` fields. Do not supply secrets, arbitrary source documents, raw run errors, or private data outside the caller's scope. No new shared TypeScript contract fields are needed.
 
@@ -94,7 +94,7 @@ Provider failures preserve saved history and dismissals. Corrupt persisted shape
 
 Titles, purposes (including text/title fallbacks), schedule labels and destinations are trimmed again after clipping, so a cutoff at a word boundary cannot leave invalid trailing whitespace. Each new snapshot passes the same validation used for saved history before any storage update starts. A failed new-snapshot validation preserves existing history and dismissals and asks for the supplied metadata/capture time to be checked; it does not ask you to clear valid saved data.
 
-Each review makes one `readContext` call; all other commands use saved state. There are zero generation or search calls, within the runtime's per-invocation limits of eight generations and six searches. The shared runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. The feature uses the shared runtime and store directly.
+A full review makes three sequential `readContext` calls (reminder, monitor, digest); a scoped `review --kind` makes one. All other commands use saved state. There are zero generation or search calls, within the runtime's per-invocation limits of eight generations and six searches. The shared runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. The feature uses the shared runtime and store directly.
 
 Targeted verification:
 
@@ -103,3 +103,7 @@ node --import tsx --test tests/agent-automation-audit.test.ts
 npm run typecheck
 git diff --check
 ```
+
+## Source capacity recovery (foundation follow-up)
+
+`review` retains its original all-three-kind scope, read sequentially with one response per kind. Use `/nobo-help agent automation-audit review --kind monitor`, `review --kind reminder`, or `review --kind digest` to request one kind before reading. Invalid/extra kind arguments fail before source work. A scoped review stores an optional `kind`; absent means the original full scope. `show` retains the scope label, and `compare` refuses different scopes so an excluded job cannot appear to have disappeared. Existing 80-source and suggestion display/retention limits are unchanged and continue to disclose omissions. A 32 MiB total failure saves no snapshot. `history`/`show` remain available. If a single automation kind exceeds its own complete-read limit, reduce that kind in its original tool: e.g. in a NoBo DM, `list monitors`, then `cancel monitor <id>` for an unneeded monitor; for digests, `/nobo-channel-digest list`, then `/nobo-channel-digest cancel <id>`. These are explicit source changes, not audit-history cleanup. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

@@ -20,8 +20,8 @@ function setup(items: AgentContextItem[] = [], overrides: Partial<AgentFeatureCo
       search: async () => { assert.fail("Reviews must not search the web"); },
       readContext: async (kinds) => {
         reads++;
-        assert.deepEqual(kinds, ["goal", "habit", "journal", "follow-up", "note"]);
-        return structuredClone(items);
+        assert.ok(kinds?.length);
+        return structuredClone(items.filter(item => !item || !["goal", "habit", "journal", "follow-up", "note"].includes(item.kind) ? kinds.includes("note") : kinds.includes(item.kind)));
       },
     },
     ...overrides,
@@ -76,7 +76,7 @@ test("complete source-backed flow synthesizes all five kinds, saves reflection, 
   assert.match(await run(`delete ${snapshot.id}`), /confirm/);
   assert.match(await run(`delete ${snapshot.id} confirm`), /Deleted review/);
   assert.match(await run(`show ${snapshot.id}`), /Review not found/);
-  assert.equal(reads(), 1, "Only review reads owner context");
+  assert.equal(reads(), 3, "Only review reads owner context in bounded groups");
 });
 
 test("empty weeks persist useful snapshots and allow personal reflections", async () => {

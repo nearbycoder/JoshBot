@@ -1,9 +1,186 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAgentFeatureStore, type AgentStateBackend } from "../lib/agent-features/store.js";
+import { agentStorePrefix, createAgentFeatureStore, type AgentStateBackend } from "../lib/agent-features/store.js";
 import { runAgentFeature } from "../lib/agent-features/runtime.js";
 import type { AgentFeature } from "../lib/agent-features/types.js";
 import { createAgentTestContext } from "./agent-feature-test-utils.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
+import task from "../lib/agent-features/task-breakdown.js";
+import deadline from "../lib/agent-features/deadline-backplan.js";
+import capacity from "../lib/agent-features/capacity-forecast.js";
+import batch from "../lib/agent-features/context-batch.js";
+import scope from "../lib/agent-features/scope-slicer.js";
+import blocker from "../lib/agent-features/blocker-lab.js";
+import premortem from "../lib/agent-features/premortem.js";
+import assumption from "../lib/agent-features/assumption-tests.js";
+import decision from "../lib/agent-features/decision-journal.js";
+import calibration from "../lib/agent-features/estimate-calibration.js";
+import { mkdtemp, open, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const tenFeatures = [task, deadline, capacity, batch, scope, blocker, premortem, assumption, decision, calibration];
+const assertDiagnosis = (reply: string, feature: AgentFeature) => {
+  assert.match(reply, /could not be read safely/); assert.ok(reply.includes(feature.id));
+  assert.match(reply, /workspace.*user/); assert.match(reply, /operator/);
+  assert.match(reply, /state-recovery\.md/); assert.match(reply, /help/);
+  assert.doesNotMatch(reply, /No saved|Next: .*list|Export|remove older|private-secret|nobo:agents|SyntaxError/);
+};
+
+for (const feature of tenFeatures) test(`${feature.id}: null and invalid JSON yield scoped recovery, preserve bytes, isolate owners and leave help usable`, async () => {
+  const f = createAgentFeatureFixture(feature), create = feature.example!.split(`agent ${feature.id} `)[1];
+  assert.match(await f.run("list"), /No saved/);
+  assert.equal(f.backend.data.has(f.key("state")), false);
+  const other = createAgentFeatureFixture(feature, { backend: f.backend, owner: { teamId: "TOTHER", userId: f.owner.userId } });
+  const second = createAgentFeatureFixture(feature, { backend: f.backend, owner: { teamId: f.owner.teamId, userId: "UOTHER" } });
+  for (const foreign of [other, second]) assert.match(await foreign.run(create), /Saved privately/);
+  const unrelated = [...f.backend.data];
+  for (const raw of ["null", " \nnull\t", '{"private-secret":', ""]) {
+    f.backend.data.set(f.key("state"), raw);
+    for (const command of ["list", create]) {
+      const before = { ...f.backend.calls };
+      assertDiagnosis(await f.run(command), feature);
+      assert.equal(f.backend.calls.gets, before.gets + 1, "diagnosis must not add a preflight read or retry");
+      assert.equal(f.backend.calls.compareSets, before.compareSets);
+      assert.equal(f.backend.data.get(f.key("state")), raw);
+    }
+    const before = { ...f.backend.calls };
+    assert.equal(await f.run("help"), feature.help); assert.deepEqual(f.backend.calls, before);
+    for (const [key, value] of unrelated) assert.equal(f.backend.data.get(key), value);
+    for (const foreign of [other, second]) assert.doesNotMatch(await foreign.run("list"), /could not be read safely/);
+  }
+  assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("store distinguishes absence, present null and invalid JSON without changing nonnull values", async () => {
+  const data = createMemoryAgentBackend(), owner = { teamId: "TTEST", userId: "UTEST" };
+  const prefix = agentStorePrefix(owner, "sample"), store = createAgentFeatureStore(data, owner, "sample");
+  assert.equal(await store.read("state"), null);
+  for (const raw of ["0", "false", '""', "[]", "{}", '{"nested":null}']) {
+    data.data.set(prefix + "state", raw); assert.deepEqual(await store.read("state"), JSON.parse(raw));
+  }
+  for (const [raw, reason] of [["null", "stored-null"], [" \nnull\t", "stored-null"], ['{"private-secret":', "invalid-json"], ["", "invalid-json"]]) {
+    data.data.set(prefix + "state", raw); let transformed = false;
+    for (const invoke of [() => store.read("state"), () => store.update("state", {}, () => { transformed = true; return { value: {}, result: true }; })]) {
+      await assert.rejects(invoke, { name: "AgentStateCorruptionError", reason, scope: { ...owner, featureId: "sample", key: "state" } });
+    }
+    assert.equal(transformed, false); assert.equal(data.data.get(prefix + "state"), raw);
+  }
+  assert.equal(data.calls.compareSets, 0);
+  const before = data.calls.gets;
+  await assert.rejects(store.read("../state"), /storage key/);
+  assert.throws(() => createAgentFeatureStore(data, { ...owner, teamId: "T:OTHER" }, "sample"), /signed Slack/);
+  assert.throws(() => createAgentFeatureStore(data, owner, "sample:state"), /agent ID/);
+  assert.equal(data.calls.gets, before);
+});
+
+test("runtime retains a swallowed diagnosis, blocks later store/service work, and is invocation-local", async () => {
+  const data = createMemoryAgentBackend(); let recovered: unknown;
+  const feature: AgentFeature = { id: "caught-state", title: "Caught", description: "Test", help: "Caught help",
+    async execute(_command, context) {
+      try { await context.store.read("state"); } catch (error) { recovered = error; }
+      for (const work of [
+        () => context.store.read("another-key"),
+        () => context.store.update("another-key", 0, () => ({ value: 1, result: true })),
+        () => context.services.generate({ instructions: "No call", input: "No call" }),
+        () => context.services.search("No call"),
+        () => context.services.readContext(),
+      ]) { try { await work(); assert.fail("Work should stop after corrupt state"); } catch (error) { assert.equal(error, recovered); } }
+      return "No saved records; use list";
+    },
+  };
+  const f = createAgentFeatureFixture(feature, { backend: data }); data.data.set(f.key("state"), "null");
+  assertDiagnosis(await f.run("run"), feature);
+  assert.equal(data.calls.gets, 1); assert.equal(data.calls.compareSets, 0);
+  assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  // A separately invoked valid reader is unaffected; no global cache of the failure.
+  const valid = createAgentFeatureFixture({ ...feature, execute: async (_command, ctx) => String(await ctx.store.read("state")) }, { backend: data });
+  data.data.set(f.key("state"), "42"); assert.equal(await valid.run("read"), "42");
+});
+
+test("a CAS retry that encounters null stops before another transform or write", async () => {
+  let armed = true, transforms = 0;
+  const data = createMemoryAgentBackend({ beforeCompareSet(key) { if (armed) { armed = false; data.data.set(key, "null"); } } });
+  const feature: AgentFeature = { id: "retry-state", title: "Retry", description: "Test", help: "Help",
+    execute: (_command, ctx) => ctx.store.update("state", 0, n => { transforms++; return { value: n + 1, result: "Saved" }; }),
+  };
+  const f = createAgentFeatureFixture(feature, { backend: data });
+  assertDiagnosis(await f.run("run"), feature);
+  assert.equal(transforms, 1); assert.equal(data.calls.conflicts, 1); assert.equal(data.calls.gets, 2); assert.equal(data.calls.compareSets, 1);
+  assert.equal(data.data.get(f.key("state")), "null");
+});
+
+test("corruption observed while another update reads prevents its later transform and CAS", { timeout: 5_000 }, async () => {
+  const entered = deferred<void>(), release = deferred<void>(); let transforms = 0;
+  const data = createMemoryAgentBackend({ beforeGet: async key => { if (key.endsWith(":other")) { entered.resolve(); await release.promise; } } });
+  const feature: AgentFeature = { id: "overlapping-state", title: "Overlap", description: "Test", help: "Help",
+    async execute(_command, ctx) {
+      const pending = ctx.store.update("other", 0, n => { transforms++; return { value: n + 1, result: "Saved" }; });
+      await entered.promise;
+      try { await assert.rejects(ctx.store.read("state"), { name: "AgentStateCorruptionError" }); }
+      finally { release.resolve(); }
+      await assert.rejects(pending, { name: "AgentStateCorruptionError" });
+      return "No saved records";
+    },
+  };
+  const f = createAgentFeatureFixture(feature, { backend: data }); data.data.set(f.key("state"), "null");
+  assertDiagnosis(await f.run("run"), feature);
+  assert.equal(transforms, 0); assert.equal(data.calls.compareSets, 0); assert.equal(data.calls.gets, 2);
+  assert.equal(data.data.get(f.key("state")), "null"); assert.equal(data.data.has(f.key("other")), false);
+});
+
+test("corrupt-state replies finalize receipts without replay or leaking raw bytes", async () => {
+  const f = createAgentFeatureFixture(task); f.backend.data.set(f.key("state"), '{"private-secret":');
+  assertDiagnosis(await f.run("list", { requestId: "corrupt-request" }), task);
+  const before = { ...f.backend.calls };
+  assert.match(await f.run("list", { requestId: "corrupt-request" }), /already received/);
+  assert.equal(f.backend.calls.gets, before.gets);
+  const receipts = [...f.backend.data].filter(([key]) => key.includes("agent-requests"));
+  assert.equal(receipts.length, 1); assert.equal(receipts[0][1], '{"state":"finished"}');
+  assert.doesNotMatch(JSON.stringify(receipts), /private-secret|corrupt-request/);
+  assert.equal(f.backend.data.get(f.key("state")), '{"private-secret":');
+});
+
+test("cancellation still wins over a caught corruption error and suppresses receipt finalization", async () => {
+  const abort = new AbortController();
+  const feature: AgentFeature = { id: "cancel-state", title: "Cancel", description: "Test", help: "Help",
+    async execute(_command, ctx) { try { await ctx.store.read("state"); } catch { abort.abort(); } return "Ignored"; },
+  };
+  const f = createAgentFeatureFixture(feature); f.backend.data.set(f.key("state"), "null");
+  await assert.rejects(f.run("run", { signal: abort.signal, requestId: "abort-receipt" }), /abort/i);
+  assert.equal(f.backend.calls.compareSets, 1);
+  assert.equal(f.backend.data.get(f.key("state")), "null");
+});
+
+test("an isolated operator backup and single exact-value CAS refuse a winning valid replacement", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-null-backup-"));
+  try {
+    const entered = deferred<void>(), release = deferred<void>(); let armed = false;
+    const data = createMemoryAgentBackend({ beforeCompareSet: async () => { if (armed) { armed = false; entered.resolve(); await release.promise; } } });
+    const f = createAgentFeatureFixture(task, { backend: data }), key = agentStorePrefix(f.owner, task.id) + "state";
+    const unrelated = agentStorePrefix({ ...f.owner, userId: "UOTHER" }, task.id) + "state";
+    data.data.set(key, "null"); data.data.set(unrelated, "null");
+    const observed = await data.get(key); assert.equal(observed, "null");
+    const backup = join(dir, "state.raw"), file = await open(backup, "wx", 0o600);
+    try { await file.writeFile(observed!, "utf8"); await file.sync(); } finally { await file.close(); }
+    assert.equal(await readFile(backup, "utf8"), observed);
+    // This is the runbook's single-key CAS, exercised ONLY in an isolated fake backend.
+    const initial = '{"version":1,"records":[]}'; armed = true;
+    const pending = data.compareSet(key, observed, initial); await entered.promise;
+    const valid = '{"version":1,"records":[],"replacement":"private-secret"}';
+    // Any replacement, even a domain-valid empty state, must win over the repair.
+    data.data.set(key, initial); release.resolve(); assert.equal(await pending, false);
+    assert.equal(data.data.get(key), initial); assert.equal(data.data.get(unrelated), "null");
+    for (const replacement of [initial, valid, "false", " null ", "{broken"]) {
+      data.data.set(key, replacement); assert.equal(await data.compareSet(key, observed, initial), false);
+      assert.equal(data.data.get(key), replacement);
+    }
+    data.data.delete(key); assert.equal(await data.compareSet(key, observed, initial), false);
+    data.data.set(key, "null"); assert.equal(await data.compareSet(key, observed, initial), true);
+    assert.match(await f.run(task.example!.split("task-breakdown ")[1]), /Saved privately/);
+    assert.equal(await readFile(backup, "utf8"), "null"); assert.equal(data.data.get(unrelated), "null");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
 
 function backend() {
   const data = new Map<string, string>();

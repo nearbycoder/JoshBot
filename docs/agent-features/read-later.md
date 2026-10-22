@@ -1,6 +1,6 @@
 # Reading queue and digests
 
-Use `/nobo-help agent read-later help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent read-later help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 The private queue helps decide what to read in the time you have, records partial
 reading progress, creates cited summaries and digests of pasted excerpts, and
@@ -207,3 +207,7 @@ exports. A Unicode quota test fills reserved capacity to 479,999 bytes, then
 generates maximal summaries and a digest and finishes/archives every article,
 checking every serialized write stays below 480,000 bytes. No tests access live
 models, Slack, Redis, search, or article URLs.
+
+## Source capacity recovery (foundation follow-up)
+
+Bookmark capacity failures are distinct from temporary outages and do not change the reading queue. Use `/nobo-help agent read-later add https://example.com/article | Article | 5` to add a URL directly. To reduce the relevant source records, use `/nobo-help tools bookmarks list`, then `export <bookmark-id>` before `delete <bookmark-id> confirm`. Bookmarks already use one kind; no production byte violation is claimed under normal current quotas. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

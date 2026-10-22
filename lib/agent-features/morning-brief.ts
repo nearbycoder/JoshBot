@@ -1,4 +1,8 @@
+import { readBoundedContext } from "./bounded-context.js";
+import { contextCapacityMessage } from "./budgets.js";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "No brief was produced and settings are unchanged. Narrow with /nobo-help agent morning-brief settings sources notes, then /nobo-help agent morning-brief brief. Choose other categories separately; if one category is too large, reduce its records in the original tool.";
 
 const KINDS = ["reminder", "follow-up", "goal", "note", "event"] as const;
 type Kind = (typeof KINDS)[number];
@@ -368,8 +372,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     const settings = stored === null ? defaults() : settingsFrom(stored);
     if (context.signal?.aborted) return "Brief cancelled. Saved settings were not changed.";
     let raw: unknown;
-    try { raw = await context.services.readContext([...settings.sources]); }
-    catch { return "Could not load your personal sources. No brief was produced; try brief again. Missing data does not mean you have a clear day. Saved settings were not changed."; }
+    try { raw = await readBoundedContext(context, settings.sources); }
+    catch (error) {
+      if (context.signal?.aborted) return "Brief cancelled. Saved settings were not changed.";
+      return contextCapacityMessage(error, CAPACITY_RECOVERY) ?? "Could not load your personal sources. No brief was produced; try brief again. Missing data does not mean you have a clear day. Saved settings were not changed.";
+    }
     if (context.signal?.aborted) return "Brief cancelled. Saved settings were not changed.";
     return renderBrief(raw, settings, args || settings.focus, context, dayFormat, timeFormat);
   } catch (error) {
