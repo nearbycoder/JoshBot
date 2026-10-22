@@ -15,10 +15,26 @@ function harness() {
   let allowed = true, accessError = false, updateError = "", openError = "", revision = 0, accessWait: Promise<void> | undefined;
   let view: any;
   const signed = { user: { id: "UCATALOG" }, team: { id: "TCATALOG" }, trigger_id: "fresh-trigger" };
+  const searchInput = () => view?.blocks.find((block: any) => block.type === "input");
+  const groupInput = () => view?.blocks.find((block: any) => block.elements?.some((element: any) => element.action_id === "nobo_agent_catalog_group"));
+  // Model Slack's retained form values when both block_id and action_id are reused.
+  function applyView(next: any, id: string) {
+    const values: Record<string, any> = {};
+    for (const block of next.blocks) for (const element of block.element ? [block.element] : block.elements ?? []) {
+      if (!["plain_text_input", "static_select"].includes(element.type)) continue;
+      const retained = view?.state?.values?.[block.block_id]?.[element.action_id];
+      values[block.block_id] = { [element.action_id]: retained ?? (element.type === "plain_text_input" ? { value: element.initial_value ?? null } : { selected_option: element.initial_option ?? null }) };
+    }
+    view = { ...next, id, hash: `h${++revision}`, state: { values } };
+  }
+  function editQuery(value: unknown) {
+    const block = searchInput();
+    if (block) view.state.values[block.block_id][block.element.action_id] = { value };
+  }
   const client = {
     views: {
-      open: async (input: any) => { calls.push("open"); opens.push(input); if (openError) throw { data: { error: openError }, body: "PrivateBody" }; view = { ...input.view, id: "VCATALOG", hash: `h${++revision}` }; return { view }; },
-      update: async (input: any) => { calls.push("update"); updates.push(input); assert.equal(input.hash, view.hash); if (updateError) throw { data: { error: updateError }, body: "PrivateBody" }; view = { ...input.view, id: view.id, hash: `h${++revision}` }; return { view }; },
+      open: async (input: any) => { calls.push("open"); opens.push(input); if (openError) throw { data: { error: openError }, body: "PrivateBody" }; applyView(input.view, "VCATALOG"); return { view }; },
+      update: async (input: any) => { calls.push("update"); updates.push(input); assert.equal(input.hash, view.hash); if (updateError) throw { data: { error: updateError }, body: "PrivateBody" }; applyView(input.view, view.id); return { view }; },
       push: async () => { assert.fail("catalog grew a modal stack"); },
     },
     chat: new Proxy({}, { get: () => () => assert.fail("catalog posted to Slack") }),
@@ -36,20 +52,24 @@ function harness() {
   };
   async function action(action: any, overrides: any = {}) {
     let acks = 0;
+    if (action.action_id === "nobo_agent_catalog_group" && groupInput()) view.state.values[groupInput().block_id][action.action_id] = { selected_option: action.selected_option };
     const body = { ...signed, ...(view ? { view } : {}), ...overrides };
     await match(actions, action.action_id)({ action, body, client, ack: async () => { acks++; calls.push("ack"); } });
     assert.equal(acks, 1);
   }
   async function submit(query: unknown, overrides: any = {}) {
     let acks = 0;
-    const inputView = { ...view, state: { values: { agent_catalog_query: { query: { value: query } } } }, ...overrides };
+    editQuery(query);
+    const inputView = { ...view, ...overrides };
     await match(submissions, "nobo_agent_catalog_submit")({ body: signed, view: inputView, client, ack: async (value: any) => {
       acks++; calls.push("ack"); acknowledgements.push(value);
-      if (value?.response_action === "update") view = { ...value.view, id: inputView.id, hash: `h${++revision}` };
+      if (value?.response_action === "update") applyView(value.view, inputView.id);
     } });
     assert.equal(acks, 1); return acknowledgements.at(-1);
   }
-  return { calls, updates, opens, accessInputs, acknowledgements, action, submit,
+  return { calls, updates, opens, accessInputs, acknowledgements, action, submit, editQuery,
+    get visibleQuery() { const block = searchInput(); return block ? view.state.values[block.block_id][block.element.action_id].value ?? "" : undefined; },
+    get visibleGroup() { const block = groupInput(); return block ? view.state.values[block.block_id].nobo_agent_catalog_group.selected_option?.value : undefined; },
     open: () => action({ action_id: "nobo_home_tools", selected_option: { value: "agents" } }),
     get view() { return view; }, set view(value) { view = value; },
     set allowed(value: boolean) { allowed = value; }, set accessError(value: boolean) { accessError = value; },
@@ -77,7 +97,7 @@ test("real Home registration opens once, then group/page/search/help/back update
   assert.deepEqual(h.calls, ["ack", "access", "open"]);
   assert.equal(h.opens[0].trigger_id, "fresh-trigger");
   assert.deepEqual(helpRows(h.view).map(row => row.accessory.value), getAgentCatalogPage(agentFeatures).entries.map(entry => entry.id));
-  const select = h.view.blocks.find((block: any) => block.block_id === "agent_catalog_group").elements[0];
+  const select = h.view.blocks.find((block: any) => block.elements?.some((element: any) => element.action_id === "nobo_agent_catalog_group")).elements[0];
   assert.deepEqual(select.options.map((option: any) => option.value), ["all", ...agentCatalogGroups.map(group => group.slug)]);
   assert.equal(h.view.blocks.find((block: any) => block.type === "input").dispatch_action, undefined);
   assert.equal(h.view.submit.text, "Search"); checkBounds(h.view);
@@ -122,6 +142,57 @@ test("all rendered pages/groups and every real help stay bounded and preserve fu
   const long = "Header\n" + "漢🦊 line\n".repeat(900) + "\n/nobo-help agent meeting-prep help";
   assert.equal(agentHelpSections(long).join(""), long);
   assert.ok(agentHelpSections(long).every(part => part.length <= 2_500 && part.isWellFormed()));
+});
+
+test("repeated reset clears Slack-retained controls; draft edits survive group/page and help/back restores applied filters", async () => {
+  const h = harness(); await h.open();
+  for (let round = 0; round < 3; round++) {
+    h.editQuery("  private  ");
+    await h.action({ action_id: "nobo_agent_catalog_group", selected_option: { value: "capture" } });
+    assert.equal(h.visibleQuery, "  private  ", "group change must not erase an unsubmitted edit");
+    assert.equal(h.visibleGroup, "capture"); assert.equal(state(h.view).query, undefined, "group change does not submit search");
+    await h.action({ action_id: "nobo_agent_catalog_page", value: "2" });
+    assert.equal(h.visibleQuery, "  private  "); assert.equal(state(h.view).query, undefined);
+    await h.submit(h.visibleQuery);
+    assert.equal(h.visibleQuery, "private", "new initial value replaces retained unnormalized input");
+    assert.deepEqual(state(h.view), { group: "capture", query: "private", page: 1 });
+    const helpId = helpRows(h.view)[0].accessory.value;
+    await h.action({ action_id: "nobo_agent_catalog_help", value: helpId });
+    await h.action({ action_id: "nobo_agent_catalog_back", value: "back" });
+    assert.equal(h.visibleQuery, "private"); assert.equal(h.visibleGroup, "capture");
+    const oldInputIds = h.view.blocks.filter((block: any) => block.block_id).map((block: any) => block.block_id);
+    await h.action({ action_id: "nobo_agent_catalog_reset", value: "reset" });
+    assert.deepEqual(state(h.view), { page: 1 });
+    assert.equal(h.visibleQuery, ""); assert.equal(h.visibleGroup, "all");
+    assert.ok(h.view.blocks.every((block: any) => !block.block_id || !oldInputIds.includes(block.block_id)));
+    await h.submit(""); assert.deepEqual(state(h.view), { page: 1 });
+    checkBounds(h.view);
+  }
+  assert.equal(h.opens.length, 1);
+  for (const update of h.updates) for (const block of update.view.blocks) if (block.block_id) {
+    assert.ok(block.block_id.length <= 160);
+    assert.match(block.block_id, /^agent_catalog_(?:query|group)_(?:h\d+|initial)$/);
+    assert.doesNotMatch(block.block_id, /private|capture|UCATALOG|TCATALOG/);
+  }
+});
+
+test("reset respects missing/stale hashes and closed views without replacing their forms", async () => {
+  for (const failure of ["missing", "hash_conflict", "view_not_found"]) {
+    const h = harness(); await h.open(); await h.submit("private");
+    const before = h.view;
+    if (failure === "missing") h.view.hash = undefined; else h.updateError = failure;
+    await h.action({ action_id: "nobo_agent_catalog_reset", value: "reset" });
+    assert.equal(h.view, before); assert.equal(h.visibleQuery, "private");
+    assert.equal(h.opens.length, 1); assert.equal(h.updates.length, failure === "missing" ? 0 : 1);
+  }
+  const h = harness(); await h.open();
+  await h.submit("private", { blocks: [] });
+  assert.deepEqual(state(h.view), { page: 1 }); assert.equal(h.visibleQuery, "");
+  assert.match(JSON.stringify(h.view), /search form expired/);
+  for (const controlsRevision of ["x".repeat(129), "private query <&>", "\ud800"]) {
+    const view = buildSlackAgentCatalogView({ page: 1 }, undefined, controlsRevision);
+    assert.ok(view.blocks.filter(block => block.block_id).every(block => block.block_id?.endsWith("_initial")));
+  }
 });
 
 test("invalid action values or metadata safely reset without executing or trusting identity", async () => {

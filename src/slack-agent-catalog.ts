@@ -63,7 +63,7 @@ export function agentHelpSections(text: string): string[] {
 }
 
 /** Pure metadata renderer: no preferences, feature state, source adapters or execution. */
-export function buildSlackAgentCatalogView(state: CatalogViewState = { page: 1 }, notice?: string): ModalView {
+export function buildSlackAgentCatalogView(state: CatalogViewState = { page: 1 }, notice?: string, controlsRevision = "initial"): ModalView {
   const validated = parseAgentCatalogViewState(JSON.stringify(state));
   state = validated.state; notice = notice ?? validated.notice;
   const feature = agentFeatures.find(entry => entry.id === state.featureId);
@@ -81,6 +81,9 @@ export function buildSlackAgentCatalogView(state: CatalogViewState = { page: 1 }
   }
   const groupOption = (slug: string, label: string) => ({ text: plain(label), value: slug });
   const options = [groupOption("all", "All groups"), ...agentCatalogGroups.map(group => groupOption(group.slug, group.label))];
+  // Slack retains inputs with unchanged block/action IDs, even over new initial values.
+  // The preceding view hash changes on each update; it is UI state, never authorization.
+  const controlKey = /^[a-zA-Z0-9._-]{1,128}$/.test(controlsRevision) ? controlsRevision : "initial";
   const navigation = [];
   if (state.page > 1) navigation.push(button("Previous", "page", String(state.page - 1)));
   if (state.page < page.pages) navigation.push(button("Next", "page", String(state.page + 1)));
@@ -89,11 +92,11 @@ export function buildSlackAgentCatalogView(state: CatalogViewState = { page: 1 }
     ...modal([
       section(AGENT_CATALOG_PRIVACY),
       ...(notice ? [section(notice)] : []),
-      { type: "actions", block_id: "agent_catalog_group", elements: [{
+      { type: "actions", block_id: `agent_catalog_group_${controlKey}`, elements: [{
         type: "static_select", action_id: namespace + "group", placeholder: plain("All groups"),
         options, initial_option: options.find(option => option.value === (state.group ?? "all")),
       }] },
-      { type: "input", block_id: searchBlock, optional: true, label: plain("Search agents"),
+      { type: "input", block_id: `${searchBlock}_${controlKey}`, optional: true, label: plain("Search agents"),
         element: { type: "plain_text_input", action_id: searchAction, max_length: 100,
           ...(state.query ? { initial_value: state.query } : {}), placeholder: plain("Try meeting, writing, or a full agent ID") } },
       section(page.error ?? `${page.start}–${page.end} of ${page.total} · page ${state.page}/${page.pages}${state.query ? `\nSearch: ${state.query}` : ""}`),
@@ -128,7 +131,7 @@ async function update(client: ViewClient, previous: ExistingView | undefined, vi
 /** The generic Home handler has already acknowledged; this entry never pushes a view. */
 export async function openSlackAgentCatalog(body: SignedBody & { trigger_id?: string; view?: ExistingView & { type?: string } }, client: ViewClient, dependencies: CatalogDependencies): Promise<void> {
   if (!(await allowed(body, dependencies))) return;
-  const view = buildSlackAgentCatalogView();
+  const view = buildSlackAgentCatalogView({ page: 1 }, undefined, body.view?.hash);
   if (body.view?.type === "modal") { await update(client, body.view, view); return; }
   if (!body.trigger_id) return;
   try { await client.views.open({ trigger_id: body.trigger_id, view }); }
@@ -156,19 +159,34 @@ export function registerSlackAgentCatalogActions(bolt: App, dependencies: Catalo
       else notice = "That shortcut is no longer available. Choose an agent below.";
     }
     if (notice) { delete state.featureId; state.page = 1; }
-    await update(client, previous, buildSlackAgentCatalogView(state, notice));
+    const nextView = buildSlackAgentCatalogView(state, notice, previous?.hash);
+    // Keep an unsubmitted edit while paging/changing groups, without applying it as a filter.
+    // Reset and invalid/stale navigation deliberately restore the validated filters instead.
+    if (!notice && (actionId === namespace + "group" || actionId === namespace + "page")) {
+      const inputId = previous?.blocks.find(block => block.type === "input" && block.block_id?.startsWith(searchBlock + "_"))?.block_id;
+      const draft = inputId ? previous?.state?.values?.[inputId]?.[searchAction]?.value : undefined;
+      if (typeof draft === "string" && draft.length <= 100 && draft.isWellFormed() && !/[\u0000-\u001f\u007f]/u.test(draft)) {
+        for (const block of nextView.blocks) if (block.type === "input" && "element" in block && block.element.type === "plain_text_input") {
+          block.element.initial_value = draft || undefined;
+        }
+      }
+    }
+    await update(client, previous, nextView);
   });
   bolt.view(namespace + "submit", async ({ ack, body, view }) => {
     // response_action:update keeps one modal alive; no hash-free views.update races.
     // Unlike an action ack, a successful empty submission ack would close the modal.
     if (!(await allowed(body, dependencies))) { await ack({ response_action: "update", view: deniedView() }); return; }
     const parsed = parseAgentCatalogViewState(view.private_metadata);
-    if (parsed.notice) { await ack({ response_action: "update", view: buildSlackAgentCatalogView(parsed.state, parsed.notice) }); return; }
-    const value = view.state?.values?.[searchBlock]?.[searchAction]?.value ?? "";
-    if (typeof value !== "string") { await ack({ response_action: "errors", errors: { [searchBlock]: "Enter a search phrase, or clear search to browse this group." } }); return; }
+    if (parsed.notice) { await ack({ response_action: "update", view: buildSlackAgentCatalogView(parsed.state, parsed.notice, view.hash) }); return; }
+    const input = view.blocks.find(block => block.type === "input" && block.block_id?.startsWith(searchBlock + "_"));
+    const inputId = input?.block_id;
+    if (!inputId || inputId.length > 160) { await ack({ response_action: "update", view: buildSlackAgentCatalogView({ page: 1 }, "This search form expired. Enter a new search below.", view.hash) }); return; }
+    const value = view.state?.values?.[inputId]?.[searchAction]?.value ?? "";
+    if (typeof value !== "string") { await ack({ response_action: "errors", errors: { [inputId]: "Enter a search phrase, or clear search to browse this group." } }); return; }
     const query = value.trim() ? normalizeAgentCatalogQuery(value) : undefined;
-    if (value.trim() && !query) { await ack({ response_action: "errors", errors: { [searchBlock]: "Use at most 100 characters. Try meeting, or clear search to browse this group." } }); return; }
+    if (value.trim() && !query) { await ack({ response_action: "errors", errors: { [inputId]: "Use at most 100 characters. Try meeting, or clear search to browse this group." } }); return; }
     const state: CatalogViewState = { ...(parsed.state.group ? { group: parsed.state.group } : {}), ...(query ? { query } : {}), page: 1 };
-    await ack({ response_action: "update", view: buildSlackAgentCatalogView(state) });
+    await ack({ response_action: "update", view: buildSlackAgentCatalogView(state, undefined, view.hash) });
   });
 }
