@@ -2,7 +2,7 @@
 
 `travel` keeps a private, coherent itinerary with transport, lodging, activities, constraints, and packing progress. Timeline ordering and transfer checks use actual instants across timezones. Everything works without generation, search, or owner-context services. The optional preparation brief is deterministic and cites saved entry/item IDs.
 
-Parent integration is required before these commands are available. The entry point is `/nobo-help agent travel <command>`. All responses must be private.
+The registered entry point is `/nobo-help agent travel <command>`, with private replies. See the [expansion status](../personal-agent-expansion.md) for release readiness.
 
 ## A working trip
 
@@ -106,12 +106,12 @@ Bare `trip` or `show` displays current budget usage. Quota rejection leaves the 
 
 `archive` keeps a read-only trip and all of its entries; `archive <id> undo` reopens it. `trip delete <id> confirm` permanently removes the trip, entries, and packing list from this feature's state. There is no background expiration, automatic export, or cross-feature retention behavior. Invalid persisted shapes are refused without overwriting them; runtime maintainers must repair such records.
 
-Exact parent requirements:
+Runtime contract:
 
-1. Import the named `feature` or default export from `lib/agent-features/travel.ts` and register its exact ID, `travel`, under `/nobo-help agent travel`. Add private help/Home discovery using the exported metadata.
-2. Supply an owner/workspace/feature-scoped `AgentFeatureStore` and atomic compare-and-swap `update`. The sole local key is `itineraries`; its JSON schema version is `1`. Updates decode and validate existing state, use synchronous pure transforms, and create IDs/timestamps outside transforms. A concurrent archive/deletion must win when a mutation retries against it.
-3. Supply a valid `context.now` and IANA `context.timezone`. Authentication, private response delivery, and request deduplication remain runtime responsibilities. Explicit duplicate itinerary additions are rejected, but transport/request-level retries still require parent deduplication.
-4. Keep Slack rendering private and treat response strings as text. User text is escaped for Slack `<`, `>`, and `&` control syntax. No service adapters, dependencies, package changes, context exports, jobs, OAuth grants, or external API access are required. `services.generate`, `search`, and `readContext` are intentionally unused.
+1. Shared routing and Home help expose `travel` under `/nobo-help agent travel` and keep responses private.
+2. The runtime supplies owner/workspace/feature-scoped storage with atomic compare-and-swap updates. The sole local key is `itineraries`; its JSON schema version is `1`. Updates validate existing state, use synchronous pure transforms, and create IDs/timestamps outside transforms. A concurrent archive/deletion wins when a mutation retries against it.
+3. The runtime supplies one request time and the caller's IANA timezone, checks identity/access and suppresses duplicate request delivery. The feature additionally rejects duplicate itinerary additions.
+4. Replies are delivered as private text, with user text escaped for Slack control syntax. Travel uses no generation, search, owner-context reads, background jobs, external accounts or API access.
 
 Each invocation makes zero generation calls and zero searches, within the shared limits of eight generations and six bounded searches. Work is bounded by the trip/entry limits and uses the runtime's 120-second deadline, prompt cancellation, and late-write guards; it starts no background work. The feature needs no changes to the shared runtime/store.
 

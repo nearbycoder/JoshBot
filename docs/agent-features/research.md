@@ -2,7 +2,7 @@
 
 `research` saves a private, reusable answer to a public research question, together with the dated search excerpts that supported it. Refresh keeps the prior snapshot and identifies new sources, changed excerpts/metadata, and sources no longer returned. Comparisons use saved evidence, so they work without another search or generation call.
 
-This module requires parent registration and private command delivery before these entry points are available. All examples below use the planned `/nobo-help agent research <command>` route. The repeated `research research` in the first command is intentional: the first is the feature ID, the second starts research.
+The registered private route is `/nobo-help agent research <command>`. The repeated `research research` in the first command is intentional: the first is the feature ID, the second starts research. See the [expansion status](../personal-agent-expansion.md) for release readiness.
 
 ## Commands and example workflow
 
@@ -61,15 +61,15 @@ This module requires parent registration and private command delivery before the
 - All writes use a pure synchronous atomic transform, preserving unrelated concurrent updates. Concurrent duplicate creates cannot add duplicate questions or exceed capacity. A refresh only commits against the exact dossier version it read; newer refreshes and deletion win over stale generated results. A stale-result reply asks the user to inspect the saved version and retry if appropriate. The feature checks cancellation at service boundaries and before writes. The shared runtime stops waiting promptly on cancellation/deadline and guards late writes; an underlying provider call may continue, but its late result cannot save a dossier. No duplicate timer or service wrapper is needed in this module.
 - Observation timestamps are stored in UTC ISO format and displayed in the runtime-supplied timezone. Provider publication dates are displayed as provided date-only values or normalized UTC timestamps, rather than being silently interpreted in the server timezone. Invalid runtime time/timezone settings stop the operation. Refresh is manual; there are no schedules, notifications, account changes, or outbound messages.
 
-## Parent integration requirements
+## Runtime contract
 
-1. Import the named `feature` or default export from `lib/agent-features/research.ts`, register exact ID `research`, and add its help/Home discovery entry. Pass the command tail unchanged to `feature.execute(command, context)` through the planned private `/nobo-help agent research` route.
-2. Use the parent-owned runtime/store to supply `AgentFeatureContext` with caller identity, a valid `now`, an IANA `timezone`, abort signal, and a store scoped to workspace/user/feature. The module uses one local JSON key, `dossiers`, with schema `{ version: 1, dossiers: [...] }`. Its 470,000-byte quota and two-snapshot lifecycle reservation fit the implemented 512,000-byte store limit. `store.update` callbacks are synchronous, pure, and safe to retry under the supplied atomic compare-and-swap semantics. No schema migration, additional storage key, arbitrary Redis access, or changes to shared files are needed.
-3. Supply the existing read-only public search adapter as `services.search(question, 5)`, returning `{ title, url, text, publishedAt? }`. It must enforce public-web policy, provider timeouts, and upstream response limits. No new browsing adapter is needed.
-4. Supply text-only `services.generate({ instructions, input })` with **no tools**, provider timeouts and an appropriate output/token budget. Return the JSON string requested in the module's instructions, including its 8,000-byte UTF-8 synthesis budget. The parent runtime already supplies the 120-second invocation deadline, prompt cancellation, invocation call limits, and late-write guards. The service contract has no per-call token-limit parameter, so provider-level output/token enforcement still belongs in its adapter. No live model test is needed for integration.
-5. Keep replies private and disable automatic unfurling of source URLs if the Slack delivery adapter offers it. Parent owns request deduplication, asynchronous private delivery, service access checks, and normal persistence errors. The feature performs no outbound send itself.
+1. The registry exports `research` through the private `/nobo-help agent research` route and Home help. The router preserves the command tail for execution through the shared runtime.
+2. The runtime supplies `AgentFeatureContext` with caller identity, one request time, the caller's IANA timezone, cancellation signal, and workspace/user/feature-scoped storage. The module uses local key `dossiers`, with schema `{ version: 1, dossiers: [...] }`. Its 470,000-byte quota and two-snapshot lifecycle reservation fit the store's 512,000-byte ceiling. Update callbacks are synchronous, pure, and safe to retry under atomic compare-and-swap semantics.
+3. `services.search(question, 5)` uses the existing configured Exa integration and returns bounded `{ title, url, text, publishedAt? }` results. The runtime limits calls, results and excerpt size; the feature validates usable sources and publication dates. It does not fetch arbitrary URLs.
+4. `services.generate({ instructions, input })` uses the configured model with **no tools**. The feature validates the requested JSON and its 8,000-byte UTF-8 synthesis budget. The runtime supplies the 120-second invocation deadline, prompt cancellation, call/output limits and late-write guards. Provider work may finish after cancellation, but its result cannot save a dossier.
+5. Shared routing handles access checks, request deduplication and asynchronous private Slack delivery. The feature returns text and performs no outbound send itself.
 
-No shared contract, dependency, package, lockfile, routing, or registry changes are requested from this child beyond the parent-owned registration/adapters described above.
+Research uses public search excerpts and the explicit question; it does not read private owner-context sources.
 
 ## Verification
 

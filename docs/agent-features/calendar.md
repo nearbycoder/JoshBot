@@ -2,7 +2,7 @@
 
 `calendar` is a private, on-demand calendar snapshot. Paste ICS, review the proposed events, and confirm before they become part of your agenda, availability, or conflict results. It does not fetch URLs, connect accounts, send invitations, book time, or modify external calendars. No model or search calls are used.
 
-The parent integration must register the feature before the commands below are available.
+The registered private route is `/nobo-help agent calendar <command>`. See the [expansion status](../personal-agent-expansion.md) for release readiness.
 
 ## Import a calendar
 
@@ -105,11 +105,11 @@ Many full calendar exports contain recurrence or embedded timezone definitions. 
 
 Keep your original ICS if you need an export/backup. There is no export command, live sync, recurrence support, working-hours preference, or external calendar write capability.
 
-## Parent integration requirements
+## Runtime and event-context contract
 
-1. Register the named/default `feature` from `lib/agent-features/calendar.ts` under the exact ID `calendar` in shared routing, help, and Home discovery. Provide private replies and preserve pasted newlines, indentation used for ICS folding, and literal ICS text (including Slack transport entity decoding where necessary).
-2. Supply the authenticated workspace/user/**calendar**-scoped JSON `AgentFeatureStore`, a valid `context.now`, and the user's IANA `context.timezone`. The module stores one bounded versioned record at local key `calendar-v1`. Store transforms must be atomic/retryable; no raw Redis access is performed here. Parent request deduplication remains authoritative.
-3. Integrate the exported adapter into the parent's authorized owner-context service when a caller requests `event` context:
+1. The registry and Home help expose `calendar`; the shared slash route delivers private replies and preserves multiline command text.
+2. The runtime supplies the authenticated workspace/user/**calendar**-scoped JSON store, one request time and the caller's IANA timezone. Local key `calendar-v1` holds one bounded versioned record. Store transforms are atomic/retryable, and request deduplication is handled by the runtime. The feature has no raw Redis access.
+3. The [owned-context service](context.md) invokes the exported adapter when a caller requests `event` context:
 
    ```ts
    import { readCalendarEventContext } from "./agent-features/calendar.js";
@@ -120,7 +120,7 @@ Keep your original ICS if you need an export/backup. There is no export command,
    );
    ```
 
-   Do not pass the morning-brief/day-planner store namespace to this adapter. The parent must select the **same owner's calendar namespace** and merge the returned items into `services.readContext(["event"])`. The adapter neither inspects identities nor reads another namespace itself.
+   The service selects the **same owner's calendar namespace**, exposes it through a read-only store, and merges the returned items into `services.readContext(["event"])`. Consumers must not pass their own morning-brief/day-planner namespace to this helper.
 
 4. Each returned `AgentContextItem` has `kind: "event"`, stable ID `calendar:cal_<24-hex>`, original title, human-readable `text`, last actual import-change `updatedAt`, start instant `dueAt`, and `status: "busy" | "free"`. Its metadata has:
 
@@ -136,20 +136,20 @@ Keep your original ICS if you need an export/backup. There is no export command,
 
    Pending previews are excluded. Up to 100 events are returned in chronological order; the caller filters its requested date/horizon. No context text or metadata should be treated as model instructions, executable commands, or proof of a live booking. Unlike date-scoped commands, the adapter must resolve the complete interval set and throws if any saved event endpoint is ambiguous/nonexistent in the viewing timezone. Do not catch and drop individual busy events to produce partial context. Adapter failures propagate: report calendar unavailable instead of claiming an empty calendar or guaranteed availability; `list` and confirmed removal remain available for recovery.
 
-No contract, package, lockfile, provider, or service changes are required. No dependencies were added. Parent owns registration, private delivery, context wiring, and combined integration validation.
+Registration, private delivery, source scoping and cancellation are implemented in the shared runtime. Calendar adds no dependencies or external accounts.
 
 The feature uses **zero generation calls, zero searches, and zero owner-context service calls** per invocation. Local parsing and interval work are bounded by the input/event limits. The parent runtime supplies the 120-second deadline, prompt cancellation, and signal-guarded store writes. The feature checks cancellation before starting and propagates cancellation reasons instead of masking them as storage failures; it performs no background work or service retries. Replies remain within the runtime's 28,000-character limit. Shared runtime/store files are references only and are not copied into this feature branch.
 
 ## Targeted verification
 
-The actual-runtime regression imports the integrated sibling `runtime.ts` and `store.ts` by default, with an in-memory CAS backend and fake services. In this isolated feature worktree those parent-owned modules are deliberately absent; select the parent's runtime read-only with `JOSHBOT_CALENDAR_RUNTIME_PATH`. The runtime/store are imported in place, never copied or edited:
+The actual-runtime regression uses the integrated runtime/store with an in-memory CAS backend and fake services:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH JOSHBOT_CALENDAR_RUNTIME_PATH=/home/nearby/Sites/JoshBot/lib/agent-features/runtime.ts node --import tsx --test tests/agent-calendar.test.ts
+node --import tsx --test tests/agent-calendar.test.ts
 PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
 git diff --check
 ```
 
-After integration, omit the environment override to test the runtime/store in that checkout. The runtime regression covers UTC import followed by Havana fall-back/spring-forward and Apia skipped-date viewing, successful list/removal and unrelated/exclusive-end date queries, affected-date errors, strict complete context, unchanged persisted data, and ordinary 23/25-hour DST days.
+The regression covers UTC import followed by Havana fall-back/spring-forward and Apia skipped-date viewing, successful list/removal and unrelated/exclusive-end date queries, affected-date errors, strict complete context, unchanged persisted data, and ordinary 23/25-hour DST days.
 
 Tests also use isolated JSON stores and fake services, including callback retries and a deletion/confirmation race. They cover import-to-confirm-to-delete flow, line folding/text decoding, timezone and all-day semantics, DST gaps/folds and unusual offsets, interval merging, input/state bounds, invalid-state recovery, storage failures, and adapter provenance. Unicode/JSON-escaping fixtures fill storage near quota, verify actual serialized byte usage and atomic rejection, and then exercise edit, confirmation, cancellation, removal, and clearing. Additional checks cover the shared command limit and abort propagation. No production services or live inference are exercised.
