@@ -250,7 +250,73 @@ test("review snapshots, source selection, text output and retention are bounded"
   const saved = await state(context);
   assert.equal(saved.reviews.length, 12);
   assert.ok(saved.reviews.every((r) => r.id !== first.id));
-  assert.ok(JSON.stringify(saved).length < 600_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(saved), "utf8") < 480_000);
+});
+
+test("UTF-8 quota leaves room for every accepted reflection, rejects atomically, and recovers through deletion", async (t) => {
+  const items: AgentContextItem[] = [];
+  for (const kind of ["goal", "habit", "journal", "follow-up", "note"] as const) {
+    for (let i = 0; i < 5; i++) items.push({
+      id: `${kind[0]}:${i}:${"界".repeat(120)}`, kind,
+      title: "界".repeat(96), text: "界".repeat(200), updatedAt: "2026-10-21T12:00:00Z",
+      ...(kind === "goal" ? { status: "open", dueAt: "2026-10-18", metadata: { target: 10, current: 3, history: [{ at: "2026-10-20T12:00:00Z", value: 3 }] } } : {}),
+      ...(kind === "habit" ? { metadata: { target: 5, days: ["2026-10-16", "2026-10-17"] } } : {}),
+      ...(kind === "journal" ? { metadata: { day: `2026-10-${16 + i}`, mood: 4, wins: "界".repeat(150) } } : {}),
+      ...(kind === "follow-up" ? { status: "done", metadata: { completedAt: "2026-10-21T12:00:00Z" } } : {}),
+    });
+  }
+  const backing = createAgentTestStore();
+  const writtenBytes: number[] = [];
+  const store: AgentFeatureStore = {
+    read: (key) => backing.read(key),
+    update: (key, initial, transform) => backing.update(key, initial, (current) => {
+      const next = transform(current);
+      const bytes = Buffer.byteLength(JSON.stringify(next.value), "utf8");
+      assert.ok(bytes <= 512_000, "The runtime store limit must never reject an accepted write");
+      assert.ok(bytes < 480_000, "Every feature write must stay below its reserved byte ceiling");
+      writtenBytes.push(bytes);
+      return next;
+    }),
+  };
+  const { run, context } = setup(items, { store });
+  let quotaReached = false;
+  for (let i = 0; i < 12; i++) {
+    const before = await context.store.read("reviews");
+    const output = await feature.execute("review", { ...context, now: new Date(context.now.getTime() + i * 1000) });
+    assert.ok(output.length < 28_000);
+    if (output.includes("quota reached")) {
+      assert.match(output, /400,000 UTF-8 bytes/);
+      assert.match(output, /delete <id> confirm/);
+      assert.deepEqual(await context.store.read("reviews"), before, "Quota rejection must preserve every saved review");
+      quotaReached = true;
+      break;
+    }
+    assert.match(output, /Weekly personal review/);
+  }
+  assert.ok(quotaReached, "Unicode must reach the byte budget before the 12-record count limit");
+  const full = await state(context);
+  assert.ok(Buffer.byteLength(JSON.stringify(full), "utf8") > JSON.stringify(full).length * 2, "UTF-16 string length cannot substitute for serialized UTF-8 bytes");
+  assert.ok(full.reviews.length < 12);
+  for (const r of full.reviews) {
+    assert.match(await run(`reflect ${r.id} | ${"界".repeat(1000)}`), /Reflection saved/);
+    // Control characters serialize as six ASCII bytes each: worse than CJK or emoji.
+    assert.match(await run(`reflect ${r.id} | ${"\u0000".repeat(1000)}`), /Reflection saved/);
+    assert.ok((await run(`show ${r.id}`)).length < 28_000);
+  }
+  const reflected = await state(context);
+  assert.ok(reflected.reviews.every((r) => r.reflection?.text.length === 1000));
+  assert.match(await run("history"), /Storage: \d+ \/ 480,000 UTF-8 bytes/);
+  assert.match(await run("history"), /delete <id> confirm/);
+  assert.match(await run(`delete ${full.reviews.at(-1)!.id} confirm`), /Deleted review/);
+  // A single freed slot must not permit two simultaneous additions near the byte ceiling.
+  const outputs = await Promise.all([1, 2].map((i) => feature.execute("review", { ...context, now: new Date(context.now.getTime() + 60_000 + i * 1000) })));
+  assert.equal(outputs.filter((output) => output.startsWith("Weekly personal review")).length, 1);
+  assert.equal(outputs.filter((output) => output.includes("quota reached")).length, 1);
+  const after = await state(context);
+  assert.equal(after.reviews.length, full.reviews.length);
+  assert.ok(after.reviews.filter((r) => reflected.reviews.some((old) => old.id === r.id)).every((r) => r.reflection?.text.length === 1000));
+  assert.ok(Math.max(...writtenBytes) < 480_000);
+  t.diagnostic(`Unicode quota: ${full.reviews.length} snapshots accepted; ${Buffer.byteLength(JSON.stringify(full), "utf8")} bytes before reflections; largest write ${Math.max(...writtenBytes)} bytes after lifecycle changes.`);
 });
 
 test("simultaneous review commands retain all snapshots without lost updates", async () => {

@@ -7,6 +7,8 @@ type Kind = typeof KINDS[number];
 const MAX_HISTORY = 12;
 const PER_KIND = 5;
 const MAX_FINDINGS = 6;
+const SNAPSHOT_BYTE_LIMIT = 400_000;
+const STATE_BYTE_LIMIT = 480_000;
 const SECTION_KEYS = ["completed", "stalled", "activity", "patterns", "next"] as const;
 type Section = typeof SECTION_KEYS[number];
 type Finding = { text: string; refs: string[] };
@@ -40,6 +42,19 @@ type RecordData = Omit<Source, "ref"> & {
 };
 class ReviewError extends Error {}
 const emptyState = (): State => ({ version: 1, reviews: [] });
+const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+const snapshotBytes = (state: State) => jsonBytes({ ...state, reviews: state.reviews.map(({ reflection: _reflection, ...snapshot }) => snapshot) });
+
+function checkWriteQuota(state: State, addingReview = false): State {
+  // Reserve 80 KB beyond the snapshot budget. Even JSON's worst case of six
+  // bytes per reflection character leaves room for all 12 reflections and
+  // their lifecycle metadata. Measure the complete serialized value on writes.
+  if (jsonBytes(state) >= STATE_BYTE_LIMIT || (addingReview && snapshotBytes(state) >= SNAPSHOT_BYTE_LIMIT)) {
+    throw new ReviewError("Weekly-review storage quota reached (400,000 UTF-8 bytes for snapshots; below 480,000 total). No changes were made. Use history, show <id> to copy a review, then delete <id> confirm and retry.");
+  }
+  return state;
+}
+
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const string = (v: unknown, max: number): v is string => typeof v === "string" && v.length <= max;
 const compact = (s: string, max: number) => s.replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
@@ -313,14 +328,14 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       const saved = await context.store.update<unknown, boolean>(KEY, emptyState(), (current) => {
         const state = validateState(current);
         const reviews = [...state.reviews, review].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).slice(0, MAX_HISTORY);
-        return { value: { version: 1, reviews }, result: reviews.some((r) => r.id === review.id) };
+        return { value: checkWriteQuota({ version: 1, reviews }, true), result: reviews.some((r) => r.id === review.id) };
       });
       return saved ? render(review) : "This review fell outside the latest 12 snapshots because newer reviews finished first. Run review again to save a current snapshot.";
     }
     if (verb === "history" && !args) {
       const state = validateState(await context.store.read<unknown>(KEY));
       if (!state.reviews.length) return "No weekly reviews yet. Use review, or review 2026-10-22, to synthesize seven days of your personal sources.";
-      return `Weekly review history (latest ${MAX_HISTORY} snapshots retained)\n${state.reviews.map((r) => `${r.id} · ${r.start} – ${r.end} · ${r.timezone} · ${r.sources.length} sources${r.reflection ? " · reflection added" : ""}`).join("\n")}\nUse show <id> or show latest.`;
+      return `Weekly review history (up to ${MAX_HISTORY} snapshots retained)\n${state.reviews.map((r) => `${r.id} · ${r.start} – ${r.end} · ${r.timezone} · ${r.sources.length} sources${r.reflection ? " · reflection added" : ""}`).join("\n")}\nStorage: ${jsonBytes(state)} / 480,000 UTF-8 bytes; snapshots: ${snapshotBytes(state)} / 400,000 bytes. Remaining budget is reserved for reflections and lifecycle changes.\nUse show <id> or show latest. To free space, copy a review with show, then delete <id> confirm.`;
     }
     if (verb === "show") return render(findReview(validateState(await context.store.read<unknown>(KEY)), args || "latest"));
     if (verb === "reflect") {
@@ -335,7 +350,8 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       return await context.store.update<unknown, string>(KEY, emptyState(), (current) => {
         const state = validateState(current), review = findReview(state, target);
         if (review.reflection && review.reflection.updatedAt > updatedAt) return { value: state, result: "A newer reflection is already saved. Use show to read it before editing again." };
-        return { value: { version: 1, reviews: state.reviews.map((r) => r.id === target ? { ...r, reflection: { text, updatedAt } } : r) }, result: `Reflection saved for ${target}. Use show ${target} to read the review and reflection together.` };
+        const value = checkWriteQuota({ version: 1, reviews: state.reviews.map((r) => r.id === target ? { ...r, reflection: { text, updatedAt } } : r) });
+        return { value, result: `Reflection saved for ${target}. Use show ${target} to read the review and reflection together.` };
       });
     }
     if (verb === "delete") {
@@ -343,7 +359,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       if (!match || !reviewId(match[1])) throw new ReviewError("Use delete <full-review-id> confirm. This removes that snapshot and its reflection.");
       return await context.store.update<unknown, string>(KEY, emptyState(), (current) => {
         const state = validateState(current), review = findReview(state, match[1]);
-        return { value: { version: 1, reviews: state.reviews.filter((r) => r.id !== review.id) }, result: `Deleted review ${review.id} and its reflection.` };
+        return { value: checkWriteQuota({ version: 1, reviews: state.reviews.filter((r) => r.id !== review.id) }), result: `Deleted review ${review.id} and its reflection.` };
       });
     }
     throw new ReviewError("Unknown command or extra arguments. Use help for review, history, show, reflect and delete examples.");
@@ -357,7 +373,7 @@ export const feature: AgentFeature = {
   id: "weekly-review",
   title: "Weekly personal review",
   description: "Synthesize seven local calendar days of personal goals, habits, journal, follow-ups and notes, with source references and a private reflection.",
-  help: "Weekly personal review (private)\nreview [YYYY-MM-DD] — seven days ending on this inclusive date; defaults to today in your timezone. Example: review 2026-10-22\nhistory — latest 12 saved snapshots\nshow [<full-review-id>|latest] — read a saved review (defaults to latest)\nreflect <full-review-id|latest> | Protected focus time helped; next week I will make one smaller commitment.\ndelete <full-review-id> confirm — remove one review and its reflection\nReviews use deterministic source-backed synthesis; no model or web calls. Each review makes a new snapshot; reflect replaces that snapshot's short reflection. At most five sources per category are selected; older snapshots expire after 12 reviews. Source records are never changed.",
+  help: "Weekly personal review (private)\nreview [YYYY-MM-DD] — seven days ending on this inclusive date; defaults to today in your timezone. Example: review 2026-10-22\nhistory — up to 12 saved snapshots and storage usage\nshow [<full-review-id>|latest] — read a saved review (defaults to latest)\nreflect <full-review-id|latest> | Protected focus time helped; next week I will make one smaller commitment.\ndelete <full-review-id> confirm — remove one review and its reflection\nReviews use deterministic source-backed synthesis; no model or web calls. Each review makes a new snapshot; reflect replaces that snapshot's short reflection. At most five sources per category are selected; older snapshots expire after 12 reviews. Snapshots must stay below 400,000 serialized UTF-8 bytes, reserving 80,000 bytes for reflections and lifecycle changes; total state stays below 480,000 bytes. If full, use show to copy a review, then delete <id> confirm and retry. Source records are never changed.",
   execute,
 };
 
