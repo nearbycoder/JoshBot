@@ -1,6 +1,6 @@
 # Personal cross-tool recall
 
-Implementation module: `lib/agent-features/recall.ts`, exported as named `feature` and default export with ID `recall`. Parent routing and context adapters must be integrated before the commands below are available.
+Implementation module: `lib/agent-features/recall.ts`, exported as named `feature` and default export with ID `recall`. Registered on the integration branch; shared context adapters and release verification are still in progress. The expansion has not yet been deployed.
 
 Recall finds your own notes, journal entries, goals, bookmarks, artifacts, memory and follow-ups in one private search. It uses lexical word matching over the context supplied by NoBo; it does not search channel history, crawl links, use embeddings or claim semantic/vector retrieval.
 

@@ -140,6 +140,22 @@ test("meeting preparation reads owned toolbox evidence through the registered ru
   assert.match(await handleAgentCommand(`meeting-prep show ${id}`, { ...owner, userId: "UOTHER" }, options), /not found/);
 });
 
+test("registered recall observes owned note edits and deletion without retaining a second copy", async () => {
+  const { options, owner, data } = fixture();
+  const key = `nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`;
+  const note = { id: "atlas-note", title: "Atlas launch", body: "Atlas ships after review.", updatedAt: "2026-10-22T12:00:00Z", data: {} };
+  data.set(key, JSON.stringify({ entries: [note] }));
+  options.services.readContext = (kinds) => readAgentToolboxContext(options.backend, owner, kinds);
+  const result = await handleAgentCommand("recall search Atlas", owner, options);
+  assert.match(result, /Atlas ships after review/);
+  assert.match(result, /toolbox.*atlas-note/);
+  data.set(key, JSON.stringify({ entries: [{ ...note, body: "Atlas is postponed." }] }));
+  assert.match(await handleAgentCommand("recall search Atlas", owner, options), /Atlas is postponed/);
+  data.delete(key);
+  assert.doesNotMatch(await handleAgentCommand("recall search Atlas", owner, options), /Atlas ships|Atlas is postponed/);
+  assert.equal(data.size, 0, "recall must not persist source copies");
+});
+
 test("malformed context fails visibly instead of pretending there is no data", async () => {
   const { options, owner, data } = fixture();
   data.set(`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`, '{"entries":[null]}');
