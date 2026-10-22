@@ -1,7 +1,7 @@
 import {createHash, randomUUID} from 'node:crypto';
 import * as v from 'valibot';
 import {assertQuota, assertStateVersion, serializedBytes} from './feature-kit/bounded-state.js';
-import {civilDate} from './feature-kit/civil-time.js';
+import {civilDate, normalizeInstant} from './feature-kit/civil-time.js';
 import {boundedText, pipeFields, parseInteger, parsePage, paginateParts, pageAt, type DisplayPart} from './feature-kit/command-and-display.js';
 import metadata from './shutdown-review.metadata.js';
 import type {AgentFeature, AgentFeatureContext} from './types.js';
@@ -15,6 +15,7 @@ const text = (bytes: number, units = bytes) => v.pipe(v.string(), v.check(s => {
 }));
 const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));
 const revSchema = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
+const instantSchema = v.pipe(v.string(), v.check(s => { try { return normalizeInstant(s) === s; } catch { return false; } }));
 const daySchema = v.pipe(v.string(), v.check(s => { try { civilDate(s); return true; } catch { return false; } }));
 const bump = (n: number) => Math.min(Number.MAX_SAFE_INTEGER, n + 1);
 const stamp = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -42,7 +43,7 @@ const dispositionSchema = v.strictObject({kind:v.picklist(['done','defer','drop'
 const loopSchema=v.strictObject({id:idSchema,text:text(300),disposition:v.nullable(dispositionSchema)});
 const questionSchema=v.strictObject({id:idSchema,text:text(240)});
 const recordSchema=v.strictObject({id:idSchema,revision:revSchema,day:daySchema,loops:v.pipe(v.array(loopSchema),v.maxLength(20)),
-  questions:v.pipe(v.array(questionSchema),v.maxLength(10)),firstStep:text(300),closedAt:v.nullable(v.pipe(v.string(),v.isoTimestamp()))});
+  questions:v.pipe(v.array(questionSchema),v.maxLength(10)),firstStep:text(300),closedAt:v.nullable(instantSchema)});
 const schema=v.strictObject({version:v.literal(1),revision:revSchema,records:v.pipe(v.array(recordSchema),v.maxLength(20))});
 type State=v.InferOutput<typeof schema>;
 type Review=State['records'][number];
