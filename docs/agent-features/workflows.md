@@ -1,0 +1,94 @@
+# Resumable personal workflows
+
+`workflows` runs private, text-only tasks in an inspectable sequence. A workflow contains an explicit input, one to six instructions, and one durable run with saved step outputs. Each step sees the original input and the immediately preceding saved output. It can extract, draft, summarize, or transform text; it cannot execute code, fetch a URL, send a message, or change an account.
+
+The parent must register this feature before these entry points are available:
+
+```text
+/nobo-help agent workflows help
+/nobo-help agent workflows create Launch update | Beta is ready; testing takes two days; review is Friday. | Extract facts and open questions | Draft a short status update | Make the update more concise
+```
+
+Creation returns a stable `wf_<UUID>` ID. Replace `<id>` below with that full ID.
+
+```text
+/nobo-help agent workflows run <id>
+/nobo-help agent workflows inspect <id>
+/nobo-help agent workflows output <id> 2
+/nobo-help agent workflows resume <id>
+/nobo-help agent workflows output <id> 3
+```
+
+`run` saves at most two step outputs, then pauses if there is more work. `resume` advances at most two more steps. The three-step example therefore pauses after drafting the update and completes after the separate resume invocation. Generated outputs are drafts, not verified facts or evidence that external actions happened.
+
+## Commands
+
+| Command after `workflows` | Behavior |
+| --- | --- |
+| `help` | Syntax, example, and limits; no storage or model access. |
+| `create <title> \| <input> \| <step 1> [\| <step 2> ...]` | Save a ready workflow. No generation occurs yet. Literal `\|` characters separate fields; there is no escape syntax for including one in a field. |
+| `list` | Show IDs, titles, run states, and checkpoint counts. |
+| `inspect <id>` | Show state, revision, original input preview, all step instructions/previews, and the next action. Update time uses the runtime-supplied timezone. |
+| `input <id>` | Read the complete original input. |
+| `output <id> <step number>` | Read a complete saved step output; step numbers start at 1. |
+| `run <id>` | Start a ready workflow and advance at most two steps. |
+| `pause <id>` | Pause ready/running work. Invalidate an active attempt immediately; its late output cannot be saved. |
+| `resume <id>` | Continue paused work from the first step without a saved output. An interrupted in-flight step is generated again. |
+| `retry <id>` | Retry the first unsaved step of a failed/interrupted workflow, then advance at most one further step. Earlier checkpoints stay intact. |
+| `edit <id> <step number> \| <new instruction>` | Change an existing unfinished step. Keep ready work ready; otherwise pause it and invalidate any active attempt, even if a different unfinished step was edited. Saved checkpoints cannot be edited. |
+| `cancel <id>` | Permanently cancel unfinished work and invalidate the active attempt. Keep saved input/instructions/checkpoints readable. |
+| `delete <id> confirm` | Remove the complete workflow, including its input, instructions, and saved outputs. Active work cannot recreate it. |
+
+For example, after the initial `run` of the launch-update workflow:
+
+```text
+/nobo-help agent workflows edit <id> 3 | Keep it under 80 words and make the open question explicit
+/nobo-help agent workflows resume <id>
+/nobo-help agent workflows output <id> 3
+/nobo-help agent workflows delete <id> confirm
+```
+
+A workflow is a single run, not a reusable template. Create another workflow to rerun completed or cancelled work. Input, title, step order, and step count remain fixed after creation. Editing a saved checkpoint is intentionally unsupported because later checkpoints depend on it.
+
+## Failure and concurrency behavior
+
+Every start obtains a random ownership token and increments the run revision in an atomic store update. Saving each output requires the same token and revision. Pause, cancel, deletion, and edits revoke ownership, so an old model response or provider error cannot replace a newer state. Concurrent resume/retry calls cannot both advance an active step. Unrelated workflow updates share the same atomic state transaction and preserve each other's changes.
+
+Provider rejection, empty/non-text output, or output over 2,000 characters marks the unsaved step `failed`. Earlier outputs and original input are preserved. Raw provider errors are not displayed or stored. Use `retry`, or edit an unfinished instruction and then resume.
+
+The command stops waiting for each generation after 90 seconds and marks the run `interrupted`. An aborted request also becomes interrupted. The supplied generation service has no cancellation parameter: a timed-out, paused, edited, or cancelled call may continue upstream, but its late result is ignored. A new explicit retry/resume may therefore overlap with old discarded inference, while checkpoint advancement remains exclusive.
+
+If the process dies or a checkpoint cannot be confirmed in storage, the claim expires after five minutes. A later `inspect`, `list`, or run-control command detects expiry, records `interrupted`, and offers explicit `retry`. There is no background lease recovery or automatic retry. Recovery cannot know whether the old model finished; it never reports an unsaved step as completed. Retrying may incur another generation call.
+
+All state is validated before use or mutation. Unsupported/corrupt records produce a recovery message and remain unchanged; they are not silently reset. Model output is never parsed as a command, step list, URL-fetch request, or executable code. The prompt distinguishes step instructions from untrusted source text; text-only services enforce the lack of external capabilities, not a claim that prompt injection is impossible.
+
+## Limits and retention
+
+- At most **10 workflows** per supplied workspace/user/feature namespace; create fails at capacity rather than evicting prior work.
+- **1–6 steps** per workflow; **2 generation calls** maximum per run/resume/retry invocation.
+- Title: **120 characters**. Original input: **4,000**. Each step instruction: **500**. Each output: **2,000**. Whole command: **8,000**. Limits count JavaScript string code units.
+- Outputs are validated before saving; oversized generated text fails rather than being silently truncated. Inspection uses bounded previews; `input` and `output` expose the full saved text.
+- Replies escape Slack control sequences and stay below 28,000 characters, including worst-case escaping. No rich blocks or outbound delivery are emitted by this module.
+- Records remain until `delete <id> confirm`. There is no export file, auto-expiry, version history, rerun, recurring trigger, worker, tool execution, owner-context lookup, or web search.
+- Timestamps are UTC ISO strings in storage; inspection uses the supplied timezone, and generation receives that timezone and the invocation clock. No server-local timezone is assumed.
+
+## Parent integration requirements
+
+1. Import the named `feature` (or default export) from `lib/agent-features/workflows.ts` and register its exact ID, **`workflows`**, with the shared private `/nobo-help agent <id> <command>` router and help/Home discovery.
+2. Supply the `AgentFeatureContext` contract with authenticated workspace/user identity, a valid `now` and timezone, optional request abort signal, and a store namespace isolated to workspace/user/**workflows**. This module uses only the relative key **`state`**, with schema `{ version: 1, workflows: [...] }`.
+3. Implement `store.update` as an atomic compare-and-swap transaction across processes, with synchronous retryable transforms and JSON value semantics. A read/modify/write adapter without CAS cannot provide ownership, cancellation, or checkpoint guarantees. All UUIDs/timestamps and service calls are outside transforms.
+4. Supply `services.generate` as bounded text-only inference with no tools or external writes. Neither `search` nor `readContext` is used. Honor the instruction/output budget in the adapter where possible; the module rejects oversized responses. No additional service or shared-contract change is required.
+5. Acknowledge Slack commands promptly and deliver responses privately/asynchronously: an invocation can wait for up to two 90-second generations plus storage latency. Apply normal request deduplication in the router; this feature does not retain request IDs or deduplicate separate `create` requests.
+6. Persist only the scoped state. No Redis key scanning, Slack API access, provider SDK, scheduler, package change, or environment secret is needed here.
+
+## Verification
+
+Targeted fake-service tests cover the complete flow, invalid commands and persisted data, provider failure/retry, two-step limits, concurrent ownership, cancellation, active/future-step edits, pause/resume, deletion, abort, generation timeout, expired claims, storage failure recovery, pure retryable transforms, capacity, timezone rendering, scoped isolation, and worst-case response escaping.
+
+```sh
+PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-workflows.test.ts
+PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+git diff --check
+```
+
+No live inference, outbound messages, production services, deployments, or recurring work are exercised.
