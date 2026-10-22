@@ -234,3 +234,101 @@ Proposed scope for a separately authorized implementation task, **not changes ma
 No implementation outside the four owned paths was edited. Correctness validation is 7/7 tests, zero skips, Node 24, concurrency 1; typecheck and diff checks pass. Temporary source trees, bundles, worker children and dependency symlinks were cleaned. The remaining work is a concrete performance fix, independent review and a separately planned post-change verification; deployment and production-cost evidence are not supplied by this result.
 
 The parent subsequently reported an independent P1 finding on this measured source: shared command trimming can remove CSV trailing spaces or a final blank row. This benchmark’s 40×8 fixture uses nonblank single-digit cells and does not exercise those cases. Its exact retrieval/lifecycle oracles pass only for that explicit fixture; broad CSV correctness is not approved. A separate child owns the runtime/index/Slack payload-forwarding correction and domain regressions. Any performance change touching `runtime.ts` must be coordinated with that owner, and future timing evidence must identify the supplied corrected dependency. The recorded failed series is unchanged.
+
+## Authorized implementation and post-change release verification, 2026-10-22
+
+The separately authorized follow-up implemented deferred Redis loading in `d2bd16783d7ddfb6c8d8f624d529861866ae5753` and cooperative fairness in `aaaf3842ce9dab2b2bfafdfac5c8e1765f039323`. The default backend still imports the actual Redis module and retains its null/error/CAS behavior; injected execution avoids that dependency graph. Runtime yields once **after admission and before backend/receipt work**, and bounded context yields only between existing sequential groups. Both use the original signal and check it immediately after the yield. Admission, physical-work retention, budgets, schemas, validation, ordering, complete reads and raw CSV payload forwarding remain intact. There is no request queue or feature-algorithm change. No fixed sleep or harness pause was added.
+
+Cold-import regression failed before the import change. Six fairness regressions failed before the relevant yields: real timer progress during 40 immediate-backend captures and the actual 1,500-record adapter fixture, stop/deadline during the admitted yield, deadline between groups, and actual automation authorization revocation between groups. Checks cover cancellation before backend lookup/import or receipts, retry without poisoned receipt, unchanged 3 global / 2 per owner limits, busy rejection, late raw-promise retention and release, complete ordering/byte bounds, and preservation of the prior saved snapshot. The actual default backend passed isolated loopback Redis 7.2.7 CAS/concurrency/receipt/TTL checks with persistence disabled. No provider/search calls occurred.
+
+Deferred-import validation passed 58 / 58; the parent independently passed 103 / 103 fairness/runtime/startup/context/performance/CSV tests (including all 14 P1 payload regressions). An initial local combined check passed 110 / 111: its production build could not find the new unstaged helper because the harness copies `git ls-files`. This was a correctness preparation issue, **not a timed sample**, retained in untracked `/tmp/joshbot-performance-fairness-after.log`. Staging the helper allowed the affected 25 / 25 checks to pass; after all final dependencies, 23 goal-source plus 7 harness checks passed 30 / 30. Zero skips/cancellations, types and diff checks passed. The harness is byte-for-byte unchanged from evidence commit `25e8e310`; thresholds, fixtures, timing windows, original benchmark and original raw history were not edited. Relative to the earlier timed `87da74a` manifest, `25e8e310` added profile-only phase bookkeeping and its label correction; these are inactive in normal timing runs. The appended analysis lists every changed input, including that harness-file hash difference.
+
+Exactly one post-change planned series ran at **`f9a1168c3506929ef1d6352d6025217c4bc542ab`**, run **`73975d7c-d2e1-4899-b5e9-19be0bc4cdb0`**, **2026-10-22T21:37:09.557Z–21:37:30.822Z**. All 30 fresh workers completed; `--check` exited 0 with no failed targets. This is a scoped offline performance pass; independent shared-runtime/domain/catalog review and deployment remain separate. No additional timing series or profile was run. All preceding failed/preparatory samples, the 227.934207 ms observation, and the full diagnostic profile remain immutable in the append-only history.
+
+Command: `/tmp/joshbot-node24/bin/node --max-old-space-size=1024 scripts/bench-agent-release.mjs --final --check`. Node 24.22.1, Vite 8.3.5, Linux x64 on the same shared AMD RYZEN AI MAX+395 host; per-exec Linux VmHWM, CPU user+system in milliseconds, RSS in MiB. Historical runtime retains its 384 MiB heap; new workers have 1 GiB. Full input manifest SHA-256: `e1969fc5afdc2cf47ec45b0c87dc4dfd3048b711121be1fa64998233a7de77e1`; application/config/package inputs excluding benchmark scripts: `d70bf41e7d0cc00d933f5ac37c0a7442384f17313c6e9679f90a70b8dbbce3ff`. Individual source and artifact hashes remain in the build event. Only the result-history append was dirty at capture. Build CPU 2303.909 ms, wall 392.630 ms and peak 908.664 MiB are separate from every application worker.
+
+Final-source dependencies after the failed series were separately cherry-picked, in addition to both performance commits: CSV payload `2e2a6487a58b17efb6fd1125251f20e543ae1ad6`; process invariants `24fb3f65f640501e55ecc792875a87b3b6939f82`; batch09 IDs `7488a1855daa9b151566d03c5cf8939a2aa79b94`; Bolt listener namespace `831ba3926a13f6056b8b311c2f92a293c22d3b9e`; cleared Home draft `f30624f90b2974add165628b132c53b9bd959cc7`; goal-source recovery/help `f16a7173db03e760227880cf7f5bde5050252838`. The subsequent process-guide count correction is documentation only and outside this executable manifest.
+
+A quiet window was requested; root/catalog paused heavy checks. The final10 author later disclosed an already-running old20 compatibility suite, 589 / 589 passed, Node-reported duration 22, 871.855682 ms. Its log creation/last-write proxies are 21:37:03.024289001Z–21:37:25.919683720Z; completion was observed 21:37:33.260331284Z after a process check found no matching test process. **These are not exact process bounds.** The log interval intersects this series from catalog through weekly review/early capacity, but exact overlap by worker cannot be established. Evidence: `/home/nearby/.t3/userdata/tmp/joshbot-final10-implementation-hemx6ozn/old20-final.tap`. No samples were discarded or rerun. Recorded host 1 / 5 / 15-minute load ranges were 15.28–17.30 / 13.85–14.41 / 14.50–14.67; each worker retains its own load/memory snapshot.
+
+The following comparisons retain sample 1 / 2 / 3 in order. “Before” is failed run `11b66bdd-b0fd-4ee5-8fc6-a8fdac1c1ed0`; no means, best-sample selection or RSS subtraction are used. The unchanged runtime gates are 256 MiB peak, 50 ms deterministic p95, 250 ms accepted recall p95, 150 ms loop maximum and physical-context peak ≤ 3.
+
+| Comparable runtime metric | Before, samples 1 / 2 / 3 | After, samples 1 / 2 / 3 |
+| --- | --- | --- |
+| 100-list deterministic p95, ms | 0.976 / 1.170 / 0.972 | 1.099 / 0.993 / 1.075 |
+| Mixed deterministic p95, ms | 1.806 / 1.686 / 1.641 | 25.854 / 31.255 / 22.470 |
+| Accepted burst recall p95, ms | 123.588 / 108.230 / 100.083 | 111.925 / 98.635 / 115.539 |
+| Mixed recall p95, ms | 54.246 / 47.952 / 41.241 | 45.312 / 44.396 / 41.377 |
+| Burst CPU, ms | 437.970 / 378.710 / 359.100 | 328.810 / 320.360 / 307.070 |
+| Mixed CPU, ms | 631.750 / 666.430 / 582.070 | 529.700 / 556.160 / 507.770 |
+| Whole worker CPU, ms | 1364.430 / 1336.810 / 1200.480 | 1030.750 / 1034.480 / 967.860 |
+| Whole worker peak RSS, MiB | 190.730 / 199.000 / 198.740 | 187.320 / 186.130 / 146.480 |
+| Event-loop maximum, ms | 236.454 / 232.260 / 198.705 | 68.878 / 92.275 / 77.791 |
+| 40-capture setup window, ms | 161.827 / 133.516 / 125.015 | 68.337 / 53.395 / 54.945 |
+
+Both series complete 40 captures and 100 cheap commands per worker, with 96 offered recall requests: **9 accepted, 87 busy, 0 failed**, 9 physical context calls and peak 3. Mixed requests remain **60 / 60 completed, 45 deterministic + 15 recall**, 0 busy/failed. Accepted and rejected denominators are unchanged; busy replies are not useful throughput. Mixed deterministic p95 **increased** to 22.470–31.255 ms while staying below 50 ms: yielding permits competing admitted work before a cheap request resumes. Cold setup/import and request timing were not moved out of the historical measurement.
+
+Dedicated workers below use the existing **active request** loop target ≤ 150 ms and **whole-process** peak RSS≤ 256 MiB. Policy active loop uses 150 ms; its import RSS stays separate. Each cell shows before three samples → after three samples.
+
+| Workload | Active loop maximum, ms | Active CPU, ms | Whole-process peak RSS, MiB |
+| --- | --- | --- | --- |
+| adapter-six | 169.607 / 192.807 / 168.165 → 40.894 / 36.504 / 42.992 | 185.436 / 208.370 / 187.235 → 193.719 / 185.108 / 189.244 | 163.273 / 163.285 / 163.754 → 154.430 / 151.637 / 151.102 |
+| meeting-prep | 125.698 / 124.191 / 133.235 → 46.105 / 53.412 / 58.360 | 133.659 / 133.292 / 141.814 → 153.342 / 154.201 / 171.498 | 129.859 / 125.652 / 130.156 → 122.289 / 122.957 / 122.016 |
+| morning-brief | 160.956 / 158.073 / 171.311 → 86.049 / 82.706 / 68.813 | 169.280 / 167.694 / 183.356 → 196.431 / 181.863 / 154.442 | 138.324 / 137.492 / 138.469 → 124.434 / 125.227 / 124.922 |
+| weekly-review | 140.771 / 141.558 / 139.067 → 64.061 / 49.021 / 59.867 | 152.869 / 150.079 / 150.137 → 178.995 / 149.192 / 143.158 | 150.961 / 150.047 / 151.813 → 140.355 / 140.059 / 139.324 |
+| capacity | 123.077 / 113.312 / 112.460 → 38.994 / 31.785 / 35.488 | 128.515 / 118.483 / 118.195 → 122.360 / 106.522 / 114.448 | 119.641 / 119.336 / 120.055 → 127.793 / 129.316 / 128.500 |
+| policy (RSS ungated) | 12.050 / 12.206 / 12.583 → 12.198 / 12.411 / 12.632 | 14.216 / 15.480 / 14.876 → 13.878 / 16.886 / 15.861 | 280.148 / 281.180 / 279.668 → 280.371 / 280.328 / 280.398 |
+| csv | 259.391 / 271.319 / 251.396 → 32.113 / 21.430 / 34.537 | 411.727 / 406.530 / 357.763 → 277.589 / 247.268 / 237.128 | 104.645 / 102.586 / 101.047 → 121.004 / 115.523 / 115.867 |
+
+Imports/setup are still reported and included in whole-process peaks. The active window and post-timing incremental byte diagnostic are unchanged. For completeness, whole-worker CPU (including import/setup) is:
+
+| Workload | Whole CPU, ms before → after (all three) |
+| --- | --- |
+| catalog | 85.396 / 73.165 / 77.484 → 65.552 / 63.743 / 61.251 |
+| server | 1373.927 / 1370.231 / 1772.561 → 1358.907 / 1446.422 / 1539.062 |
+| adapter-six | 434.888 / 467.402 / 420.906 → 368.323 / 364.158 / 366.332 |
+| meeting-prep | 365.149 / 354.299 / 380.692 → 344.701 / 347.417 / 367.614 |
+| morning-brief | 384.526 / 396.845 / 434.683 → 378.620 / 358.982 / 309.525 |
+| weekly-review | 386.027 / 372.311 / 376.439 → 385.454 / 339.194 / 332.638 |
+| capacity | 352.749 / 337.013 / 346.127 → 368.125 / 359.088 / 364.044 |
+| policy | 1040.959 / 1002.428 / 1011.900 → 919.383 / 966.072 / 940.857 |
+| csv | 422.512 / 419.435 / 405.243 → 294.667 / 258.603 / 261.759 |
+
+Accepted per-worker p95 values below represent one large request each, not a production percentile distribution. CSV p95 is across its 26 commands. Capacity has no accepted latency: it must reject the over-total request.
+
+| Workload | Accepted/request p95, ms before → after (all three) |
+| --- | --- |
+| adapter-six | 154.767 / 179.223 / 157.436 → 142.981 / 139.346 / 145.606 |
+| meeting-prep | 115.620 / 113.546 / 124.085 → 115.119 / 117.335 / 131.858 |
+| morning-brief | 151.822 / 149.891 / 163.163 → 155.467 / 142.840 / 120.702 |
+| weekly-review | 132.602 / 131.362 / 130.835 → 140.303 / 110.192 / 108.959 |
+| csv | 10.204 / 13.799 / 10.028 → 11.153 / 12.025 / 14.162 |
+
+Counts, exact byte totals and outcomes match the failed series in **every** post-change sample:
+
+| Workload | Items / total bytes | Logical reads / backend gets / index evals / policy calls | Writes / outcome |
+| --- | --- | --- | --- |
+| adapter-six | 1500 / 23575616 | 6 / 807 / 4 / 4 | 0 / 1 accepted complete request |
+| meeting-prep | 600 / 29339745 | 4 / 406 / 2 / 2 | 1 / 1 accepted complete request |
+| morning-brief | 600 / 29339745 | 4 / 404 / 2 / 2 | 0 / 1 accepted complete request |
+| weekly-review | 600 / 21945013 | 3 / 206 / 1 / 1 | 1 / 1 accepted complete request |
+| capacity | 540 / 39574473 | 3 / 541 / 3 / 3 | 0 / over 32 MiB rejection; prior state preserved |
+
+All context fixtures use concurrency 1, peak physical dependency 1, each group ≤ 16 MiB and ≤ 2, 000 items, at most 6 logical reads, and zero generation/search calls. Six-group is an adapter/runtime/helper probe only; the other named consumers execute their actual feature and validate bounded resulting state. Policy still has 6 cycles, 60 physical reads / 60 settlements, maximum 10 pending, 0 remaining, 96 busy attempts, no failed-policy startup, original deadline and exact permit release. CSV still offers/completes 26 commands, 40×8 cells, 10 duplicate groups and 19 complete pages, source 663 bytes, state 8,893 bytes, export 8,917 bytes, 29 reads / 4 writes, and 0 model/search/context calls. Its fixture remains nonblank single-digit cells; whitespace/blank-row correctness comes from the separate 14 P1 regressions, not from this benchmark.
+
+Metadata-only catalog still proves 70 registrations / 50 additions, all groups/pages/search/help and pure Home, with zero forbidden implementation/services/provider loads or startup calls. Full server uses real bootstrap, loopback fake Slack, backgroundRunners=false, and health 200 in every sample. These import/bootstrap figures are separate from active request gates:
+
+| Separate measurement | Before → after, all three |
+| --- | --- |
+| Catalog cold import+help, ms | 10.074 / 10.559 / 7.223 → 9.919 / 8.170 / 7.982 |
+| Catalog help p95, ms | 0.025 / 0.023 / 0.014 → 0.014 / 0.010 / 0.012 |
+| Catalog idle heap, MiB | 7.067 / 7.067 / 7.067 → 7.069 / 7.070 / 7.071 |
+| Catalog idle RSS, MiB | 55.891 / 53.969 / 56.496 → 54.656 / 55.285 / 55.684 |
+| Full-server readiness, ms | 844.851 / 832.715 / 1769.797 → 830.231 / 880.595 / 979.884 |
+| Full-server idle RSS, MiB | 292.199 / 290.887 / 295.449 → 292.563 / 291.676 / 291.734 |
+| Full-server peak RSS, MiB | 308.246 / 306.258 / 310.387 → 308.383 / 308.426 / 307.832 |
+| Policy import-only idle RSS, MiB | 274.359 / 276.387 / 275.098 → 274.691 / 275.258 / 274.270 |
+
+Responsiveness improved in these retained samples, but there is **no uniform CPU or memory improvement**. Meeting active CPU increases in all three samples; morning/weekly vary; CSV and capacity peak RSS increase in all three. Runtime whole CPU is lower in these observations, but shared-host overlap, cold JIT/GC and the other supplied source fixes prevent attributing that entire difference to deferred imports. Cooperative yielding does not reduce algorithmic work or prove cloud savings. The full-server footprint remains about 292 MiB idle / 308 MiB peak and is not subjected to an invented 256 MiB server gate. Explicit idle GC, synthetic data, closed-loop arrivals and fake immediate backends differ from production. No production CPU/RSS reduction, provider-billing cancellation, cloud cost reduction or deployment approval is established.
+
+Whole-worker loop maxima also retain import/setup stalls: full server 864.027 / 903.873 / 1011.876 ms and policy 670.564 / 682.099 / 681.574 ms. These are separate bootstrap/import observations, not the active-policy window or a newly imposed server gate. No additional profile is justified by this passing series. Temporary build/source trees, children, loopback Redis/client and owned dependency resolvers were cleaned; retained logs and append-only evidence are intentional. Independent review of the shared fairness/import changes and final domain/catalog correctness remains the parent's release gate.
