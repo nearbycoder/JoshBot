@@ -44,6 +44,20 @@ function due(id = "reminder:late"): AgentContextItem {
   return item(id, { metadata: { nextRunAt: "2026-10-22T13:00:00Z", schedule: "once", timezone: "America/Chicago" } });
 }
 
+function quotaStore(): AgentFeatureStore {
+  const backing = createAgentTestStore();
+  return {
+    read: key => backing.read(key),
+    update: (key, initial, transform) => backing.update(key, initial, current => {
+      const next = transform(current);
+      const size = Buffer.byteLength(JSON.stringify(next.value), "utf8");
+      assert.ok(size <= 512_000, "the parent store rejects larger serialized values");
+      assert.ok(size < 480_000, "the feature must leave room below the parent limit");
+      return next;
+    }),
+  };
+}
+
 test("exports the exact feature; help, input errors and empty states never read context", async () => {
   assert.equal(feature, namedFeature);
   assert.equal(feature.id, "automation-audit");
@@ -352,18 +366,84 @@ test("history, inputs, suggestions, dismissals, stored strings and Slack output 
     assert.ok((await feature.execute("review", ctx)).length <= 28_000);
   }
   const state = await saved(ctx);
-  assert.equal(state.snapshots.length, 8);
+  assert.ok(state.snapshots.length >= 1 && state.snapshots.length <= 8);
   assert.equal(state.snapshots[0].sources.length, 80);
   assert.equal(state.snapshots[0].omitted, 10);
   assert.equal(state.snapshots[0].suggestions.length, 160);
   assert.ok(state.snapshots[0].omittedSuggestions > 0);
-  assert.ok(JSON.stringify(state).length < 1_500_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(state), "utf8") <= 450_000);
   const shown = await feature.execute("show", ctx);
   assert.ok(shown.length <= 28_000);
   assert.match(shown, /Output shortened/);
   for (const s of state.snapshots[0].suggestions.slice(0, 105)) await feature.execute(`dismiss ${s.id}`, ctx);
   assert.equal((await saved(ctx)).dismissals.length, 100);
   assert.ok(!(await saved(ctx)).dismissals.some(s => s.id === state.snapshots[0].suggestions[0].id));
+});
+
+test("small reviews retain eight snapshots and report retention and deletion guidance", async () => {
+  const { ctx } = setup([due()]);
+  ctx.store = quotaStore();
+  let response = "";
+  for (let i = 0; i < 9; i++) {
+    ctx.now = new Date(`2026-10-22T15:${String(i).padStart(2, "0")}:00Z`);
+    response = await feature.execute("review", ctx);
+  }
+  assert.equal((await saved(ctx)).snapshots.length, 8);
+  assert.match(response, /Retention removed 1 oldest/);
+  assert.match(response, /UTF-8 bytes/);
+  assert.match(response, /clear confirm deletes all audit history and dismissals/);
+});
+
+test("UTF-8 quota evicts oldest history and reserves room to process all retained dismissals", async () => {
+  const { ctx, calls } = setup(Array.from({ length: 50 }, (_, i) => item(`unicode-${i}`, {
+    title: "界".repeat(160), text: "", updatedAt: "2026-01-01T00:00:00Z",
+    metadata: { purpose: "界".repeat(500), schedule: "界".repeat(160), destination: "界".repeat(120), lastRunStatus: "failed" },
+  })));
+  ctx.store = quotaStore();
+  let response = "";
+  for (let i = 0; i < 9; i++) {
+    ctx.now = new Date(`2026-10-22T15:${String(i).padStart(2, "0")}:00Z`);
+    response = await feature.execute("review", ctx);
+    assert.ok(response.length <= 28_000);
+    assert.ok(Buffer.byteLength(JSON.stringify(await saved(ctx)), "utf8") <= 450_000);
+  }
+  const before = await saved(ctx), serialized = JSON.stringify(before);
+  assert.ok(Buffer.byteLength(serialized, "utf8") > serialized.length * 1.5, "Unicode bytes, not JS character counts, drive admission");
+  assert.ok(before.snapshots.length < 8);
+  assert.match(response, /Retention removed/);
+  assert.match(await feature.execute("history", ctx), /450,000 bytes.*479,000-byte/);
+  const ids = before.snapshots.map(s => s.id);
+  for (const suggestion of before.snapshots[0].suggestions.slice(0, 100)) {
+    assert.match(await feature.execute(`dismiss ${suggestion.id}`, ctx), /Dismissed/);
+  }
+  const after = await saved(ctx);
+  assert.equal(after.dismissals.length, 100);
+  assert.deepEqual(after.snapshots.map(s => s.id), ids, "dismissals do not evict accepted history");
+  assert.ok(Buffer.byteLength(JSON.stringify(after), "utf8") < 480_000);
+  assert.match(await feature.execute(`inspect unicode-0 ${ids[0]}`, ctx), /Snapshot audit-/);
+  assert.match(await feature.execute("clear confirm", ctx), /Cleared/);
+  assert.deepEqual((await saved(ctx)).snapshots, []);
+  assert.deepEqual((await saved(ctx)).dismissals, []);
+  assert.deepEqual(calls, { context: 9, generate: 0, search: 0 });
+});
+
+test("a single oversized JSON review gives quota guidance and preserves prior state atomically", async () => {
+  const { ctx, setItems } = setup([due()]);
+  ctx.store = quotaStore();
+  await feature.execute("review", ctx);
+  await feature.execute(`dismiss ${(await saved(ctx)).snapshots[0].suggestions[0].id}`, ctx);
+  const before = await saved(ctx);
+  // Unpaired surrogates are six bytes each after JSON escaping, despite one JS code unit.
+  setItems(Array.from({ length: 80 }, (_, i) => item(`escaped-${i}`, {
+    title: "\ud800".repeat(160), text: "", updatedAt: "2026-01-01T00:00:00Z",
+    metadata: { purpose: "\ud800".repeat(500), schedule: "\ud800".repeat(160), destination: "\ud800".repeat(120), lastRunStatus: "failed" },
+  })));
+  const reply = await feature.execute("review", ctx);
+  assert.match(reply, /exceeds the 450,000-byte UTF-8 admission budget/);
+  assert.match(reply, /fewer or shorter automation records/);
+  assert.match(reply, /clear confirm deletes saved audit data/);
+  assert.deepEqual(await saved(ctx), before);
+  assert.match(await feature.execute("show", ctx), /Personal automation review/);
 });
 
 test("compare and inspect reject missing snapshots, unknown sources, and reversed snapshot order", async () => {

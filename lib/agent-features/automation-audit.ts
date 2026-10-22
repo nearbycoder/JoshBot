@@ -6,6 +6,9 @@ const MAX_SNAPSHOTS = 8;
 const MAX_SOURCES = 80;
 const MAX_SUGGESTIONS = 160;
 const MAX_DISMISSALS = 100;
+// Admission leaves 29 KB for dismissals/lifecycle changes below the parent's 512 KB limit.
+const REVIEW_BYTES = 450_000;
+const STATE_BYTES = 479_000;
 const DAY = 86_400_000;
 const GRACE = 15 * 60_000;
 const SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
@@ -35,7 +38,7 @@ compare [older-snapshot-id newer-snapshot-id]
 dismiss <suggestion-id>
 clear confirm
 Example: /nobo-help agent automation-audit inspect reminder:abc123
-Review reads your permitted reminder, monitor and digest metadata. Other commands use saved snapshots. Suggestions explain evidence; they never edit or run jobs. Unknown run data is not a failure. Retains 8 reviews and 100 dismissals; clear confirm erases this feature's history and dismissals.`;
+Review reads your permitted reminder, monitor and digest metadata. Other commands use saved snapshots. Suggestions explain evidence; they never edit or run jobs. Unknown run data is not a failure. Retains up to 8 reviews within a 450,000-byte UTF-8 admission budget and 100 dismissals; oldest reviews expire as needed. Space is reserved for later dismissals. clear confirm erases this feature's history and dismissals.`;
 
 function empty(generation = "initial"): State {
   return { version: 1, generation, snapshots: [], dismissals: [] };
@@ -90,6 +93,27 @@ function validSource(value: unknown): value is Source {
 }
 
 class InvalidState extends Error {}
+class QuotaExceeded extends Error {}
+
+function bytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
+
+function withinQuota(state: State): State {
+  if (bytes(state) > STATE_BYTES) throw new QuotaExceeded("Audit storage exceeds its 479,000-byte UTF-8 limit. Use clear confirm to delete saved reviews and dismissals; existing jobs are unchanged.");
+  return state;
+}
+
+function admitReview(state: State): State {
+  let next = state;
+  while (bytes(next) > REVIEW_BYTES && next.snapshots.length > 1) {
+    next = { ...next, snapshots: next.snapshots.slice(0, -1) };
+  }
+  if (bytes(next) > REVIEW_BYTES) throw new QuotaExceeded("This review exceeds the 450,000-byte UTF-8 admission budget. Saved history and dismissals are unchanged. Ask the context adapter to return fewer or shorter automation records. clear confirm deletes saved audit data, but cannot make this single review smaller.");
+  return next;
+}
+
+function storageNotice(state: State): string {
+  return `Storage: ${bytes(state).toLocaleString("en-US")} UTF-8 bytes. New reviews fit within 450,000 bytes, reserving space for dismissals below the 479,000-byte state limit. Oldest reviews expire as needed; clear confirm deletes all audit history and dismissals.`;
+}
 
 function parseState(value: unknown): State {
   if (value === null) return empty();
@@ -120,7 +144,7 @@ function parseState(value: unknown): State {
   }
   if (new Set(value.dismissals.map(d => d.id)).size !== value.dismissals.length) throw new InvalidState();
   // Copy only allowlisted properties, never retaining arbitrary persisted data.
-  return {
+  return withinQuota({
     version: 1, generation: value.generation,
     snapshots: (value.snapshots as Snapshot[]).map(s => ({
       id: s.id, at: s.at, timezone: s.timezone, skipped: s.skipped, omitted: s.omitted, omittedSuggestions: s.omittedSuggestions,
@@ -130,7 +154,7 @@ function parseState(value: unknown): State {
       suggestions: s.suggestions.map(v => ({ id: v.id, rule: v.rule, sourceIds: [...v.sourceIds], evidence: v.evidence, action: v.action })),
     })).sort((a, b) => b.at.localeCompare(a.at)),
     dismissals: (value.dismissals as State["dismissals"]).map(d => ({ id: d.id, at: d.at })),
-  };
+  });
 }
 
 function normalize(raw: unknown, now: number): Source | null {
@@ -258,7 +282,7 @@ function renderSnapshot(s: Snapshot, state: State, full: boolean): string[] {
     && Date.parse(r.nextRunAt) >= Date.parse(s.at) - GRACE);
   const visible = full ? s.suggestions : open.slice(0, 12);
   return [
-    `Personal automation review ${s.id}`, `Captured ${when(s.at, s.timezone)} (${s.timezone}). Read-only snapshot.`, coverage(s),
+    `Personal automation review ${s.id}`, `Captured ${when(s.at, s.timezone)} (${s.timezone}). Read-only snapshot.`, storageNotice(state), coverage(s),
     `Run outcomes: ${s.sources.filter(r => r.outcome === "failed").length} reported failed; ${s.sources.filter(r => r.outcome === "success").length} reported successful; ${s.sources.filter(r => r.outcome === "unknown").length} unknown. Unknown is not a failure.`,
     `Upcoming: next known occurrence within 7 days (${upcoming.length}; ${recent.length} recently due within the 15-minute grace period). Recurrences are not expanded.`,
     ...upcoming.slice(0, full ? MAX_SOURCES : 12).map(r => `${r.id} — ${r.title || r.kind}: ${when(r.nextRunAt, s.timezone)}; enabled state ${r.status}`),
@@ -352,22 +376,25 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const allSuggestions = audit(sources, now);
       const snapshot: Snapshot = { id, at, timezone, sources, suggestions: allSuggestions.slice(0, MAX_SUGGESTIONS),
         skipped: candidates.length - sources.length, omitted: Math.max(0, raw.length - MAX_SOURCES), omittedSuggestions: Math.max(0, allSuggestions.length - MAX_SUGGESTIONS) };
-      const saved = await ctx.store.update<unknown, State | null>(KEY, empty(), current => {
+      const saved = await ctx.store.update<unknown, { state: State; removed: number } | null>(KEY, empty(), current => {
         const latest = parseState(current);
         if (latest.generation !== state.generation || (latest.snapshots[0] && latest.snapshots[0].at > at)) return { value: latest, result: null };
-        const next: State = { ...latest, snapshots: [snapshot, ...latest.snapshots].slice(0, MAX_SNAPSHOTS) };
-        return { value: next, result: next };
+        const next = admitReview({ ...latest, snapshots: [snapshot, ...latest.snapshots].slice(0, MAX_SNAPSHOTS) });
+        return { value: next, result: { state: next, removed: latest.snapshots.length + 1 - next.snapshots.length } };
       });
-      return saved ? output(renderSnapshot(snapshot, saved, false)) : "This review was superseded by a newer review or a history clear. It was not saved; run review again for fresh evidence.";
+      return saved ? output([
+        ...(saved.removed ? [`Retention removed ${saved.removed} oldest saved review(s) to stay within the history count/UTF-8 quota.`] : []),
+        ...renderSnapshot(snapshot, saved.state, false),
+      ]) : "This review was superseded by a newer review or a history clear. It was not saved; run review again for fresh evidence.";
     }
-    if (verb === "history") return output(state.snapshots.length ? ["Saved automation reviews (newest first):", ...state.snapshots.map(s => `${s.id} — ${when(s.at, s.timezone)} (${s.timezone}); ${s.sources.length} sources; ${s.suggestions.length} saved suggestions.`)] : ["No saved reviews. Run review to read your permitted automation metadata."]);
+    if (verb === "history") return output(state.snapshots.length ? ["Saved automation reviews (newest first):", storageNotice(state), ...state.snapshots.map(s => `${s.id} — ${when(s.at, s.timezone)} (${s.timezone}); ${s.sources.length} sources; ${s.suggestions.length} saved suggestions.`)] : ["No saved reviews. Run review to read your permitted automation metadata."]);
     if (verb === "dismiss") {
       const at = ctx.now.toISOString();
       return await ctx.store.update<unknown, string>(KEY, empty(), current => {
         const latest = parseState(current);
         if (!latest.snapshots.some(s => s.suggestions.some(v => v.id === args[0]))) return { value: latest, result: "Suggestion not found in retained history. Copy a suggestion ID from review or show." };
         if (latest.dismissals.some(d => d.id === args[0])) return { value: latest, result: `Suggestion ${args[0]} is already dismissed.` };
-        return { value: { ...latest, dismissals: [...latest.dismissals, { id: args[0], at }].slice(-MAX_DISMISSALS) },
+        return { value: withinQuota({ ...latest, dismissals: [...latest.dismissals, { id: args[0], at }].slice(-MAX_DISMISSALS) }),
           result: `Dismissed ${args[0]} in this review workspace. Jobs are unchanged. Materially changed evidence may create a new suggestion; show includes dismissed evidence.` };
       });
     }
@@ -386,6 +413,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     }
     return output(renderSnapshot(snapshot, state, true));
   } catch (error) {
+    if (error instanceof QuotaExceeded) return error.message;
     return error instanceof InvalidState
       ? "Saved audit data could not be validated and was left unchanged. Use clear confirm to explicitly reset audit history and dismissals; jobs are unaffected."
       : "Could not load or save the automation review. Try again later; existing jobs were not changed.";

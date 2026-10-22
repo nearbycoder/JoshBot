@@ -13,7 +13,7 @@ Prefix every command with `/nobo-help agent automation-audit`.
 | `help` | Show commands without reading automation context. |
 | `review` | Read owner-scoped context once, save a dated snapshot, and show upcoming occurrences and up to 12 open recommendations. |
 | `inspect <source-id> [snapshot-id\|latest]` | Show saved source metadata, provenance, validation warnings and related suggestions. Defaults to the latest snapshot. |
-| `history` | List the eight most recent retained snapshots. |
+| `history` | List up to eight retained snapshots and the current UTF-8 storage usage. |
 | `show [snapshot-id\|latest]` | Show a saved review, including dismissed suggestions. |
 | `compare [older-snapshot-id newer-snapshot-id]` | Compare two saved snapshots; without arguments, compare the latest two. Show changed fields, newly observed/missing sources, and changed suggestions. |
 | `dismiss <suggestion-id>` | Hide a recommendation from normal review output when its evidence is unchanged. Historical evidence stays available with `show` and `inspect`. |
@@ -81,9 +81,15 @@ Existing reminder/monitor/digest records expose `nextRunAt`, schedule fields and
 
 The feature retains at most eight snapshots, 80 input entries per review, 160 suggestions per snapshot and 100 dismissal IDs. It reports skipped entries and cap truncation. Suggestions are prioritized by rule (overdue, explicit failure, stale, purpose, missing timing, metadata, duplicates); capped-out suggestions may still be suggested by a later review with different coverage. Titles are capped at 160 characters, purposes at 500, schedule labels at 160 and destinations at 120. Stored values contain only allowlisted normalized fields; source URLs, arbitrary metadata and full documents are not retained. Responses stay below 28,000 characters and point to `inspect` when abbreviated.
 
+Storage is measured with `Buffer.byteLength(JSON.stringify(state), "utf8")`, including Unicode and JSON escaping. Every accepted review keeps the entire value at or below **450,000 bytes**, evicting the oldest snapshots until it fits. This reserves **29,000 bytes** for later dismissal/lifecycle changes under the feature's **479,000-byte** ceiling, below the parent's 512,000-byte limit. Normal dismissals never need to evict accepted history; 100 bounded IDs/timestamps consume less than the reserve. Retention may therefore be fewer than eight snapshots. Review output discloses evictions, and review/show/history show usage and deletion guidance.
+
+If even one new review plus existing dismissals cannot fit the admission budget, it is rejected without changing history or dismissals. Ask the context adapter to return fewer or shorter records. `clear confirm` deletes saved history and dismissals but cannot reduce an individually oversized source set. No partial snapshot is silently accepted.
+
 Dismissals use deterministic IDs based on the rule, source IDs and relevant evidence. They survive an unchanged refresh; material evidence changes may produce a new ID. Only the newest 100 dismissals are retained, so an older recommendation may reappear. Use `clear confirm` to remove all review data and reset dismissals. There is no background expiry, execution telemetry collection, export, job mutation, recurrence parser or model inference in this feature.
 
 Provider failures preserve saved history and dismissals. Corrupt persisted shapes are rejected without being silently overwritten; `clear confirm` explicitly recovers the workspace. Snapshot appends and dismissals use atomic transforms with IDs/timestamps generated outside callbacks. Concurrent dismissals are merged with finishing reviews, a newer captured snapshot prevents an older delayed review from replacing it, and a history clear invalidates in-flight reviews. Reviews with identical capture times can both be retained in completion order. Cancellation detected before the storage update leaves history unchanged.
+
+Each review makes one `readContext` call; all other commands use saved state. There are zero generation or search calls, within the parent's per-invocation limits of eight generations and six searches. The parent runtime supplies the 120-second deadline, promptly stops waiting on cancellation, and guards late storage writes; the feature also checks cancellation around context loading. No shared runtime/store files are copied into or modified by this feature.
 
 Targeted verification:
 
