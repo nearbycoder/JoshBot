@@ -172,7 +172,7 @@ function sourceFrom(value: unknown, formatter: Intl.DateTimeFormat): Source | un
   let invalidDate = (rawStart !== undefined && !start) || (rawEnd !== undefined && !end);
   if (value.kind === "event" && ((rawEnd !== undefined && !start) ||
       (start && end && ((start.instant === undefined) !== (end.instant === undefined) ||
-        (start.instant === undefined ? end.day <= start.day : end.instant! <= start.instant))))) {
+        (start.instant === undefined ? end.day <= start.day : end.instant! < start.instant))))) {
     invalidDate = true;
   }
   if (value.kind === "event" && metadata.allDay === true) {
@@ -221,6 +221,10 @@ function dateLabel(date: SourceDate, timeFormat: Intl.DateTimeFormat): string {
 
 function citation(source: Source): string { return `[${source.kind} ${source.id}]`; }
 
+function isPointEvent(source: Source): boolean {
+  return source.kind === "event" && source.start?.instant !== undefined && source.end?.instant === source.start.instant;
+}
+
 function renderBrief(raw: unknown, settings: Settings, focus: string, context: AgentFeatureContext,
   dayFormat: Intl.DateTimeFormat, timeFormat: Intl.DateTimeFormat): string {
   if (!Array.isArray(raw)) return "Personal sources returned an invalid response. No brief was produced; try brief again. Saved settings were not changed.";
@@ -248,16 +252,20 @@ function renderBrief(raw: unknown, settings: Settings, focus: string, context: A
   for (const source of records.values()) {
     if (source.closed) { closed++; continue; }
     if (source.invalidDate) invalidDates++;
+    const point = isPointEvent(source);
     let bucket: Bucket = "Undated";
     if (source.start) {
       const first = source.start.day;
-      const last = source.end ? (source.end.instant === undefined ? shiftDay(source.end.day, -1) : dateInZone(source.end.instant - 1, dayFormat)) : first;
+      // A point belongs to its start day, including midnight; only nonempty
+      // ranges use an exclusive end to determine the final occupied day.
+      const last = source.end && !point ? (source.end.instant === undefined ? shiftDay(source.end.day, -1) : dateInZone(source.end.instant - 1, dayFormat)) : first;
       if (source.kind === "event" && last < today) { past++; continue; }
       if (first > horizon) { distant++; continue; }
       bucket = source.kind === "event" && first <= today && last >= today ? "Today" : first < today ? "Overdue" : first === today ? "Today" : "Later";
     }
     candidates.push({ ...source, bucket, matchesFocus: focusMatches(source, focus),
-      elapsed: source.kind === "event" && source.end?.instant !== undefined && source.end.instant <= context.now.getTime() });
+      elapsed: source.kind === "event" && source.end?.instant !== undefined &&
+        (point ? source.start!.instant! < context.now.getTime() : source.end.instant <= context.now.getTime()) });
   }
   const priorities = candidates.filter((source) => !source.elapsed).sort(compareCandidates);
   const counts = (bucket: Bucket) => candidates.filter((source) => source.bucket === bucket).length;
@@ -269,7 +277,7 @@ function renderBrief(raw: unknown, settings: Settings, focus: string, context: A
   ];
   if (!priorities.length) lines.push("No priorities found in the returned sources for this window. This is not a complete view of your day.");
   for (const [index, source] of priorities.slice(0, 5).entries()) {
-    const timing = source.start ? `${source.kind === "event" ? "starts" : "due"} ${dateLabel(source.start, timeFormat)}` : source.invalidDate ? "date invalid; timing unknown" : "no date provided";
+    const timing = source.start ? `${source.kind === "event" ? "starts" : "due"} ${dateLabel(source.start, timeFormat)}${isPointEvent(source) ? "; point event (no duration)" : ""}` : source.invalidDate ? "date invalid; timing unknown" : "no date provided";
     lines.push(`${index + 1}. ${source.bucket} · ${display(source.title, 110)} — ${timing}${source.matchesFocus ? "; matches focus" : ""} ${citation(source)}`);
     if (source.text.trim()) lines.push(`   Source excerpt: ${display(source.text, 160)}`);
   }
@@ -284,9 +292,11 @@ function renderBrief(raw: unknown, settings: Settings, focus: string, context: A
     if (!agenda.length) lines.push("No dated events returned for today. This does not establish calendar availability.");
     for (const source of agenda.slice(0, 4)) {
       const start = source.start!;
+      const point = isPointEvent(source);
       const timing = start.instant === undefined ? `all-day${start.day < today ? `, from ${start.day}` : ""}` : dateLabel(start, timeFormat);
-      const end = source.end ? ` → ${dateLabel(source.end, timeFormat)}${source.end.instant === undefined ? " (exclusive end)" : ""}` : start.instant !== undefined ? "; end unknown" : "";
-      const status = source.elapsed ? "; ended" : start.instant !== undefined && start.instant <= context.now.getTime() && source.end?.instant !== undefined ? "; in progress" : "";
+      const end = point ? "; point event (no duration)" : source.end ? ` → ${dateLabel(source.end, timeFormat)}${source.end.instant === undefined ? " (exclusive end)" : ""}` : start.instant !== undefined ? "; end unknown" : "";
+      const status = point ? (source.elapsed ? "; time passed" : start.instant === context.now.getTime() ? "; now" : "") :
+        source.elapsed ? "; ended" : start.instant !== undefined && start.instant <= context.now.getTime() && source.end?.instant !== undefined ? "; in progress" : "";
       lines.push(`- ${timing}${end}${status} · ${display(source.title, 110)} ${citation(source)}`);
     }
   }

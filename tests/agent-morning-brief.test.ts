@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import feature, { feature as namedFeature } from "../lib/agent-features/morning-brief.js";
-import type { AgentContextItem, AgentContextKind, AgentFeature, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
+import type { AgentContextItem, AgentContextKind, AgentFeature, AgentFeatureContext, AgentFeatureServices, AgentFeatureStore } from "../lib/agent-features/types.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
 
 function source(id: string, kind: AgentContextKind, title: string, extra: Partial<AgentContextItem> = {}): AgentContextItem {
@@ -30,17 +30,89 @@ type CalendarIntegration = {
   readCalendarEventContext(store: AgentFeatureStore, timezone: string): Promise<AgentContextItem[]>;
 };
 
+function calendarModuleUrl(): URL {
+  const configured = process.env.MORNING_BRIEF_CALENDAR_MODULE;
+  return configured ? pathToFileURL(configured) : new URL("../lib/agent-features/calendar.ts", import.meta.url);
+}
+
 async function actualCalendar(t: TestContext): Promise<CalendarIntegration | undefined> {
   // Parent integration uses the local module; isolated feature branches can point
   // at a read-only checkout or a temporary git-show export of the actual calendar.
   const configured = process.env.MORNING_BRIEF_CALENDAR_MODULE;
-  const moduleUrl = configured ? pathToFileURL(configured) : new URL("../lib/agent-features/calendar.ts", import.meta.url);
+  const moduleUrl = calendarModuleUrl();
   if (!existsSync(moduleUrl)) {
     if (configured) assert.fail(`Calendar integration module does not exist: ${configured}`);
     t.skip("Calendar is absent from this isolated checkout; set MORNING_BRIEF_CALENDAR_MODULE to its actual calendar.ts.");
     return undefined;
   }
   return await import(moduleUrl.href) as CalendarIntegration;
+}
+
+type TestBackend = {
+  get(key: string): Promise<string | null>;
+  compareSet(key: string, previous: string | null, next: string, ttl?: number): Promise<boolean>;
+};
+type TestOwner = { teamId: string; userId: string };
+type RuntimeIntegration = {
+  runAgentFeature(feature: AgentFeature, command: string, owner: TestOwner, options: {
+    backend: TestBackend; services: AgentFeatureServices; timezone: string; now: Date;
+  }): Promise<string>;
+};
+type StoreIntegration = {
+  createAgentFeatureStore(backend: TestBackend, owner: TestOwner, featureId: string): AgentFeatureStore;
+};
+
+async function actualRuntime(t: TestContext): Promise<(RuntimeIntegration & StoreIntegration) | undefined> {
+  // Load the real runtime next to the calendar module, with no copied shared files.
+  const moduleUrl = new URL("./runtime.ts", calendarModuleUrl());
+  if (!existsSync(moduleUrl)) {
+    if (process.env.MORNING_BRIEF_CALENDAR_MODULE) assert.fail(`Runtime integration module does not exist: ${moduleUrl.pathname}`);
+    t.skip("Runtime is absent from this isolated checkout; point MORNING_BRIEF_CALENDAR_MODULE at the integrated checkout's calendar.ts.");
+    return undefined;
+  }
+  const runtime = await import(moduleUrl.href) as RuntimeIntegration;
+  const store = await import(new URL("./store.ts", moduleUrl).href) as StoreIntegration;
+  return { ...runtime, ...store };
+}
+
+async function importTimedThroughRuntime(calendar: CalendarIntegration, runtime: RuntimeIntegration & StoreIntegration, ...events: string[]) {
+  const data = new Map<string, string>();
+  const backend: TestBackend = {
+    get: async (key) => data.get(key) ?? null,
+    compareSet: async (key, previous, next) => {
+      if ((data.get(key) ?? null) !== previous) return false;
+      data.set(key, next);
+      return true;
+    },
+  };
+  const owner = { teamId: "TTEST", userId: "UTEST" };
+  const calendarStore = runtime.createAgentFeatureStore(backend, owner, "calendar");
+  const services: AgentFeatureServices = {
+    generate: async () => { assert.fail("Unexpected model call"); },
+    search: async () => { assert.fail("Unexpected web search"); },
+    readContext: async () => { assert.fail("Calendar import must not read external context"); },
+  };
+  const options = { backend, services, timezone: "America/Chicago", now: new Date("2026-10-22T15:00:00Z") };
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", ...events, "END:VCALENDAR"].join("\r\n");
+  const preview = await runtime.runAgentFeature(calendar.feature, `import preview ${ics}`, owner, options);
+  const token = /import confirm ([a-f0-9]{32})/u.exec(preview)?.[1];
+  assert.ok(token, preview);
+  assert.match(await runtime.runAgentFeature(calendar.feature, `import confirm ${token}`, owner, options), /^Imported:/u);
+  const saved = [...data];
+  return {
+    items: await calendar.readCalendarEventContext(calendarStore, options.timezone),
+    async brief(instant: string, timezone = options.timezone) {
+      const output = await runtime.runAgentFeature(feature, "brief", owner, {
+        ...options, now: new Date(instant), timezone,
+        services: { ...services, readContext: async (kinds) => {
+          assert.ok(kinds?.includes("event"));
+          return calendar.readCalendarEventContext(calendarStore, timezone);
+        } },
+      });
+      assert.deepEqual([...data], saved, "Briefing through the runtime must not alter calendar or feature state");
+      return output;
+    },
+  };
 }
 
 async function importAllDay(calendar: CalendarIntegration, startDate: string, endDate: string, timezone: string) {
@@ -254,6 +326,92 @@ test("actual calendar all-day DST ranges retain civil dates on 23-hour and 25-ho
     assert.match(after, /Today's imported events \(0\)/u);
     assert.match(after, /1 past events/u);
   }
+});
+
+test("actual calendar point events survive the runtime on future/current/past days", async (t) => {
+  const calendar = await actualCalendar(t);
+  const runtime = await actualRuntime(t);
+  if (!calendar || !runtime) return;
+  const imported = await importTimedThroughRuntime(calendar, runtime,
+    "BEGIN:VEVENT\r\nUID:point\r\nDTSTART:20261023T150000Z\r\nSUMMARY:Release milestone\r\nEND:VEVENT");
+  const item = imported.items[0];
+  assert.equal(item.dueAt, "2026-10-23T15:00:00.000Z");
+  assert.equal(item.metadata?.endAt, item.dueAt);
+  assert.equal(item.metadata?.allDay, false);
+  const future = await imported.brief("2026-10-22T15:00:00Z");
+  assert.match(future, /Later · Release milestone/u);
+  assert.match(future, /Today's imported events \(0\)/u);
+  assert.doesNotMatch(future, /date invalid|Undated ·/u);
+  const before = await imported.brief("2026-10-23T14:59:59.999Z");
+  assert.match(before, /Today · Release milestone/u);
+  assert.match(before, /Today's imported events \(1\)/u);
+  assert.match(before, /point event \(no duration\)/u);
+  assert.doesNotMatch(before, /time passed|in progress|; ended/u);
+  const current = await imported.brief("2026-10-23T15:00:00Z");
+  assert.match(priorityLines(current).join("\n"), /Today · Release milestone/u);
+  assert.match(current, /point event \(no duration\); now · Release milestone/u);
+  const elapsed = await imported.brief("2026-10-23T15:00:00.001Z");
+  assert.equal(priorityLines(elapsed).length, 0);
+  assert.match(elapsed, /Today's imported events \(1\)/u);
+  assert.match(elapsed, /point event \(no duration\); time passed · Release milestone/u);
+  const pastDay = await imported.brief("2026-10-24T05:00:00Z");
+  assert.match(pastDay, /1 past events/u);
+  assert.match(pastDay, /Today's imported events \(0\)/u);
+  assert.doesNotMatch(pastDay, /Release milestone|Undated ·/u);
+  const tokyo = await imported.brief("2026-10-23T15:00:00Z", "Asia/Tokyo");
+  assert.match(tokyo, /Morning brief — 2026-10-24/u);
+  assert.match(tokyo, /Today's imported events \(1\)/u);
+  assert.match(tokyo, /00:00 GMT\+9; point event \(no duration\); now · Release milestone/u);
+  assert.ok(tokyo.includes(`[event ${item.id}]`));
+});
+
+test("actual runtime distinguishes midnight point events from exclusive-end timed ranges", async (t) => {
+  const calendar = await actualCalendar(t);
+  const runtime = await actualRuntime(t);
+  if (!calendar || !runtime) return;
+  const imported = await importTimedThroughRuntime(calendar, runtime,
+    "BEGIN:VEVENT\r\nUID:midnight-point\r\nDTSTART:20261023T050000Z\r\nSUMMARY:Midnight milestone\r\nEND:VEVENT",
+    "BEGIN:VEVENT\r\nUID:previous-night\r\nDTSTART:20261023T040000Z\r\nDTEND:20261023T050000Z\r\nSUMMARY:Previous-night window\r\nEND:VEVENT",
+    "BEGIN:VEVENT\r\nUID:morning-window\r\nDTSTART:20261023T050000Z\r\nDTEND:20261023T060000Z\r\nSUMMARY:Morning window\r\nEND:VEVENT");
+  const before = await imported.brief("2026-10-23T04:59:59.999Z");
+  assert.match(before, /Later · Midnight milestone/u);
+  assert.match(before, /Today's imported events \(1\)/u);
+  assert.match(before, /in progress · Previous-night window/u);
+  const midnight = await imported.brief("2026-10-23T05:00:00Z");
+  assert.match(midnight, /Morning brief — 2026-10-23/u);
+  assert.match(midnight, /Today · Midnight milestone/u);
+  assert.match(midnight, /Today's imported events \(2\)/u);
+  assert.match(midnight, /00:00 GMT-5; point event \(no duration\); now · Midnight milestone/u);
+  assert.match(midnight, /00:00 GMT-5 → 2026-10-23 01:00 GMT-5; in progress · Morning window/u);
+  assert.doesNotMatch(midnight, /Previous-night window/u);
+  assert.match(midnight, /1 past events/u);
+  const during = await imported.brief("2026-10-23T05:30:00Z");
+  assert.equal(priorityLines(during).length, 1);
+  assert.match(priorityLines(during)[0], /Morning window/u);
+  assert.match(during, /time passed · Midnight milestone/u);
+  assert.match(during, /in progress · Morning window/u);
+  const ended = await imported.brief("2026-10-23T06:00:00Z");
+  assert.equal(priorityLines(ended).length, 0);
+  assert.match(ended, /Today's imported events \(2\)/u);
+  assert.match(ended, /ended · Morning window/u);
+  const nextDay = await imported.brief("2026-10-24T05:00:00Z");
+  assert.match(nextDay, /Today's imported events \(0\)/u);
+  assert.match(nextDay, /3 past events/u);
+  assert.doesNotMatch(nextDay, /Undated ·|date invalid/u);
+});
+
+test("point equality uses the instant while reversed and empty all-day ranges remain invalid", async () => {
+  const { run } = fixture([
+    source("point", "event", "Equivalent offsets", { dueAt: "2026-10-22T10:00:00-05:00", metadata: { endAt: "2026-10-22T15:00:00Z" } }),
+    source("reversed", "event", "Reversed range", { dueAt: "2026-10-22T15:00:00Z", metadata: { endAt: "2026-10-22T14:59:59Z" } }),
+    source("empty-day", "event", "Empty all-day range", { dueAt: "2026-10-22", metadata: { allDay: true, endAt: "2026-10-22" } }),
+  ]);
+  const output = await run("brief");
+  assert.match(output, /Today · Equivalent offsets/u);
+  assert.match(output, /Today's imported events \(1\)/u);
+  assert.match(output, /point event \(no duration\); now · Equivalent offsets/u);
+  assert.match(output, /Undated · Reversed range — date invalid/u);
+  assert.match(output, /Undated · Empty all-day range — date invalid/u);
 });
 
 test("all-day civil metadata does not conceal invalid or contradictory event ranges", async () => {
