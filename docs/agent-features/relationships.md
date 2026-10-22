@@ -1,6 +1,6 @@
 # Relationship follow-through
 
-Use `/nobo-help agent relationships help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent relationships help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Remember the people you choose to enter, what mattered in your last interaction, how often you want to reconnect, and promises you made. `due` explains its suggestions; `brief` prepares you to reconnect; `draft` creates a private, editable outreach template. No contact discovery, Slack scraping, automatic reminders, or outreach is performed.
 

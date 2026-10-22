@@ -1,6 +1,6 @@
 # Decision comparison coach
 
-Use `/nobo-help agent decision-coach help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent decision-coach help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `decision-coach` is a private workspace for deliberating before deciding. Enter your options, criteria, evidence and ratings; compare them using your own weighted priorities and try temporary alternatives. It does not vote, announce a winner, record a final decision, or write to the existing channel decision log.
 

@@ -1,6 +1,6 @@
 # Capture inbox and action triage
 
-Use `/nobo-help agent inbox help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent inbox help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Use the inbox for a thought, pasted message, task, link, or a mixture of these. A capture starts **unprocessed**. Triage proposes a category, a short summary, up to three concrete next actions, and urgency with reasoning. The proposal stays a preview until you explicitly accept it. Acceptance marks the item **processed / accepted** and saves its private classification. Dismissal marks it **processed / dismissed** without approving the proposal.
 

@@ -1,6 +1,6 @@
 # Personal cross-tool recall
 
-Use `/nobo-help agent recall help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent recall help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Recall searches your private toolbox notes, journal entries, goals and bookmarks, eligible approved memory-review cards, and your follow-ups in the channel where you run the command. The `artifact` filter is recognized but has no connected source; legacy personal memory is also unconnected. See [source coverage](context.md). It uses lexical word matching over the context supplied by NoBo; it does not search channel history, crawl links, use embeddings or claim semantic/vector retrieval.
 

@@ -1,6 +1,6 @@
 # Time-blocked day planner
 
-Use `/nobo-help agent day-planner help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent day-planner help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Build an on-demand, deterministic proposal around your tasks, working hours, fixed breaks, and owned calendar events. It never writes to a calendar or calls a model. Tasks remain in the planner until you remove them; scheduling does not mark them complete.
 

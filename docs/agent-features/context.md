@@ -1,6 +1,6 @@
 # Owned personal-agent context
 
-For commands and examples, start with the [personal-agent guide](README.md). This reference describes the connected source/runtime contracts on the development branch; the expansion is **not deployed**, and release review remains open.
+For commands and examples, start with the [personal-agent guide](README.md). This reference describes the source/runtime contracts deployed with the original twenty personal agents in PR #58: main `7a30db374bf3df702af5e28413468a04dc571862`, Railway deployment `a588ccd9-57e2-4518-b8f0-f2af93433b25` (`SUCCESS`). See [verified release status](../personal-agent-expansion.md). This deployment evidence does not cover the additional fifty-agent expansion.
 
 `services.readContext(kinds)` reads the authenticated caller's existing sources. `readAgentOwnedContext` lives in `lib/agent-features/context.ts`; `services.ts` wires production dependencies. The existing `readAgentToolboxContext(backend, owner, kinds?, signal?)` export remains available.
 

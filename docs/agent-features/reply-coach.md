@@ -1,6 +1,6 @@
 # Personal reply coach
 
-Use `/nobo-help agent reply-coach help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent reply-coach help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `reply-coach` composes private reply suggestions from a conversation you paste. You choose the tone, length, and intent, inspect the suggestion, and revise it without losing the original conversation or earlier versions. It never sends a message or changes another account.
 

@@ -1,6 +1,6 @@
 # Meeting preparation briefs (`meeting-prep`)
 
-Use `/nobo-help agent meeting-prep help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent meeting-prep help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 Prepare for a meeting you explicitly describe using relevant information already owned by you. A packet includes your stated purpose and attendees, matching owner-context excerpts, source-reported open commitments, a proposed agenda, and suggested questions. Facts and suggestions appear in separate sections. This is preparation before a meeting; it does not process transcripts or modify the toolbox's manual agendas.
 

@@ -1,6 +1,6 @@
 # Resumable personal workflows
 
-Use `/nobo-help agent workflows help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent workflows help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `workflows` runs private, text-only tasks in an inspectable sequence. A workflow contains an explicit input, one to six instructions, and one durable run with saved step outputs. Each step sees the original input and the immediately preceding saved output. It can extract, draft, summarize, or transform text; it cannot execute code, fetch a URL, send a message, or change an account.
 

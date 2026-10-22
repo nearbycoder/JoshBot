@@ -1,6 +1,6 @@
 # Memory review and provenance
 
-Use `/nobo-help agent memory-review help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent memory-review help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `memory-review` keeps private, user-owned memory cards with a source, capture time,
 optional expiry, optional confidence rating, and a short revision history. You

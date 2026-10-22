@@ -1,6 +1,6 @@
 # Weekly personal review
 
-Use `/nobo-help agent weekly-review help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent weekly-review help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `weekly-review` synthesizes seven calendar days of your personal goals, habits, journal, follow-ups and notes. It shows explicitly dated completions and journal-reported wins, commitments worth checking, recorded activity, simple patterns and next-week suggestions. Every finding cites a saved source reference. It does not require a model or web search.
 

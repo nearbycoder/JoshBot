@@ -1,6 +1,6 @@
 # Reading queue and digests
 
-Use `/nobo-help agent read-later help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent read-later help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 The private queue helps decide what to read in the time you have, records partial
 reading progress, creates cited summaries and digests of pasted excerpts, and

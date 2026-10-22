@@ -1,6 +1,6 @@
 # Personal morning briefing
 
-Use `/nobo-help agent morning-brief help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent morning-brief help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `morning-brief` builds an on-demand, private day-ahead summary from your reminders, follow-ups, goals, notes, and imported events. It ranks up to five priorities, shows up to four of today's imported events, cites each record's kind and original ID, and reports missing sources. It does not read channel history.
 

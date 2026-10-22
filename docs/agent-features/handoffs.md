@@ -1,6 +1,6 @@
 # Session handoff packets
 
-Use `/nobo-help agent handoffs help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent handoffs help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `handoffs` saves your explicitly supplied task progress and selected personal source excerpts so you can carry them into a new conversation. It does not restore a running model or tool session, execute next steps, send messages, or verify that reported work actually happened. Everything is private and deterministic; no generation or web search is used.
 

@@ -1,6 +1,6 @@
 # Project context and status briefs
 
-Use `/nobo-help agent project-briefs help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent project-briefs help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `project-briefs` keeps a private context pack for a project: its purpose, constraints, open questions, user-recorded decisions, and explicitly selected personal sources. A brief refreshes those references, quotes useful excerpts and source-reported status, and optionally adds a cited synthesis. It does not infer a numeric progress score, change source records, or post to a channel.
 

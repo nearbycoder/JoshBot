@@ -1,6 +1,6 @@
 # Spaced-repetition learning coach
 
-Use `/nobo-help agent learning help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent learning help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `learning` turns your pasted material into private, source-grounded flashcards. Try to recall an answer, compare it with the source excerpt, then report how well you remembered it. The coach calculates the next review time deterministically. It does not automatically judge correctness or send reminders.
 

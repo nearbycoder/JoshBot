@@ -1,6 +1,6 @@
 # Personal automation review
 
-Use `/nobo-help agent automation-audit help` for commands. This feature is registered with private replies and Home discovery on the development branch; it is **not deployed**. See [release status](../personal-agent-expansion.md).
+Use `/nobo-help agent automation-audit help` for commands. This is one of the original twenty personal agents deployed in PR #58, with private replies and Home discovery. See [verified release status](../personal-agent-expansion.md).
 
 `automation-audit` is an on-demand, private health and history review of your permitted reminders, monitors and digests. It explains suspicious timing, old records, vague purposes and duplicate candidates. It never runs, edits, disables or deletes jobs, and never sends a message to another person. No model or web access is required.
 
