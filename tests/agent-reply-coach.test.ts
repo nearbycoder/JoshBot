@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
 import feature, { feature as namedFeature } from "../lib/agent-features/reply-coach.js";
 import type { AgentFeatureContext, AgentFeatureServices, AgentFeatureStore } from "../lib/agent-features/types.js";
@@ -39,6 +40,23 @@ async function createDraft(run: (input: string) => Promise<string>, input = comm
   const id = /Private draft (d-[a-f0-9-]{36})/.exec(output)?.[1];
   assert.ok(id, output);
   return id;
+}
+async function completeHistory(run: (input: string) => Promise<string>, id: string): Promise<void> {
+  for (let version = 2; version <= 8; version++) {
+    assert.match(await run(`revise ${id} | - | - | - | Keep the same meaning.`), /Suggested reply/);
+  }
+}
+const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
+function quotaStore(): AgentFeatureStore {
+  const base = createAgentTestStore();
+  return {
+    read: key => base.read(key),
+    update: (key, initial, transform) => base.update(key, initial, current => {
+      const next = transform(current);
+      assert.ok(bytes(next.value) < 480_000, "Every persisted JSON value must remain below the feature byte budget.");
+      return next;
+    }),
+  };
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -236,10 +254,10 @@ test("revision and draft caps refuse extra work without dropping original contex
   assert.equal(eight.drafts[0].revisions.length, 8);
   assert.match(await run(`revise ${id} | - | - | - | One more.`), /reached 8 versions/);
   assert.equal(calls.length, 8);
-  for (let i = 1; i < 12; i++) await createDraft(run);
+  for (let i = 1; i < 12; i++) await completeHistory(run, await createDraft(run));
   const full = await saved(context);
   assert.match(await run(command), /12 drafts/);
-  assert.equal(calls.length, 19);
+  assert.equal(calls.length, 96);
   assert.deepEqual(await saved(context), full);
   await run(`discard ${id}`);
   await createDraft(run);
@@ -303,7 +321,7 @@ test("style approval and reset invalidate in-flight generations, including an em
 
 test("concurrent drafts keep unrelated work and respect capacity at save time", async () => {
   const { run, context } = setup();
-  for (let i = 0; i < 10; i++) await createDraft(run);
+  for (let i = 0; i < 10; i++) await completeHistory(run, await createDraft(run));
   const releases = [deferred<string>(), deferred<string>(), deferred<string>()];
   const started = deferred<void>();
   let count = 0;
@@ -450,4 +468,143 @@ test("maximum-sized conversation, examples, and replies remain within Slack resp
     assert.ok(output.length < 28_000, input);
   }
   assert.equal((await saved(context)).drafts[0].revisions.length, 8);
+});
+
+test("UTF-8 admission quota reserves future versions, reports usage, and frees capacity after discard", async () => {
+  const { run, context, calls } = setup(undefined, { store: quotaStore() });
+  const input = `draft warm | short | Decline politely | ${"界".repeat(8000)}`;
+  const ids: string[] = [];
+  for (let i = 0; i < 3; i++) ids.push(await createDraft(run, input));
+  const before = await saved(context);
+  assert.ok(bytes(before) > JSON.stringify(before).length * 2);
+  assert.ok(bytes(before) < 480_000);
+  const output = await run(input);
+  assert.match(output, /storage quota reached/);
+  assert.match(output, /UTF-8 bytes of JSON/);
+  assert.match(output, /discard <draft-id>/);
+  assert.match(output, /style reset/);
+  assert.equal(calls.length, 3, "Known-full requests must be rejected before generation.");
+  assert.deepEqual(await saved(context), before);
+  const listed = await run("list");
+  assert.match(listed, /Storage:.*UTF-8 bytes saved.*reserved/);
+  await run(`discard ${ids[0]}`);
+  await createDraft(run, input);
+  assert.equal((await saved(context)).drafts.length, 3);
+});
+
+test("reserved lifecycle space lets every accepted draft reach all eight versions with large Unicode replies", async () => {
+  const { run, context } = setup(undefined, { store: quotaStore() });
+  const intent = "許".repeat(600);
+  const input = `draft professional | long | ${intent} | Please reply.`;
+  const ids: string[] = [];
+  for (let i = 0; i < 4; i++) ids.push(await createDraft(run, input));
+  assert.match(await run(input), /storage quota reached/);
+  context.services.generate = async () => response("界".repeat(2400), [{ text: "界".repeat(400), authorization: intent }]);
+  // Resetting an initially empty style set grows its token, but that growth also
+  // has reserved bytes and must not steal any draft's lifecycle capacity.
+  await run("style reset");
+  for (const id of ids) {
+    for (let version = 2; version <= 8; version++) {
+      assert.match(await run(`revise ${id} | - | - | - | ${"改".repeat(1000)}`), /Suggested reply/);
+      const state = await saved(context);
+      assert.ok(bytes(state) < 480_000);
+      assert.ok(state.drafts.every(draft => draft.revisions.every(revision => bytes(revision) <= 16_000)));
+    }
+  }
+  const full = await saved(context);
+  assert.ok(full.drafts.every(draft => draft.revisions.length === 8));
+  assert.ok(bytes(full) > 400_000, "Exercise actual storage near the byte budget, not just short replies.");
+  const shown = await run(`show ${ids[0]}`);
+  assert.ok(shown.length < 28_000);
+  await run(`discard ${ids[0]}`);
+  assert.equal((await saved(context)).drafts.length, 3);
+});
+
+test("oversized Unicode versions are rejected without consuming history or reserved space", async () => {
+  const { run, context } = setup(undefined, { store: quotaStore() });
+  const intent = "a".repeat(600);
+  const id = await createDraft(run, `draft professional | long | ${intent} | Alex: Please reply.`);
+  const before = await saved(context);
+  context.services.generate = async () => response("界".repeat(2400),
+    Array.from({ length: 5 }, () => ({ text: "界".repeat(400), authorization: intent })));
+  const output = await run(`revise ${id} | - | - | - | ${"改".repeat(1000)}`);
+  assert.match(output, /16,000 UTF-8 byte limit/);
+  assert.match(output, /Request a shorter reply/);
+  assert.deepEqual(await saved(context), before);
+  context.services.generate = async () => response("Shorter reply.");
+  assert.match(await run(`revise ${id} | - | - | - | Be brief.`), /version 2\/2/);
+});
+
+test("concurrent new drafts cannot spend the same reserved byte capacity", async () => {
+  const { run, context } = setup(undefined, { store: quotaStore() });
+  for (let i = 0; i < 3; i++) await createDraft(run);
+  const started = deferred<void>();
+  const releases = [deferred<string>(), deferred<string>()];
+  let count = 0;
+  context.services.generate = async () => {
+    const index = count++;
+    if (count === 2) started.resolve();
+    return releases[index].promise;
+  };
+  const first = run(command);
+  const second = run(command);
+  await started.promise;
+  releases[0].resolve(response("First saved reply."));
+  assert.match(await first, /Private draft/);
+  const before = await saved(context);
+  releases[1].resolve(response("Second reply cannot fit its reserve."));
+  assert.match(await second, /storage quota reached/);
+  assert.deepEqual(await saved(context), before);
+  assert.equal(before.drafts.length, 4);
+});
+
+test("style examples cannot consume revision reservations; resetting them releases bytes", async () => {
+  const { run, context } = setup(undefined, { store: quotaStore() });
+  for (let i = 0; i < 4; i++) await createDraft(run);
+  // Lone surrogates are valid JSON string data and escape to six ASCII bytes
+  // each. Measuring UTF-16 length or just source UTF-8 would undercount them.
+  for (let i = 0; i < 4; i++) assert.match(await run(`style approve ${String(i)}${"\ud800".repeat(1199)}`), /Approved style example/);
+  const before = await saved(context);
+  const blocked = await run(`style approve 4${"\ud800".repeat(1199)}`);
+  assert.match(blocked, /storage quota reached/);
+  assert.deepEqual(await saved(context), before);
+  assert.ok(bytes(before) > 28_000);
+  assert.match(await run("style reset"), /examples deleted/);
+  const reset = await saved(context);
+  assert.equal(reset.examples.length, 0);
+  assert.deepEqual(reset.drafts, before.drafts);
+  assert.ok(bytes(reset) < bytes(before));
+  assert.match(await run("style approve A new concise example."), /Approved style example/);
+});
+
+test("older state that exceeds the new reservation policy remains inspectable and removable", async () => {
+  const { run, context } = setup(undefined, { store: quotaStore() });
+  for (let i = 0; i < 4; i++) await createDraft(run);
+  const before = await saved(context);
+  const extra = structuredClone(before.drafts[0]);
+  extra.id = nonexistentId;
+  extra.revisions[0].id = "r-00000000-0000-4000-8000-000000000000";
+  const legacy = { ...before, drafts: [...before.drafts, extra] };
+  await context.store.update("state", legacy, () => ({ value: legacy, result: null }));
+  assert.match(await run(`show ${extra.id}`), /Original supplied conversation/);
+  assert.match(await run("list"), /Storage:/);
+  assert.match(await run("style approve Another example."), /storage quota reached/);
+  assert.match(await run("style reset"), /examples deleted/);
+  assert.match(await run(`discard ${extra.id}`), /Deleted private draft/);
+  assert.equal((await saved(context)).drafts.length, 4);
+  assert.match(await run("style approve Another example."), /Approved style example/);
+});
+
+test("escaped source data respects the runtime input ceiling before any provider call", async () => {
+  const { run, context, calls } = setup(undefined, { store: quotaStore() });
+  for (let i = 0; i < 5; i++) await run(`style approve ${String(i)}${"\ud800".repeat(1199)}`);
+  const before = await saved(context);
+  const input = `draft warm | short | Decline politely | ${"\ud800".repeat(8000)}`;
+  assert.match(await run(input), /80,000-character input limit/);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await saved(context), before);
+  await run("style reset");
+  await createDraft(run, input);
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].input.length <= 80_000);
 });

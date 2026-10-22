@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 
 const KEY = "state";
 const LIMITS = { drafts: 12, revisions: 8, examples: 5, context: 8_000, intent: 600, request: 1_000, example: 1_200 };
+const STATE_BYTES = 479_999;
+const REVISION_BYTES = 16_000;
+// Keep metadata headroom in addition to the initial style token's growth and
+// future array commas. No reservation records need to be persisted.
+const METADATA_RESERVE_BYTES = 64;
 const TONES = ["warm", "professional", "direct", "empathetic", "casual"] as const;
 const LENGTHS = { short: 600, medium: 1_400, long: 2_400 } as const;
 type Tone = typeof TONES[number];
@@ -31,6 +37,22 @@ const controlCharacters = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 class InputError extends Error {}
 function fail(message: string): never { throw new InputError(message); }
+const jsonBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
+function storageBudget(state: State): { used: number; reserved: number } {
+  return { used: jsonBytes(state), reserved: METADATA_RESERVE_BYTES + (38 - state.styleToken.length) + state.drafts.reduce((sum, draft) =>
+    sum + (LIMITS.revisions - draft.revisions.length) * (REVISION_BYTES + 1), 0) };
+}
+const quotaGuidance = "Use list/show to copy anything you want to keep, then discard <draft-id> to free its conversation, history, and reserved space, or style reset to delete approved examples.";
+function checkQuota(state: State, reserveRevisions = true): void {
+  const { used, reserved } = storageBudget(state);
+  if (used + (reserveRevisions ? reserved : 0) > STATE_BYTES) {
+    fail(`Reply-coach storage quota reached: ${used.toLocaleString("en-US")} UTF-8 bytes of JSON plus ${reserveRevisions ? reserved.toLocaleString("en-US") : "0"} reserved bytes would exceed the limit below 480,000. No draft or style changes were saved. ${quotaGuidance}`);
+  }
+}
+function storageSummary(state: State): string {
+  const { used, reserved } = storageBudget(state);
+  return `Storage: ${used.toLocaleString("en-US")} UTF-8 bytes saved + ${reserved.toLocaleString("en-US")} reserved for remaining versions/metadata; limit below 480,000. ${quotaGuidance}`;
+}
 const isText = (value: unknown, max: number): value is string =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max && !controlCharacters.test(value);
 const isId = (value: unknown, prefix: string): value is string =>
@@ -109,6 +131,7 @@ Example: revise d-<id from list> | direct | - | - | Remove the apology.
 The final conversation/instructions field can contain | characters.
 Limits: 12 drafts, 8 versions each, 5 approved examples.
 Input caps: conversation 8,000; intent 600; revision instructions 1,000; example 1,200 characters.
+Storage stays below 480,000 UTF-8 bytes, with space reserved for all remaining versions. Each version is limited to 16,000 serialized UTF-8 bytes; the storage quota can stop new drafts before the count limit. Use list to see usage; discard drafts or style reset to free space.
 Show retains the original context and revision lineage. Review facts and promises before copying a suggestion.`;
 
 const INSTRUCTIONS = `You are a private reply composition assistant with no tools or ability to send messages.
@@ -207,6 +230,7 @@ async function compose(context: AgentFeatureContext, state: State, conversation:
     previousReply: prior.at(-1)?.text ?? null,
     approvedWritingExamples: state.examples.map(({ id, text }) => ({ id, text })),
   });
+  if (input.length > 80_000) fail("The serialized source material exceeds the runtime's 80,000-character input limit. No draft changes were saved. Use style reset to remove examples, shorter revision instructions, or start a draft with a shorter conversation.");
   let raw: string;
   try {
     raw = await context.services.generate({ instructions: INSTRUCTIONS, input });
@@ -249,7 +273,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         const token = `s-${randomUUID()}`;
         return await context.store.update<State, string>(KEY, empty(), current => {
           const state = decode(current);
-          return { value: { ...state, styleToken: token, examples: [] }, result: "Approved style examples deleted. Existing drafts and their style IDs remain until discarded. New drafts use no saved examples." };
+          const value = { ...state, styleToken: token, examples: [] };
+          checkQuota(value, false);
+          return { value, result: "Approved style examples deleted. Existing drafts and their style IDs remain until discarded. New drafts use no saved examples." };
         });
       }
       if (/^approve\s/.test(rest)) {
@@ -260,7 +286,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
           const existing = state.examples.find(item => item.text === text);
           if (existing) return { value: state, result: `This example is already approved: ${existing.id}.` };
           if (state.examples.length >= LIMITS.examples) fail("You have 5 approved examples. Use style reset before approving a new set.");
-          return { value: { ...state, styleToken: example.id, examples: [...state.examples, example] }, result: `Approved style example ${example.id}. Future drafts may imitate its writing style; its content is never treated as facts or instructions.` };
+          const value = { ...state, styleToken: example.id, examples: [...state.examples, example] };
+          checkQuota(value);
+          return { value, result: `Approved style example ${example.id}. Future drafts may imitate its writing style; its content is never treated as facts or instructions.` };
         });
       }
       return "Use style approve <your own writing example>, style show, or style reset. Only explicitly approved examples are reused.";
@@ -268,11 +296,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
 
     if (action === "list" && !rest) {
       const state = await read(context);
-      if (!state.drafts.length) return "No private reply drafts yet. Try: draft warm | short | Decline politely without a new commitment | Alex: Can you help Friday?";
+      if (!state.drafts.length) return `No private reply drafts yet. Try: draft warm | short | Decline politely without a new commitment | Alex: Can you help Friday?\n\n${storageSummary(state)}`;
       return ["Private reply drafts — nothing sent:", ...state.drafts.map(draft => {
         const latest = draft.revisions.at(-1)!;
         return `${draft.id} · v${latest.number} · ${latest.tone}/${latest.length}\n${clip(latest.intent, 100)} · ${date(latest.createdAt, context)} (${context.timezone})`;
-      }), "Use show <draft-id> [version], revise, or discard <draft-id>."].join("\n\n");
+      }), "Use show <draft-id> [version], revise, or discard <draft-id>.", storageSummary(state)].join("\n\n");
     }
     if (action === "show") {
       const args = rest.split(/\s+/);
@@ -288,7 +316,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       return await context.store.update<State, string>(KEY, empty(), current => {
         const state = decode(current);
         findDraft(state, id);
-        return { value: { ...state, drafts: state.drafts.filter(draft => draft.id !== id) }, result: `Deleted private draft ${id}, its original conversation, and all revisions. Nothing was sent.` };
+        const value = { ...state, drafts: state.drafts.filter(draft => draft.id !== id) };
+        checkQuota(value, false);
+        return { value, result: `Deleted private draft ${id}, its original conversation, and all revisions. Nothing was sent.` };
       });
     }
 
@@ -310,11 +340,20 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         request: original ? textInput(parts[3], "Revision instructions", LIMITS.request) : null,
       };
       const conversation = original?.context ?? textInput(parts[3], "Conversation", LIMITS.context);
+      const revisionBase: Revision = { id: `r-${randomUUID()}`, parentId: latest?.id ?? null, number: prior.length + 1,
+        createdAt: now, ...selection, text: "", commitments: [], styleIds: state.examples.map(example => example.id) };
+      const newId = original?.id ?? `d-${randomUUID()}`;
+      const draftWith = (revision: Revision): Draft => original ? { ...original, revisions: [...prior, revision] }
+        : { id: newId, context: conversation, createdAt: now, revisions: [revision] };
+      const stateWith = (current: State, draft: Draft): State => ({ ...current, drafts: original
+        ? current.drafts.map(item => item.id === draft.id ? draft : item) : [...current.drafts, draft] });
+      // Refuse known-full requests before inference. The temporary empty reply is
+      // only a lower-bound byte measurement; it is never persisted or displayed.
+      checkQuota(stateWith(state, draftWith(revisionBase)));
       const generated = await compose(context, state, conversation, selection, prior);
-      const revision: Revision = { id: `r-${randomUUID()}`, parentId: latest?.id ?? null, number: prior.length + 1,
-        createdAt: now, ...selection, ...generated, styleIds: state.examples.map(example => example.id) };
-      const draft: Draft = original ? { ...original, revisions: [...prior, revision] }
-        : { id: `d-${randomUUID()}`, context: conversation, createdAt: now, revisions: [revision] };
+      const revision: Revision = { ...revisionBase, ...generated };
+      if (jsonBytes(revision) > REVISION_BYTES) fail("This version exceeds its 16,000 UTF-8 byte limit, including settings, instructions, reply, and commitment quotes. No draft changes were saved. Request a shorter reply and use briefer intent/revision instructions, then retry.");
+      const draft = draftWith(revision);
       // The callback contains no service calls, randomness, clock reads, or mutation.
       // Compare the exact input draft and style token; unrelated changes can coexist.
       const originalSnapshot = original ? JSON.stringify(original) : null;
@@ -324,10 +363,14 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         if (original) {
           const target = fresh.drafts.find(item => item.id === original.id);
           if (!target || JSON.stringify(target) !== originalSnapshot) return { value: fresh, result: false };
-          return { value: { ...fresh, drafts: fresh.drafts.map(item => item.id === draft.id ? draft : item) }, result: true };
+          const value = stateWith(fresh, draft);
+          checkQuota(value);
+          return { value, result: true };
         }
         if (fresh.drafts.length >= LIMITS.drafts) return { value: fresh, result: false };
-        return { value: { ...fresh, drafts: [...fresh.drafts, draft] }, result: true };
+        const value = stateWith(fresh, draft);
+        checkQuota(value);
+        return { value, result: true };
       });
       if (!saved) return "The draft, approved style examples, or available capacity changed during generation. This generated reply was not saved. Use list/show and retry against the latest state.";
       return show(draft, revision, context);
