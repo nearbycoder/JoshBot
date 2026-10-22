@@ -12,7 +12,7 @@ import { startScheduleRunner } from "../lib/schedules.js";
 export function startBackgroundRunners() {
   startScheduleRunner({ postSlackMessage, runScheduledTask: createScheduledSlackMessage });
   startMonitorRunner({ postSlackMessage, runMonitorCheck: createConditionalMonitorCheck });
-  startChannelDigestSubscriptionRunner({ postGeneratedSlackMessage });
+  startChannelDigestSubscriptionRunner({ postSlackMessage });
   startHackerNewsSchedule();
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { __testing, type SlackReactionAddedEvent } from "../lib/slack-reactions.js";
+import { __testing, handleSlackReactionShortcut, type SlackReactionAddedEvent } from "../lib/slack-reactions.js";
 
 const baseReactionEvent: SlackReactionAddedEvent = {
   type: "reaction_added",
@@ -60,5 +60,24 @@ test("ignores bot reaction shortcuts when bot user id is known", () => {
     } else {
       process.env.SLACK_BOT_USER_ID = originalBotUserId;
     }
+  }
+});
+
+test("human votes on bot-authored anchors reach polls without triggering model shortcuts", async () => {
+  const originalBotUserId = process.env.SLACK_BOT_USER_ID;
+  process.env.SLACK_BOT_USER_ID = "UBOT";
+  let votes = 0;
+  try {
+    const dependencies = {
+      recordPollVote: async () => { votes++; return { ok: false as const, reason: "No poll" }; },
+      respond: async () => { throw new Error("must not run a shortcut on a bot message"); }
+    };
+    await handleSlackReactionShortcut({ ...baseReactionEvent, item_user: "UBOT" }, dependencies);
+    assert.equal(votes, 1);
+    await handleSlackReactionShortcut({ ...baseReactionEvent, user: "UBOT" }, dependencies);
+    assert.equal(votes, 1, "bot reactions must not vote");
+  } finally {
+    if (originalBotUserId === undefined) delete process.env.SLACK_BOT_USER_ID;
+    else process.env.SLACK_BOT_USER_ID = originalBotUserId;
   }
 });

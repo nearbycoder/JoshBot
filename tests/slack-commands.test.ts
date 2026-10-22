@@ -719,6 +719,50 @@ test("blocks denied Slack modal submissions using modal metadata", async () => {
   assert.match(JSON.stringify(result), /C123/);
 });
 
+for (const kind of ["digest", "reminder"] as const) {
+  test(`${kind} modal saves to the selected destination and checks its access`, async () => {
+    for (const selected of ["C456", undefined]) {
+      const destination = selected ?? "C123";
+      const checked: (string | undefined)[] = [];
+      const saved: string[] = [];
+      const result = await handleSlackInteractionPayload(
+        createViewSubmission(`nobo_${kind}_modal`, {
+          [`${kind}_channel`]: { [`${kind}_channel_select`]: { selected_conversation: selected } },
+          reminder_task: { reminder_task_input: { value: "check logs" } }
+        }),
+        {
+          evaluateAccess: async ({ channelId }) => { checked.push(channelId); return { allowed: true }; },
+          saveChannelDigest: async ({ channelId }) => { saved.push(channelId!); return "Saved digest"; },
+          createSchedule: async (context) => {
+            saved.push(context.channel);
+            return { id: "reminder123", summary: "check logs", nextRunAt: null };
+          }
+        }
+      );
+      assert.deepEqual(checked, [destination]);
+      assert.deepEqual(saved, [destination]);
+      assert.match(JSON.stringify(result), /Saved/);
+    }
+  });
+
+  test(`${kind} modal cannot save to a denied selected destination`, async () => {
+    const result = await handleSlackInteractionPayload(
+      createViewSubmission(`nobo_${kind}_modal`, {
+        [`${kind}_channel`]: { [`${kind}_channel_select`]: { selected_conversation: "C456" } }
+      }),
+      {
+        evaluateAccess: async ({ channelId }) => {
+          assert.equal(channelId, "C456");
+          return { allowed: false, reason: "Destination denied" };
+        },
+        saveChannelDigest: async () => { throw new Error("must not save denied digest"); },
+        createSchedule: async () => { throw new Error("must not save denied reminder"); }
+      }
+    );
+    assert.match(JSON.stringify(result), /NoBo access denied/);
+  });
+}
+
 test("returns Block Kit selector for /nobo-channel-model", async () => {
   await withMockOpenCodeModels(async () => {
     const result = await handleSlackSlashCommandPayload({
@@ -750,7 +794,7 @@ test("parses Slack interaction payloads", () => {
       actions: [
         {
           action_id: "nobo_channel_model_select",
-          selected_option: { value: "glm-5.1" }
+          selected_option: { value: "glm-5.3" }
         }
       ]
     }))}`
@@ -758,7 +802,7 @@ test("parses Slack interaction payloads", () => {
 
   assert.equal(payload.type, "block_actions");
   assert.equal(payload.channel?.id, "C123");
-  assert.equal(payload.actions?.[0]?.selected_option?.value, "glm-5.1");
+  assert.equal(payload.actions?.[0]?.selected_option?.value, "glm-5.3");
 });
 
 test("reports Redis requirement when channel model interaction saves without Redis", async () => {
@@ -768,7 +812,7 @@ test("reports Redis requirement when channel model interaction saves without Red
     actions: [
       {
         action_id: "nobo_channel_model_select",
-        selected_option: { value: "glm-5.1" }
+        selected_option: { value: "glm-5.3" }
       }
     ]
   });

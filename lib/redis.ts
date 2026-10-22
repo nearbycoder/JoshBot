@@ -1,7 +1,9 @@
 import { createClient } from "redis";
 import { recordOpsError } from "./ops-errors.js";
 
-type RedisClient = ReturnType<typeof createClient>;
+// Instantiate the generic so node-redis 6 keeps its concrete RESP3 reply types.
+const createNoboRedisClient = (url: string) => createClient({ url });
+type RedisClient = ReturnType<typeof createNoboRedisClient>;
 
 let redisClientPromise: Promise<RedisClient> | null = null;
 
@@ -13,7 +15,7 @@ export async function getRedisClient() {
   }
 
   if (!redisClientPromise) {
-    const client = createClient({ url });
+    const client = createNoboRedisClient(url);
 
     client.on("error", (error) => {
       recordOpsError("redis client", error);

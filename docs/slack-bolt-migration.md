@@ -47,7 +47,7 @@ Automated tests exercise signed Bolt requests, acknowledgements, modals, scoped 
 
 ## Rollback and limits
 
-Set `SLACK_NATIVE_AI=off` and restart to force legacy reply rendering while keeping Bolt. Slack's `agent_view` migration itself cannot be undone. Model execution still uses Flue; this is a Slack transport/UI migration, not a model-runtime rewrite. Workspace search/MCP, feedback collection, distributed cancellation and resume-across-deploy are not implemented by this stack.
+Set `SLACK_NATIVE_AI=off` and restart to force legacy reply rendering while keeping Bolt. Slack's `agent_view` migration itself cannot be undone. Model execution still uses Flue; this is a Slack transport/UI migration, not a model-runtime rewrite. Workspace-wide search/MCP, distributed cancellation and resume-across-deploy are not implemented by this stack. Response-card thumbs-up/down feedback is stored in Redis; native Slack Agent feedback events are not handled.
 
 Stop events are checked against NoBo's user/channel/workspace access policy, then stop all NoBo runs in that exact workspace/channel/thread, matching Slack's session semantics (including reaction-triggered work). A process restart loses the in-flight registry; a subsequent Stop still clears the Slack session status, but no work is resumed across the restart. Do not scale beyond one replica without implementing cross-process cancellation. Slack owns pin/archive/title UI; NoBo does not duplicate those controls.
 

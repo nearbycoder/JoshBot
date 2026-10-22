@@ -1,14 +1,17 @@
 import { Cron } from "croner";
+import { evaluateNoboAccess } from "./access-controls.js";
 import { createHackerNewsSlackDigest } from "./hacker-news.js";
 import { requireEnv } from "./env.js";
+import { appendChannelMemory } from "./memory.js";
 import { recordOpsError } from "./ops-errors.js";
-import { postGeneratedSlackMessage, resolveSlackChannelIdByName } from "./slack.js";
+import { postSlackMessage, resolveSlackChannelIdByName } from "./slack.js";
 
 const DEFAULT_HACKER_NEWS_CHANNEL_NAME = "hacker-news";
 const DEFAULT_HACKER_NEWS_SCHEDULE_TIMES = ["09:00", "14:00"];
 const HACKER_NEWS_SCHEDULE_TIMEZONE = "America/Chicago";
 
 let hackerNewsScheduleStarted = false;
+let hackerNewsScheduleRunning = false;
 let resolvedChannelIdPromise: Promise<string | null> | null = null;
 
 export function startHackerNewsSchedule() {
@@ -55,22 +58,66 @@ export function getHackerNewsScheduleStatus() {
 }
 
 async function postScheduledHackerNewsDigest() {
-  const channel = await resolveHackerNewsChannelId();
-
-  if (!channel) {
-    console.warn(
-      "Skipping scheduled Hacker News post because #hacker-news could not be resolved. Set NOBO_HACKER_NEWS_CHANNEL_ID or grant channels:read."
-    );
+  // Croner's protect flag applies to each individual job, not all configured times.
+  if (hackerNewsScheduleRunning || isHackerNewsScheduleDisabled()) {
     return;
   }
 
-  await postGeneratedSlackMessage({
-    channel,
-    createReply: () =>
-      createHackerNewsSlackDigest({
-        focus: getHackerNewsScheduleFocus()
-      })
+  hackerNewsScheduleRunning = true;
+
+  try {
+    const channel = await resolveHackerNewsChannelId();
+
+    if (!channel) {
+      console.warn(
+        "Skipping scheduled Hacker News post because #hacker-news could not be resolved. Set NOBO_HACKER_NEWS_CHANNEL_ID or grant channels:read."
+      );
+      return;
+    }
+
+    if (!(await canDeliverHackerNewsDigest(channel))) {
+      return;
+    }
+
+    // The streaming helper posts a placeholder before generation. Buffer this digest
+    // so a policy change during network requests cannot leave any Slack message.
+    const text = await createHackerNewsSlackDigest({ focus: getHackerNewsScheduleFocus() });
+    const token = requireEnv("SLACK_BOT_TOKEN");
+    if (!(await canDeliverHackerNewsDigest(channel))) {
+      return;
+    }
+
+    const postedMessage = await postSlackMessage({ token, channel, text });
+    try {
+      await appendChannelMemory(channel, { role: "assistant", content: text, ts: postedMessage.ts });
+    } catch (error) {
+      // A memory failure must not turn a successful delivery into a retry.
+      console.warn(`Unable to append Hacker News channel memory: ${summarizeError(error)}`);
+    }
+  } finally {
+    hackerNewsScheduleRunning = false;
+  }
+}
+
+async function canDeliverHackerNewsDigest(channelId: string) {
+  if (isHackerNewsScheduleDisabled()) {
+    return false;
+  }
+
+  // This app-owned schedule has no user/owner configuration. A user allowlist
+  // therefore denies it, following the normal missing-user access policy.
+  const decision = await evaluateNoboAccess({
+    channelId,
+    action: "hacker_news_digest",
+    surface: "hacker-news-schedule"
   });
+
+  if (!decision.allowed) {
+    console.warn(`Skipping scheduled Hacker News post: ${decision.reason ?? "access denied"}`);
+    return false;
+  }
+
+  return !isHackerNewsScheduleDisabled();
 }
 
 async function resolveHackerNewsChannelId() {
@@ -161,5 +208,9 @@ function summarizeError(error: unknown) {
 
 export const __testing = {
   getHackerNewsScheduleTimes,
-  timeToCronExpression
+  timeToCronExpression,
+  postScheduledHackerNewsDigest,
+  resetChannelCache() {
+    resolvedChannelIdPromise = null;
+  }
 };

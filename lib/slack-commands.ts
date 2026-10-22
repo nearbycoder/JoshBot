@@ -179,6 +179,8 @@ export type SlackSlashCommandOptions = {
 
 export type SlackInteractionOptions = {
   setChannelModelPreference?: typeof setChannelModelPreference;
+  createSchedule?: typeof createScheduleFromTool;
+  saveChannelDigest?: typeof handleChannelDigestCommand;
   evaluateAccess?: (subject: NoboAccessSubject) => Promise<{ allowed: boolean; reason?: string }>;
 };
 
@@ -748,7 +750,7 @@ export async function handleSlackInteractionRequest(
 
   if (payload.type === "view_submission") {
     return {
-      response: await handleSlackViewSubmissionPayload(payload)
+      response: await handleSlackViewSubmissionPayload(payload, options)
     };
   }
 
@@ -817,7 +819,7 @@ async function evaluateSlackInteractionAccess(
   const action = payload.view?.callback_id ?? payload.callback_id ?? payload.actions?.[0]?.action_id;
   const access = await (options.evaluateAccess ?? evaluateNoboAccess)({
     userId: payload.user?.id ?? metadata.userId,
-    channelId: payload.channel?.id ?? metadata.channelId,
+    channelId: getSlackInteractionChannelId(payload),
     action: action ?? payload.type ?? "slack-interaction",
     surface: "slack-interaction"
   });
@@ -913,7 +915,8 @@ async function buildModalForKind(
 }
 
 async function handleSlackViewSubmissionPayload(
-  payload: SlackInteractionPayload
+  payload: SlackInteractionPayload,
+  options: SlackInteractionOptions
 ): Promise<SlackInteractionResponse> {
   const callbackId = payload.view?.callback_id;
 
@@ -923,7 +926,7 @@ async function handleSlackViewSubmissionPayload(
     }
 
     if (callbackId === DIGEST_MODAL_CALLBACK_ID) {
-      return updateModal(await handleDigestModalSubmission(payload));
+      return updateModal(await handleDigestModalSubmission(payload, options));
     }
 
     if (callbackId === ARTIFACT_MODAL_CALLBACK_ID) {
@@ -931,7 +934,7 @@ async function handleSlackViewSubmissionPayload(
     }
 
     if (callbackId === REMINDER_MODAL_CALLBACK_ID) {
-      return updateModal(await handleReminderModalSubmission(payload));
+      return updateModal(await handleReminderModalSubmission(payload, options));
     }
 
     return {};
@@ -1124,12 +1127,9 @@ async function handlePreferencesModalSubmission(payload: SlackInteractionPayload
     : `Couldn't update preferences: ${result.reason}`;
 }
 
-async function handleDigestModalSubmission(payload: SlackInteractionPayload) {
+async function handleDigestModalSubmission(payload: SlackInteractionPayload, options: SlackInteractionOptions) {
   const metadata = parseModalMetadata(payload.view?.private_metadata);
-  const channelId =
-    payload.channel?.id ??
-    metadata.channelId ??
-    getConversationValue(payload, "digest_channel", "digest_channel_select");
+  const channelId = getSlackInteractionChannelId(payload);
   const ownerUserId = payload.user?.id ?? metadata.userId;
 
   if (!channelId) {
@@ -1142,7 +1142,7 @@ async function handleDigestModalSubmission(payload: SlackInteractionPayload) {
   const focus = getTextValue(payload, "digest_focus", "digest_focus_input");
   const text = [frequency, frequency === "weekly" ? weekday : "", time, focus].filter(Boolean).join(" ");
 
-  return handleChannelDigestCommand({
+  return (options.saveChannelDigest ?? handleChannelDigestCommand)({
     text,
     channelId,
     ownerUserId
@@ -1163,13 +1163,10 @@ async function handleArtifactModalSubmission(payload: SlackInteractionPayload) {
   return handleArtifactCommandText(text, { ownerUserId });
 }
 
-async function handleReminderModalSubmission(payload: SlackInteractionPayload) {
+async function handleReminderModalSubmission(payload: SlackInteractionPayload, options: SlackInteractionOptions) {
   const metadata = parseModalMetadata(payload.view?.private_metadata);
   const ownerUserId = payload.user?.id ?? metadata.userId;
-  const channel =
-    payload.channel?.id ??
-    metadata.channelId ??
-    getConversationValue(payload, "reminder_channel", "reminder_channel_select");
+  const channel = getSlackInteractionChannelId(payload);
 
   if (!ownerUserId) {
     return "Slack did not send a user for this modal.";
@@ -1190,9 +1187,22 @@ async function handleReminderModalSubmission(payload: SlackInteractionPayload) {
     sourceTs: payload.view?.id ?? `${Date.now()}`,
     mentionedChannels: []
   };
-  const result = await createScheduleFromTool(context, input);
+  const result = await (options.createSchedule ?? createScheduleFromTool)(context, input);
 
   return `Saved reminder \`${result.id.slice(0, 8)}\`: ${result.summary}`;
+}
+
+function getSlackInteractionChannelId(payload: SlackInteractionPayload) {
+  // Use the same selected destination for policy evaluation and persistence.
+  if (payload.type === "view_submission") {
+    const kind = payload.view?.callback_id === DIGEST_MODAL_CALLBACK_ID ? "digest"
+      : payload.view?.callback_id === REMINDER_MODAL_CALLBACK_ID ? "reminder" : undefined;
+    if (kind) {
+      const selected = getConversationValue(payload, `${kind}_channel`, `${kind}_channel_select`);
+      if (selected) return selected;
+    }
+  }
+  return payload.channel?.id ?? parseModalMetadata(payload.view?.private_metadata).channelId;
 }
 
 function buildScheduleToolInputFromModal(

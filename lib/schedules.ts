@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { requireEnv } from "./env.js";
+import { claimScheduledJob } from "./scheduler-lease.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "./memory.js";
 import { recordOpsError } from "./ops-errors.js";
 import {
@@ -10,6 +11,7 @@ import {
 } from "./preferences.js";
 import { getRedisClient } from "./redis.js";
 let scheduleRedis = getRedisClient;
+let scheduleMemoryAppender = appendChannelMemory;
 import {
   assertSlackTargetChannelAllowed,
   normalizeSlackChannelId,
@@ -358,7 +360,8 @@ export async function editOwnedSchedule(scheduleId: string, ownerUserId: string,
   const { summary: _summary, ...record } = existing;
   const updated = { ...record, task: task.trim(), nextRunAt: future.toISOString() };
   const redis = await requireRedis();
-  // Compare and swap so a cancelled, running, or concurrently edited job cannot be resurrected.
+  // Compare and swap so a cancelled or concurrently edited job cannot be resurrected.
+  // Claimed jobs retain due membership; a successful edit invalidates their lease snapshot.
   const changed = await redis.eval(`
     if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
     if not redis.call('ZSCORE', KEYS[2], ARGV[4]) then return 0 end
@@ -687,17 +690,21 @@ async function runDueSchedules({
     });
 
     for (const id of dueIds) {
-      const claimed = await redis.zRem(SCHEDULE_DUE_KEY, id);
-      if (!claimed) {
-        continue;
-      }
-
-      const schedule = await loadSchedule(id);
-      if (!schedule) {
-        continue;
-      }
+      const lease = await claimScheduledJob(redis, {
+        id, recordKey: getScheduleJobKey(id), dueKey: SCHEDULE_DUE_KEY
+      });
+      if (!lease) continue;
 
       try {
+        const schedule = JSON.parse(lease.payload) as ScheduleRecord;
+        const assertDeliveryAllowed = async () => {
+          await assertSlackTargetChannelAllowed({
+            userId: schedule.ownerUserId, channelId: schedule.channel,
+            action: "deliver_schedule", surface: "scheduler"
+          });
+          await lease.assertCurrent();
+        };
+        await assertDeliveryAllowed();
         const dueText =
           schedule.responseMode === "prompt" && runScheduledTask
             ? await runScheduledTask({
@@ -706,6 +713,8 @@ async function runDueSchedules({
               })
             : formatReminderText(schedule.task, schedule.reminderStyle);
 
+        // Model work can outlive access changes, cancellations, or the lease.
+        await assertDeliveryAllowed();
         const messageText = `<@${schedule.ownerUserId}> ${dueText}`;
         const postedMessage = await postSlackMessage({
           token: requireEnv("SLACK_BOT_TOKEN"),
@@ -722,30 +731,21 @@ async function runDueSchedules({
 
         const nextRunAt = getNextRunAt(schedule);
         if (nextRunAt) {
-          await rescheduleIfUnchanged(schedule, { ...schedule, nextRunAt: nextRunAt.toISOString() }, nextRunAt);
+          await lease.finish(JSON.stringify({ ...schedule, nextRunAt: nextRunAt.toISOString() }), nextRunAt.getTime());
         } else {
-          await deleteSchedule(schedule.id, schedule.ownerUserId);
+          await lease.finish(null, 0, [getScheduleUserKey(schedule.ownerUserId)]);
         }
       } catch (error) {
         recordOpsError("schedule job", error);
-        console.error(`Schedule ${schedule.id} failed: ${summarizeError(error)}`);
-        const retryAt = new Date(Date.now() + 5 * 60 * 1000);
-        await rescheduleIfUnchanged(schedule, schedule, retryAt);
+        console.error(`Schedule ${id} failed: ${summarizeError(error)}`);
+        await lease.finish(lease.payload, Date.now() + 5 * 60 * 1000);
+      } finally {
+        lease.stop();
       }
     }
   } finally {
     schedulerRunning = false;
   }
-}
-
-async function rescheduleIfUnchanged(before: ScheduleRecord, after: ScheduleRecord, at: Date) {
-  const redis = await requireRedis();
-  return redis.eval(`
-    if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
-    redis.call('SET', KEYS[1], ARGV[2])
-    redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4])
-    return 1`, { keys: [getScheduleJobKey(before.id), SCHEDULE_DUE_KEY],
-    arguments: [JSON.stringify(before), JSON.stringify(after), String(at.getTime()), before.id] });
 }
 
 function amountToMs(amountInput: number | string, unit: "minutes" | "hours" | "days") {
@@ -898,7 +898,7 @@ function formatScheduleDestination(schedule: ScheduleRecord) {
 
 async function recordScheduleChannelMemory(channel: string, entry: ChannelMemoryEntry) {
   try {
-    await appendChannelMemory(channel, entry);
+    await scheduleMemoryAppender(channel, entry);
   } catch (error) {
     console.warn(`Unable to append scheduled Slack channel memory: ${summarizeError(error)}`);
   }
@@ -1162,7 +1162,8 @@ function summarizeError(error: unknown) {
 
 export const __testing = {
   setRedisProvider(provider?: typeof getRedisClient) { scheduleRedis = provider ?? getRedisClient; },
-  rescheduleIfUnchanged,
+  setMemoryAppender(appender?: typeof appendChannelMemory) { scheduleMemoryAppender = appender ?? appendChannelMemory; },
+  runDueSchedules,
   formatReminderText,
   formatScheduleSummary,
   getScheduleDestination,
