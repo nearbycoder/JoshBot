@@ -171,7 +171,9 @@ async function mutate(context: AgentFeatureContext, id: string | undefined, chan
     if (record && JSON.stringify(record) !== intended) fail(`This item changed before the command could be saved. Inspect it, then retry: ${ROUTE} show ${id}`);
     const result = change(state, record);
     if (record && state.records.includes(record)) {
-      if (record.revision >= MAX_REVISION && kind === "content") fail("Revision limit reached. Export this record and create a new one.");
+      // Refuse further writes at the revision ceiling except removals. This prevents
+      // a same-clock lifecycle ABA from restoring an indistinguishable snapshot.
+      if (record.revision >= MAX_REVISION && kind !== "remove") fail("Revision limit reached. Export this record and create a new one.");
       record.revision = Math.min(MAX_REVISION, record.revision + 1); record.updatedAt = timestamp;
     }
     if (state.records.length > MAX_RECORDS) fail(`Maximum ${MAX_RECORDS} records. Use list, export, then delete ID confirm to free space.`);

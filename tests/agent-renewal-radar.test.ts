@@ -56,3 +56,8 @@ test("cancellation during read never starts mutation",async()=>{
  const pending=f.run(`review ${id} | change | reason`,{signal:abort.signal});const rejected=assert.rejects(pending,/abort/i);await entered.promise;abort.abort();gate.resolve();await rejected;assert.equal(backend.data.get(f.key("state")),raw);
 });
 test("literal metadata matches exact catalog and help is bounded",()=>{const e=JSON.parse(readFileSync(new URL("../docs/personal-agent-50-catalog.json",import.meta.url),"utf8")).find((x:any)=>x.id===feature.id);for(const k of ["id","title","description","group","keywords","example","resourceBudgets"] as const)assert.deepEqual(feature[k],e[k]);assert.ok(feature.help.length<=3500);});
+
+test("revision ceiling blocks status cycling while preserving exact saved bytes and confirmed deletion",async()=>{
+ const f=createAgentFeatureFixture(feature),id=await create(f),s=await f.store().read<any>("state");s.records[0].revision=999999999;f.backend.data.set(f.key("state"),JSON.stringify(s));const raw=f.backend.data.get(f.key("state"));
+ for(const cmd of [`review ${id} | keep | local`,`review ${id} | change | local`,`reschedule ${id} | 2027-12-01 | confirmed`]){assert.match(await f.run(cmd),/Revision limit reached/);assert.equal(f.backend.data.get(f.key("state")),raw);}assert.match(await f.run(`delete ${id} confirm`),/^Deleted/);
+});

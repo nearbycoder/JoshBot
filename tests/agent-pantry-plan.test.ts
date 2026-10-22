@@ -52,3 +52,8 @@ test("strict persisted numeric strings/arrays, invalid preview and tenant bounda
  for(const raw of ["null","{broken"]){f.backend.data.set(f.key("state"),raw);await f.run(`delete ${id} confirm`);assert.equal(f.backend.data.get(f.key("state")),raw);}f.backend.data.set(f.key("state"),JSON.stringify(original));for(const owner of [{teamId:"TOTHER",userId:f.owner.userId},{teamId:f.owner.teamId,userId:"UOTHER"}])assert.match(await f.run(`show ${id}`,{owner}),/not found/);assert.deepEqual(f.calls,{generate:0,search:0,readContext:0});
 });
 test("metadata is exact catalog literal and help fits",()=>{const e=JSON.parse(readFileSync(new URL("../docs/personal-agent-50-catalog.json",import.meta.url),"utf8")).find((x:any)=>x.id===feature.id);for(const k of ["id","title","description","group","keywords","example","resourceBudgets"] as const)assert.deepEqual(feature[k],e[k]);assert.ok(feature.help.length<=3500);});
+
+test("revision ceiling does not permit consumption writes or token cycling; explicit preview/root removal still works",async()=>{
+ const f=createAgentFeatureFixture(feature),id=await create(f);await f.run(`ingredient ${id} add A | 1 | g`);await f.run(`stock ${id} | A | 3 | g`);const t=token(await f.run(`plan ${id} | 2`)),s=await f.store().read<any>("state");s.records[0].revision=999999999;f.backend.data.set(f.key("state"),JSON.stringify(s));const raw=f.backend.data.get(f.key("state"));
+ for(const cmd of [`use ${id} ${t} confirm`,`plan ${id} | 2`]){assert.match(await f.run(cmd),/Revision limit reached/);assert.equal(f.backend.data.get(f.key("state")),raw);}assert.match(await f.run(`clear ${id} preview confirm`),/^Saved/);assert.match(await f.run(`delete ${id} confirm`),/^Deleted/);
+});
