@@ -46,6 +46,17 @@ const keysOnly = (value: Record<string, unknown>, keys: string[]): boolean => Ob
 const canonicalDate = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const unique = <T>(values: T[], key: (value: T) => string): boolean => new Set(values.map(key)).size === values.length;
 
+/** A literal Gregorian calendar label, never converted into an instant. */
+function calendarDate(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+}
+
 /** Reject rollover dates and offset-less times instead of using the host timezone. */
 function explicitDate(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -85,7 +96,7 @@ function validNote(value: unknown): value is Note {
 function validSource(value: unknown): value is Source {
   return record(value) && keysOnly(value, ["id", "kind", "title", "text", "updatedAt", "dueAt", "status"])
     && validText(value.id, 160) && KINDS.includes(value.kind as AgentContextKind) && validText(value.title, 140) && typeof value.text === "string" && value.text.length <= 600 && (value.text === "" || validText(value.text, 600))
-    && (value.updatedAt === undefined || canonicalDate(value.updatedAt)) && (value.dueAt === undefined || canonicalDate(value.dueAt)) && (value.status === undefined || validText(value.status, 60));
+    && (value.updatedAt === undefined || canonicalDate(value.updatedAt)) && (value.dueAt === undefined || canonicalDate(value.dueAt) || calendarDate(value.dueAt)) && (value.status === undefined || validText(value.status, 60));
 }
 function validPacket(value: unknown): value is Packet {
   return record(value) && keysOnly(value, ["number", "revision", "capturedAt", "notes", "sources", "scanned"])
@@ -143,10 +154,10 @@ function score(source: Source, terms: Set<string>): number {
 function sourceFrom(value: unknown): Source | undefined {
   if (!record(value) || !validText(value.id, 160) || !KINDS.includes(value.kind as AgentContextKind) || typeof value.title !== "string" || typeof value.text !== "string") return undefined;
   const source: Source = { id: value.id, kind: value.kind as AgentContextKind, title: clip(clean(value.title) || "Untitled owner source", 140), text: clip(clean(value.text), 600) };
-  for (const key of ["updatedAt", "dueAt"] as const) {
-    const date = explicitDate(value[key]);
-    if (date) source[key] = date;
-  }
+  const updatedAt = explicitDate(value.updatedAt);
+  if (updatedAt) source.updatedAt = updatedAt;
+  const dueAt = calendarDate(value.dueAt) ? value.dueAt : explicitDate(value.dueAt);
+  if (dueAt) source.dueAt = dueAt;
   if (typeof value.status === "string" && clean(value.status)) source.status = clip(clean(value.status), 60);
   return source;
 }
@@ -173,6 +184,17 @@ async function collect(meeting: Meeting, context: AgentFeatureContext): Promise<
 function local(date: string, context: AgentFeatureContext): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: context.timezone, year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "short" }).format(new Date(date));
 }
+function dueLabel(dueAt: string | undefined, context: AgentFeatureContext): string {
+  if (!dueAt) return "due time not supplied";
+  if (calendarDate(dueAt)) {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: context.timezone, calendar: "iso8601", numberingSystem: "latn", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(context.now);
+    const part = (type: string): string => parts.find(item => item.type === type)!.value;
+    const today = `${part("year").padStart(4, "0")}-${part("month")}-${part("day")}`;
+    const status = dueAt < today ? "overdue" : dueAt === today ? "due today" : "upcoming";
+    return `due ${dueAt} (date only; ${status})`;
+  }
+  return `due ${local(dueAt, context)}${Date.parse(dueAt) < context.now.getTime() ? " (past the reported due time)" : ""}`;
+}
 const commitmentKind = (source: Source): boolean => ["goal", "follow-up", "reminder"].includes(source.kind);
 const closed = (source: Source): boolean => /^(done|completed|complete|closed|cancelled|canceled|archived|dismissed|resolved)$/iu.test(source.status ?? "");
 const open = (source: Source): boolean => /^(open|active|pending|in[-_ ]progress|todo|scheduled|overdue|blocked)$/iu.test(source.status ?? "");
@@ -195,7 +217,7 @@ function render(meeting: Meeting, packet: Packet, context: AgentFeatureContext):
   const commitments = packet.sources.map((source, index) => ({ source, ref: `S${index + 1}` })).filter(({ source }) => commitmentKind(source) && !closed(source));
   const knownOpen = commitments.filter(({ source }) => open(source));
   if (!knownOpen.length) lines.push("No explicitly open commitments in the matched sources. This is not a complete task inventory.");
-  for (const { source, ref } of knownOpen) lines.push(`• [${ref}] ${oneLine(source.title, 140)} — ${source.dueAt ? `due ${local(source.dueAt, context)}${Date.parse(source.dueAt) < context.now.getTime() ? " (past the reported due time)" : ""}` : "due time not supplied"}`);
+  for (const { source, ref } of knownOpen) lines.push(`• [${ref}] ${oneLine(source.title, 140)} — ${dueLabel(source.dueAt, context)}`);
   const unknown = commitments.filter(({ source }) => !open(source));
   for (const { source, ref } of unknown) lines.push(`• [${ref}] Verify status: ${oneLine(source.title, 140)} — not classified as open because its status is unknown/unrecognized.`);
   lines.push("", "Proposed agenda — suggestions, not established facts", "1. Confirm the meeting purpose and desired decision/output [M].");

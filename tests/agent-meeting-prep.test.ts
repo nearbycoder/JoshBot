@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import defaultFeature, { feature } from "../lib/agent-features/meeting-prep.js";
-import type { AgentContextItem, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
+import type { AgentContextItem, AgentFeatureContext, AgentFeatureServices, AgentFeatureStore } from "../lib/agent-features/types.js";
+import { runAgentFeature } from "../lib/agent-features/runtime.js";
+import { createAgentFeatureStore, type AgentStateBackend } from "../lib/agent-features/store.js";
+import { runFeature, type Entry } from "../lib/toolbox/core.js";
+import { goals } from "../lib/toolbox/goals.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
 
 type Saved = {
@@ -9,7 +15,7 @@ type Saved = {
   meetings: {
     id: string; revision: number; details: string;
     notes: { id: string; text: string }[];
-    packets: { number: number; revision: number; notes: { id: string; text: string }[]; sources: AgentContextItem[]; scanned: number }[];
+    packets: { number: number; revision: number; capturedAt: string; notes: { id: string; text: string }[]; sources: AgentContextItem[]; scanned: number }[];
   }[];
 };
 const owner = (id: string, kind: AgentContextItem["kind"], title: string, text: string, extra: Partial<AgentContextItem> = {}): AgentContextItem => ({ id, kind, title, text, ...extra });
@@ -31,6 +37,180 @@ function frozen<T>(value: T): T {
   if (value && typeof value === "object") { Object.freeze(value); for (const item of Object.values(value)) frozen(item); }
   return value;
 }
+
+async function productionFixture() {
+  // Isolated feature branches predate the shared adapters. Point this variable
+  // at a read-only integrated checkout there; integrated CI uses its own modules.
+  const base = process.env.JOSHBOT_AGENT_TEST_ROOT
+    ? pathToFileURL(resolve(process.env.JOSHBOT_AGENT_TEST_ROOT, "lib/agent-features") + "/")
+    : new URL("../lib/agent-features/", import.meta.url);
+  type Owner = { teamId: string; userId: string; channelId: string };
+  type Factory = (backend: AgentStateBackend, who: Owner, signal: AbortSignal,
+    request: { now: Date; timezone: string; featureId: string },
+    adapters: { readOwnerIndex(key: string): Promise<string[]>; authorizeChannel(): Promise<void> }) => AgentFeatureServices;
+  const { createAgentFeatureServices } = await import(new URL("services.ts", base).href) as { createAgentFeatureServices: Factory };
+  const who = { teamId: "TMEETING", userId: "UMEETING", channelId: "CMEETING" };
+  const now = new Date("2026-10-22T15:00:00Z"), timezone = "America/Chicago";
+  const data = new Map<string, string>(), indexes = new Map<string, string[]>();
+  const backend: AgentStateBackend = {
+    get: async key => data.get(key) ?? null,
+    compareSet: async (key, previous, next) => {
+      if ((data.get(key) ?? null) !== previous) return false;
+      data.set(key, next); return true;
+    },
+  };
+  const services = (at = now, zone = timezone): AgentFeatureServices => ({
+    ...createAgentFeatureServices(backend, who, new AbortController().signal,
+      { now: at, timezone: zone, featureId: feature.id }, {
+        readOwnerIndex: async key => indexes.get(key) ?? [], authorizeChannel: async () => {},
+      }),
+    generate: async () => { assert.fail("unexpected inference"); },
+    search: async () => { assert.fail("unexpected web search"); },
+  });
+  const store = createAgentFeatureStore(backend, who, feature.id);
+  const toolboxKey = `nobo:toolbox:v1:${who.teamId}:${who.userId}:goals`;
+  const goalEntries = (): Entry[] => JSON.parse(data.get(toolboxKey)!).entries;
+  const goal = async (title: string, due: string): Promise<string> => {
+    assert.match(await runFeature(goals, `create ${title} | 10 | tasks | ${due}`, who, undefined, backend, now), /Due /u);
+    return goalEntries().at(-1)!.id;
+  };
+  return { data, indexes, backend, who, now, toolboxKey, goal, services,
+    state: async () => (await store.read<Saved>("packets"))!,
+    run: (command: string, at = now, zone = timezone) => runAgentFeature(feature, command, who, {
+      backend, now: at, timezone: zone, services: services(at, zone),
+    }),
+  };
+}
+
+test("real toolbox goal deadlines survive production context, services, runtime, stored packets and history", async () => {
+  const f = await productionFixture();
+  const pastId = await f.goal("Atlas pending", "2026-10-21");
+  await f.goal("Atlas today", "2026-10-22");
+  await f.goal("Atlas future", "2026-10-23");
+  // This calls the real readAgentOwnedContext via the production service factory.
+  const raw = await f.services().readContext(["goal"]);
+  assert.deepEqual(raw.map(source => [source.dueAt, source.status]), [
+    ["2026-10-21", "open"], ["2026-10-22", "open"], ["2026-10-23", "open"],
+  ]);
+  const originalGoals = f.data.get(f.toolboxKey);
+  const reply = await f.run("prepare Atlas meeting | purpose: Review Atlas commitments");
+  assert.match(reply, /Atlas pending — due 2026-10-21 \(date only; overdue\)/u);
+  assert.match(reply, /Atlas today — due 2026-10-22 \(date only; due today\)/u);
+  assert.match(reply, /Atlas future — due 2026-10-23 \(date only; upcoming\)/u);
+  const state = await f.state(), id = state.meetings[0].id;
+  assert.equal(state.schema, 1);
+  assert.deepEqual(state.meetings[0].packets[0].sources.map(source => source.dueAt).sort(), ["2026-10-21", "2026-10-22", "2026-10-23"]);
+  assert.equal(await f.run(`show ${id}`), reply);
+  assert.equal(f.data.get(f.toolboxKey), originalGoals);
+
+  assert.match(await runFeature(goals, `due ${pastId} | 2026-10-30`, f.who, undefined, f.backend, f.now), /Due 2026-10-30/u);
+  const revisedGoals = f.data.get(f.toolboxKey);
+  const refreshed = await f.run(`refresh ${id}`);
+  assert.match(refreshed, /packet 2/u);
+  assert.match(refreshed, /Atlas pending — due 2026-10-30 \(date only; upcoming\)/u);
+  assert.match(await f.run(`show ${id} 1`), /Atlas pending — due 2026-10-21 \(date only; overdue\)/u);
+  assert.equal(await f.run(`show ${id}`), refreshed);
+  const packets = (await f.state()).meetings[0].packets;
+  assert.equal(packets[0].sources.find(source => source.id === `toolbox:goals:${pastId}`)?.dueAt, "2026-10-30");
+  assert.equal(packets[1].sources.find(source => source.id === `toolbox:goals:${pastId}`)?.dueAt, "2026-10-21");
+  assert.equal(f.data.get(f.toolboxKey), revisedGoals);
+});
+
+test("date-only deadlines follow the request civil date across timezones while instants keep exact due times", async () => {
+  const f = await productionFixture();
+  await f.goal("Atlas previous day", "2026-10-21");
+  await f.goal("Atlas next day", "2026-10-22");
+  f.indexes.set(`follow-ups:user:${f.who.userId}`, ["instant"]);
+  f.data.set("follow-ups:record:instant", JSON.stringify({
+    id: "instant", teamId: f.who.teamId, channel: f.who.channelId, createdByUserId: f.who.userId,
+    task: "Atlas precise deadline", status: "open", createdAt: f.now.toISOString(), dueAt: "2026-10-22T00:00:00Z",
+  }));
+  const now = new Date("2026-10-22T00:30:00Z");
+  const reply = await f.run("prepare Atlas meeting | Review Atlas deadlines", now);
+  assert.match(reply, /Atlas previous day — due 2026-10-21 \(date only; due today\)/u);
+  assert.match(reply, /Atlas next day — due 2026-10-22 \(date only; upcoming\)/u);
+  assert.match(reply, /Atlas precise deadline — due Oct 21, 2026, 19:00 CDT \(past the reported due time\)/u);
+  const before = await f.state(), id = before.meetings[0].id;
+  assert.equal(before.meetings[0].packets[0].sources.find(source => source.id === "follow-up:instant")?.dueAt, "2026-10-22T00:00:00.000Z");
+  const tokyo = await f.run(`show ${id}`, now, "Asia/Tokyo");
+  assert.match(tokyo, /Atlas previous day — due 2026-10-21 \(date only; overdue\)/u);
+  assert.match(tokyo, /Atlas next day — due 2026-10-22 \(date only; due today\)/u);
+  assert.match(tokyo, /Atlas precise deadline — due Oct 22, 2026, 09:00 GMT\+9 \(past the reported due time\)/u);
+  assert.deepEqual(await f.state(), before, "viewing in another timezone must not rewrite source dates");
+});
+
+test("impossible production goal dates reject without replacing the saved preparation", async () => {
+  const f = await productionFixture();
+  const goalId = await f.goal("Atlas leap deadline", "2028-02-29");
+  assert.match(await f.run("prepare Atlas | Review Atlas deadlines"), /due 2028-02-29 \(date only; upcoming\)/u);
+  const before = await f.state(), id = before.meetings[0].id;
+  const validGoals = f.data.get(f.toolboxKey)!;
+  for (const due of ["2026-02-29", "2026-04-31", "2026-13-01", "2026-10-22T10:00:00"]) {
+    assert.match(await runFeature(goals, `due ${goalId} | ${due}`, f.who, undefined, f.backend, f.now), /real date/u);
+    assert.equal(f.data.get(f.toolboxKey), validGoals, "toolbox rejects invalid user-entered calendar dates");
+    // Corrupt-source failures must also remain fail-closed through the adapter.
+    const corrupt = JSON.parse(validGoals) as { entries: Entry[] };
+    corrupt.entries[0].data.due = due;
+    f.data.set(f.toolboxKey, JSON.stringify(corrupt));
+    await assert.rejects(() => f.services().readContext(["goal"]), /could not be read completely/u);
+    assert.match(await f.run(`refresh ${id}`), /Owner context is unavailable/u);
+    assert.deepEqual(await f.state(), before);
+    f.data.set(f.toolboxKey, validGoals);
+  }
+  assert.match(await f.run(`show ${id}`), /due 2028-02-29 \(date only; upcoming\)/u);
+});
+
+test("calendar labels validate Gregorian dates in incoming and persisted deadlines without broadening timestamps", async () => {
+  for (const dueAt of ["2000-02-29", "2024-02-29", "2026-10-22", "2028-02-29"]) {
+    const context = createAgentTestContext();
+    context.services.readContext = async () => [owner("dated", "goal", "Atlas deadline", "Check the deadline.", { dueAt, updatedAt: "2026-10-21", status: "open" })];
+    const id = await prepare(context);
+    const state = await saved(context), packet = state.meetings[0].packets[0];
+    assert.equal(packet.sources[0].dueAt, dueAt);
+    assert.equal(packet.sources[0].updatedAt, undefined, "updatedAt still requires an instant");
+    assert.equal(packet.capturedAt, context.now.toISOString());
+    assert.match(await run(`show ${id}`, context), /date only/u);
+    for (const field of ["capturedAt", "updatedAt"] as const) {
+      const corrupt = structuredClone(state);
+      if (field === "capturedAt") corrupt.meetings[0].packets[0].capturedAt = "2026-10-22";
+      else corrupt.meetings[0].packets[0].sources[0].updatedAt = "2026-10-22";
+      await context.store.update("packets", null, () => ({ value: corrupt, result: undefined }));
+      assert.match(await run(`show ${id}`, context), /Saved meeting-prep data is invalid/u);
+      assert.deepEqual(await saved(context), corrupt);
+    }
+  }
+  for (const dueAt of ["1900-02-29", "2026-02-29", "2026-04-31", "2026-00-10", "2026-13-01", "2026-10-00", "2026-10-32", "2026-2-01", "2026-10-22T10:00:00", " 2026-10-21", "yesterday"]) {
+    const context = createAgentTestContext();
+    context.services.readContext = async () => [owner("dated", "goal", "Atlas deadline", "No trustworthy date supplied.", { dueAt, status: "open" })];
+    const id = await prepare(context);
+    const state = await saved(context);
+    assert.equal(state.meetings[0].packets[0].sources[0].dueAt, undefined, dueAt);
+    assert.match(await run(`show ${id}`, context), /due time not supplied/u);
+    state.meetings[0].packets[0].sources[0].dueAt = dueAt;
+    await context.store.update("packets", null, () => ({ value: state, result: undefined }));
+    assert.match(await run(`show ${id}`, context), /Saved meeting-prep data is invalid/u);
+    assert.deepEqual(await saved(context), state);
+  }
+});
+
+test("existing schema-1 timestamp and undated snapshots remain readable alongside refreshed calendar deadlines", async () => {
+  const context = createAgentTestContext();
+  context.services.readContext = async () => [
+    owner("instant", "goal", "Atlas timestamp", "Old source.", { dueAt: "2026-10-21T19:00:00Z", status: "open" }),
+    owner("undated", "goal", "Atlas undated", "Old source with no saved deadline.", { status: "open" }),
+  ];
+  const id = await prepare(context), old = await saved(context);
+  const restored = createAgentTestContext();
+  await restored.store.update("packets", null, () => ({ value: old, result: undefined }));
+  const prior = await run(`show ${id}`, restored);
+  assert.match(prior, /Atlas timestamp — due Oct 21, 2026, 14:00 CDT \(past the reported due time\)/u);
+  assert.match(prior, /Atlas undated — due time not supplied/u);
+  restored.services.readContext = async () => [owner("undated", "goal", "Atlas undated", "Now supplies a calendar date.", { dueAt: "2026-10-21", status: "open" })];
+  assert.match(await run(`refresh ${id}`, restored), /due 2026-10-21 \(date only; overdue\)/u);
+  assert.equal((await saved(restored)).schema, 1);
+  assert.deepEqual((await saved(restored)).meetings[0].packets[1], old.meetings[0].packets[0]);
+  assert.match(await run(`show ${id} 1`, restored), /Atlas undated — due time not supplied/u);
+});
 
 test("exports the assigned contract, and help/empty/invalid commands need no context or inference", async () => {
   assert.equal(defaultFeature, feature);
