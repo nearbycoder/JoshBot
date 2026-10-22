@@ -144,7 +144,16 @@ test("malformed JSON, unsupported versions and domain-invalid state never reset 
   const fixture = createAgentFeatureFixture(feature);
   for (const raw of ["{broken", "null", '{"version":2,"records":[]}', '{"version":1,"records":"broken"}']) {
     fixture.backend.data.set(fixture.key("state"), raw);
-    await assert.rejects(fixture.run("new value"));
+    const before = { ...fixture.backend.calls };
+    if (raw === "{broken" || raw === "null") {
+      const reply = await fixture.run("new value");
+      assert.match(reply, /could not be read safely/);
+      assert.match(reply, /operator.*state-recovery\.md/);
+      assert.doesNotMatch(reply, /No saved|\{broken|Next: .*list/);
+      assert.equal(fixture.backend.calls.gets, before.gets + 1);
+    } else await assert.rejects(fixture.run("new value"));
+    assert.equal(fixture.backend.calls.compareSets, before.compareSets);
+    assert.deepEqual(fixture.calls, { generate: 0, search: 0, readContext: 0 });
     assert.equal(fixture.backend.data.get(fixture.key("state")), raw);
     assert.equal(await fixture.run("help"), feature.help);
   }

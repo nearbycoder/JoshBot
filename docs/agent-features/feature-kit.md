@@ -82,6 +82,8 @@ assertQuota(value: unknown, check: QuotaCheck): void;
 
 `assertStateVersion` checks **only the version envelope**. Always validate the complete feature schema, stable/unique IDs, dates, statuses, revisions, and nested values afterward, including before deletion. Never recover malformed JSON/state by substituting an empty initial state. The actual store uses `initial` only for an absent key.
 
+Present JSON null and invalid JSON raise a typed store diagnosis; the runtime preserves it across feature catch/fallback paths and returns actionable private guidance. Ordinary commands cannot repair unreadable state. See the [scoped operator recovery procedure](state-recovery.md) for the exact-value, backup-before-CAS policy and its limits.
+
 ```ts
 return context.store.update("state", initialState, raw => {
   assertStateVersion(raw, 1);

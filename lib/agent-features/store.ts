@@ -8,6 +8,16 @@ export interface AgentStateBackend {
   compareSet(key: string, previous: string | null, next: string, ttlSeconds?: number): Promise<boolean>;
 }
 
+/** Present unreadable bytes are never the read<T>() absence sentinel. No raw data is retained. */
+export class AgentStateCorruptionError extends Error {
+  override readonly name = "AgentStateCorruptionError";
+  readonly scope: Readonly<{ teamId: string; userId: string; featureId: string; key: string }>;
+  constructor(scope: { teamId: string; userId: string; featureId: string; key: string }, readonly reason: "stored-null" | "invalid-json") {
+    super(`Saved data for ${scope.featureId} could not be read safely in your workspace/user scope (${reason === "stored-null" ? "stored JSON null" : "invalid JSON"}). No automatic repair was attempted. Contact the app operator for the scoped recovery procedure in docs/agent-features/state-recovery.md. Ordinary commands cannot repair this state; help remains available. Any earlier dispatched save may have completed.`);
+    this.scope = Object.freeze({ ...scope });
+  }
+}
+
 const CAS = `
 local old=redis.call('GET',KEYS[1])
 if ARGV[1]=='missing' then
@@ -57,9 +67,16 @@ export function createAgentFeatureStore(
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(key)) throw new Error("Invalid personal agent storage key.");
     return prefix + key;
   };
-  const parse = <T>(raw: string): T => {
+  const parse = <T>(raw: string, key: string, stored = true): T => {
     if (Buffer.byteLength(raw) > 512_000) throw new Error("Personal agent data exceeds the storage limit.");
-    return JSON.parse(raw) as T;
+    let value: unknown;
+    try { value = JSON.parse(raw); }
+    catch (error) {
+      if (!stored) throw error;
+      throw new AgentStateCorruptionError({ teamId: owner.teamId, userId: owner.userId, featureId, key }, "invalid-json");
+    }
+    if (stored && value === null) throw new AgentStateCorruptionError({ teamId: owner.teamId, userId: owner.userId, featureId, key }, "stored-null");
+    return value as T;
   };
   return {
     async read<T>(key: string) {
@@ -67,7 +84,7 @@ export function createAgentFeatureStore(
       if (++reads > budgets.storeReads) throw new Error(`This command reached its limit of ${budgets.storeReads} state reads.`);
       const raw = await contextRead(signal, () => backend.get(scopedKey(key)));
       signal?.throwIfAborted();
-      return raw === null ? null : parse<T>(raw);
+      return raw === null ? null : parse<T>(raw, key);
     },
     async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
       signal?.throwIfAborted();
@@ -77,7 +94,7 @@ export function createAgentFeatureStore(
         signal?.throwIfAborted();
         const previous = await contextRead(signal, () => backend.get(fullKey));
         signal?.throwIfAborted();
-        const current = parse<T>(previous ?? JSON.stringify(initial));
+        const current = parse<T>(previous ?? JSON.stringify(initial), key, previous !== null);
         const next = transform(current);
         if (!next || typeof next !== "object" || !("value" in next)) throw new Error("Invalid personal agent state update.");
         const encoded = JSON.stringify(next.value);
