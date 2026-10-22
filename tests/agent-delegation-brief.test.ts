@@ -49,7 +49,7 @@ test("complete Unicode detail pages and final list item remain accessible at lim
   const r=await record(f,id); assert.equal(r.entries.length,20);
   assert.match(await f.run(`resource ${id} | excess`),/Maximum 20/);
   let command=`show ${id}`, replies="", count=0;
-  do { const reply=await f.run(command); assert.ok(reply.length<=3500); replies+=reply; const next=/Next: \/nobo-help agent delegation-brief (show \S+ \d+)/.exec(reply); command=next?.[1]??""; count++; }while(command&&count<30);
+  do { const reply=await f.run(command); assert.ok(reply.length<=3500); replies+=reply; const next=/Next: \/nobo-help agent delegation-brief (show [^\n]+)/.exec(reply); command=next?.[1]??""; count++; }while(command&&count<30);
   assert.ok(count>1); assert.ok(replies.includes(r.entries[19].id)); assert.ok(replies.includes(JSON.stringify(r.entries[19].text).slice(1,-1)));
   for(let i=1;i<12;i++) await f.run(`create Short ${i} | Label | Outcome`);
   assert.match(await f.run("list 2"),/11–12 of 12/); assert.match(await f.run(first),/Maximum 12/);
@@ -146,4 +146,43 @@ test("coercible persisted enums reject reads, renders, mutations and confirmed d
     }
   }
   assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("actual saved/report continuations recover complete data and reject edits, including revision-ceiling removals", async () => {
+  const f = createAgentFeatureFixture(feature), id = await create(f);
+  for (let i=0;i<7;i++) await f.run(`scope ${id} | in | ${i} ${"漢😀".repeat(120)}`);
+  const commands = [`show ${id}`, `draft ${id}`];
+  for (const command of commands) {
+    let next = command, body = "", count = 0, firstContinuation = "";
+    do {
+      const reply = await f.run(next); assert.ok(reply.length <= 3500); assert.ok(reply.isWellFormed());
+      const header = /\nPage (\d+)\/(\d+)\n/.exec(reply); assert.ok(header, reply);
+      assert.equal(Number(header[1]), ++count);
+      const more = Number(header[1]) < Number(header[2]);
+      const footer = more ? /\nNext: \/nobo-help agent delegation-brief ([^\n]+)$/.exec(reply) : null;
+      assert.ok(!more || footer, reply);
+      body += reply.slice(header.index + header[0].length, footer?.index);
+      next = footer?.[1] ?? "";
+      if (next) { assert.match(next, / rev [1-9]\d*-[a-f0-9]{64}$/); firstContinuation ||= next; }
+      assert.ok(count < 100);
+    } while (next);
+    if (command.startsWith("show ")) assert.deepEqual(JSON.parse(body), JSON.parse(await f.run(`export ${id}`)));
+    // A short report still accepts and validates the same saved revision token.
+    if (!firstContinuation) {
+      const show = await f.run(`show ${id}`), token = / rev ([1-9]\d*-[a-f0-9]{64})/.exec(show); assert.ok(token);
+      firstContinuation = `${command} 1 rev ${token[1]}`;
+    }
+    assert.match(await f.run(`edit ${id} | title | Changed ${count}`), /^Saved/);
+    const rejected = await f.run(firstContinuation);
+    assert.match(rejected, /changed; stale continuation rejected.*Restart page 1/);
+    const restart = /Restart page 1: \/nobo-help agent delegation-brief ([^\n]+)/.exec(rejected); assert.ok(restart);
+    assert.match(await f.run(restart[1]), /Page 1\//);
+  }
+  const state = await f.store().read<any>("state"); state.records[0].revision = 999_999_999;
+  f.backend.data.set(f.key("state"), JSON.stringify(state));
+  const page = await f.run(`show ${id}`), issued = /\nNext: \/nobo-help agent delegation-brief ([^\n]+)$/.exec(page); assert.ok(issued);
+  assert.match(await f.run(`clear ${id} title confirm`), /^Saved/);
+  assert.equal((await record(f,id)).revision, 999_999_999);
+  assert.match(await f.run(issued[1]), /stale continuation rejected/);
+  assert.match(await f.run(`show ${id} 1 rev invalid`), /Invalid revision token/);
 });

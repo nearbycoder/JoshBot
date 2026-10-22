@@ -8,9 +8,9 @@ Start: `/nobo-help agent feedback-builder create Review handoff | Monday plannin
 - `inference ID | INTERPRETATION` adds an explicitly unverified interpretation. `reclassify ID confirm` moves current behavior text intact into an interpretation and clears behavior; it does not guess or upgrade an interpretation to an observation.
 - `interpretation ID edit INFERENCE | TEXT` replaces that text; `interpretation ID remove INFERENCE confirm` removes it.
 - `edit ID | title/situation/behavior/impact/request/positive | TEXT` replaces a field; `clear ID FIELD confirm` removes it.
-- `check ID [page]` lists missing core fields and quoted lexical matches. `draft ID [page]` renders the deterministic template, separate interpretations and check results.
+- `check ID [page [rev REV]]` lists missing core fields and quoted lexical matches. `draft ID [page [rev REV]]` renders the deterministic template, separate interpretations and check results.
 - `polish ID` requests one unsaved respectful rewrite. Exact source references and quotations must validate; behavior and inference text must equal the original quotation, keeping those distinctions intact. Other suggested text needs human review for added meaning. No diagnoses, motives, events or commitments are requested.
-- `list [page]`, `show ID [page]`, `export ID`, `delete ID confirm` retrieve/remove complete saved records. Delete without confirmation displays the exact confirmation command.
+- `list [page]`, `show ID [page [rev REV]]`, `export ID`, `delete ID confirm` retrieve/remove complete saved records. Delete without confirmation displays the exact confirmation command.
 
 The transparent, case-insensitive lexical rules flag absolute words `always`, `never`, `everyone`, `nobody`, `nothing`; possible interpretation/motive phrases `lazy`, `careless`, `deliberately`, `on purpose`, `don't care`/`don’t care`, `doesn't care`/`doesn’t care`, `trying to`; and vague request phrases `be better`, `do better`, `improve`, `communicate better`, `be professional`, `be proactive`, `try harder`. Matches quote the exact entered case/text. These are heuristics, not proof of intent, personality, truth or observability. No match is not verification. Missing behavior specifically calls for an observable example.
 
@@ -27,3 +27,5 @@ Every loaded state is schema checked; CAS transforms enforce quotas and use IDs/
 `tests/agent-feedback-builder.test.ts` verifies exact catalog workflow and original observation/motive strings, lexical matches, all editing/removal, final interpretation retrieval, Unicode quota recovery, optional output validation and stale work. Tests use the real runtime/scoped store with fake/throwing services. Parent owns registration, independent review and deployment; no production result is claimed.
 
 Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.
+
+Every saved-record and derived-report continuation includes `PAGE rev REV`. Copy the whole emitted command: REV combines the record revision with a content stamp, including at the revision ceiling. A mismatch rejects before rendering and gives a fresh page-1 command. Existing first-page commands and manually entered page numbers still render the current record; root lists are recomputed. No unsaved model output uses pagination.

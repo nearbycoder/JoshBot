@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 import { boundedText, pipeFields, parseInteger, parsePage, paginateParts, pageAt } from "./feature-kit/command-and-display.js";
 import { assertQuota, assertStateVersion, serializedBytes } from "./feature-kit/bounded-state.js";
@@ -124,10 +124,10 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
     return mutate(context, id, (_, r) => { attempt(card(r!, cardId), attemptId).rating = rating; return saved(id, rating === null ? "Self-rating cleared." : `Your self-rating ${rating}/5 saved; this is not an objective score.`, `review ${id} ${cardId}`); }, "lifecycle");
   }
   if (verb === "prepare" || verb === "review") {
-    const args = words(rest, verb === "review" ? 2 : 1, verb === "review" ? 3 : 2), r = find(await read(context), args[0]);
-    if (verb === "prepare") return report(prepareLines(r), `prepare ${r.id}`, checked(() => parsePage(args[1])), `Private · rehearsal preparation · ${r.id} · revision ${r.revision}`);
-    const c = card(r, args[1]); if (!c.attempts.length) fail(`Record an attempt before review.\nNext practice: ${ROUTE} practice ${r.id} ${c.id}`);
-    return report(reviewLines(r, c), `review ${r.id} ${c.id}`, checked(() => parsePage(args[2])), `Private · rehearsal review · ${r.id} · revision ${r.revision}`);
+    const args = words(rest, verb === "review" ? 2 : 1, verb === "review" ? 5 : 4), r = find(await read(context), args[0]);
+    if (verb === "prepare") return report(prepareLines(r), `prepare ${r.id}`, recordPage(r, `prepare ${r.id}`, args.slice(1)), `Private · rehearsal preparation · ${r.id} · revision ${r.revision}`, pageVersion(r));
+    const page = recordPage(r, `review ${r.id} ${args[1]}`, args.slice(2)), c = card(r, args[1]); if (!c.attempts.length) fail(`Record an attempt before review.\nNext practice: ${ROUTE} practice ${r.id} ${c.id}`);
+    return report(reviewLines(r, c), `review ${r.id} ${c.id}`, page, `Private · rehearsal review · ${r.id} · revision ${r.revision}`, pageVersion(r));
   }
   if (verb === "simulate") {
     const [id, value] = fields(rest, 80, 1000), objection = text(value, "Hypothetical objection", 1000), r = find(await read(context), id);
@@ -274,11 +274,24 @@ function base(context: AgentFeatureContext, prefix: string, title: string) {
 function saved(id: string, detail: string, next = `show ${id}`): string {
   return `Saved privately: ${id}\n${detail}\nNext: ${ROUTE} ${next}`;
 }
-function view(parts: { text: string; atomic?: boolean }[], command: string, page = 1, title = "Private · unsaved report"): string {
-  return checked(() => pageAt(paginateParts(parts, { mode: "plain", title, command: n => `${ROUTE} ${command} ${n}` }), page).text);
+// A content stamp keeps removals at the revision ceiling distinguishable too.
+function pageVersion(record: RecordData): string {
+  return `${record.revision}-${createHash("sha256").update(JSON.stringify(record)).digest("hex")}`;
 }
-function report(lines: string[], command: string, page = 1, title?: string): string {
-  return view(lines.map(line => ({ text: `${line}\n`, atomic: true })), command, page, title);
+function recordPage(record: RecordData, command: string, args: string[]): number {
+  if (args.length !== 0 && args.length !== 1 && args.length !== 3) fail("Use PAGE rev REV from the emitted continuation, or restart page 1.");
+  const page = checked(() => parsePage(args[0]));
+  if (args.length === 3) {
+    if (args[1] !== "rev" || !/^[1-9]\d{0,8}-[a-f0-9]{64}$/.test(args[2])) fail("Invalid revision token. Copy the complete continuation or restart page 1.");
+    if (args[2] !== pageVersion(record)) fail(`This item changed; stale continuation rejected. Restart page 1: ${ROUTE} ${command} 1`);
+  }
+  return page;
+}
+function view(parts: { text: string; atomic?: boolean }[], command: string, page = 1, title = "Private · unsaved report", revision?: string): string {
+  return checked(() => pageAt(paginateParts(parts, { mode: "plain", title, command: n => `${ROUTE} ${command} ${n}${revision ? ` rev ${revision}` : ""}` }), page).text);
+}
+function report(lines: string[], command: string, page = 1, title?: string, revision?: string): string {
+  return view(lines.map(line => ({ text: `${line}\n`, atomic: true })), command, page, title, revision);
 }
 async function common(verb: string, rest: string, context: AgentFeatureContext): Promise<string | undefined> {
   if (verb === "list") {
@@ -290,7 +303,7 @@ async function common(verb: string, rest: string, context: AgentFeatureContext):
     return `Private · current list · page ${page}/${total} · ${(page - 1) * 10 + 1}–${Math.min(page * 10, state.records.length)} of ${state.records.length}\n${rows.join("\n")}\nNext: ${ROUTE} ${page < total ? `list ${page + 1}` : `show ${state.records[(page - 1) * 10].id}`}`;
   }
   if (verb === "show" || verb === "export") {
-    const args = words(rest, 1, verb === "show" ? 2 : 1), record = find(await read(context), args[0]);
+    const args = words(rest, 1, verb === "show" ? 4 : 1), record = find(await read(context), args[0]);
     if (verb === "export") {
       const result = JSON.stringify(envelope(record));
       if (serializedBytes(envelope(record)) > 24_576) fail(`This legacy record exceeds the export ceiling. Retrieve all parts with show ${record.id}.`);
@@ -298,8 +311,8 @@ async function common(verb: string, rest: string, context: AgentFeatureContext):
     }
     const json = JSON.stringify(envelope(record), null, 2);
     // Every field is <=1000 UTF-8 bytes (<=2000 serialized units with escapes); IDs and JSON lines stay intact.
-    return view(json.split("\n").map(line => ({ text: line + "\n", atomic: true })), `show ${record.id}`, checked(() => parsePage(args[1])),
-      `Saved privately: ${record.id} · revision ${record.revision} · current data; restart page 1 if revision changes`);
+    return view(json.split("\n").map(line => ({ text: line + "\n", atomic: true })), `show ${record.id}`, recordPage(record, `show ${record.id}`, args.slice(1)),
+      `Saved privately: ${record.id} · revision ${record.revision}`, pageVersion(record));
   }
   if (verb === "delete") {
     const args = words(rest, 1, 2);

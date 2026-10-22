@@ -30,7 +30,7 @@ test("all fields and labeled interpretations can be edited and cleared; bad inpu
 test("final retained interpretation is recoverable and near-quota Unicode remains renderable/deletable",async()=>{
  const f=createAgentFeatureFixture(feature),id=await create(f);for(let i=0;i<20;i++)await f.run(`inference ${id} | ${i} ${"🧭".repeat(220)}`);
  const r=await record(f,id);assert.equal(r.inferences.length,20);assert.match(await f.run(`inference ${id} | too many`),/Maximum 20/);
- let cmd=`show ${id}`,output="",n=0;do{const reply=await f.run(cmd);assert.ok(reply.length<=3500);output+=reply;cmd=/Next: \/nobo-help agent feedback-builder (show \S+ \d+)/.exec(reply)?.[1]??"";n++;}while(cmd&&n<30);
+ let cmd=`show ${id}`,output="",n=0;do{const reply=await f.run(cmd);assert.ok(reply.length<=3500);output+=reply;cmd=/Next: \/nobo-help agent feedback-builder (show [^\n]+)/.exec(reply)?.[1]??"";n++;}while(cmd&&n<30);
  assert.ok(output.includes(r.inferences[19].text));assert.ok(output.includes(r.inferences[19].id));
  const id2=await create(f);let full=false;for(let i=0;i<20;i++){const raw=f.backend.data.get(f.key("state"));const reply=await f.run(`inference ${id2} | ${"漢".repeat(320)}`);if(!reply.startsWith("Saved")){assert.match(reply,/quota/);assert.equal(f.backend.data.get(f.key("state")),raw);full=true;break;}}assert.ok(full);
  assert.match(await f.run(`check ${id2}`),/Lexical heuristics/);assert.match(await f.run(`delete ${id2} confirm`),/^Deleted/);
@@ -81,4 +81,43 @@ test("mutation intent rejects same-record races, preserves deletions, and retrie
     }
     assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
   }
+});
+
+test("actual saved/report continuations recover complete data and reject edits, including revision-ceiling removals", async () => {
+  const f = createAgentFeatureFixture(feature), id = await create(f);
+  for (let i=0;i<7;i++) await f.run(`inference ${id} | ${i} ${"漢😀".repeat(120)}`);
+  const commands = [`show ${id}`, `draft ${id}`, `check ${id}`];
+  for (const command of commands) {
+    let next = command, body = "", count = 0, firstContinuation = "";
+    do {
+      const reply = await f.run(next); assert.ok(reply.length <= 3500); assert.ok(reply.isWellFormed());
+      const header = /\nPage (\d+)\/(\d+)\n/.exec(reply); assert.ok(header, reply);
+      assert.equal(Number(header[1]), ++count);
+      const more = Number(header[1]) < Number(header[2]);
+      const footer = more ? /\nNext: \/nobo-help agent feedback-builder ([^\n]+)$/.exec(reply) : null;
+      assert.ok(!more || footer, reply);
+      body += reply.slice(header.index + header[0].length, footer?.index);
+      next = footer?.[1] ?? "";
+      if (next) { assert.match(next, / rev [1-9]\d*-[a-f0-9]{64}$/); firstContinuation ||= next; }
+      assert.ok(count < 100);
+    } while (next);
+    if (command.startsWith("show ")) assert.deepEqual(JSON.parse(body), JSON.parse(await f.run(`export ${id}`)));
+    // A short report still accepts and validates the same saved revision token.
+    if (!firstContinuation) {
+      const show = await f.run(`show ${id}`), token = / rev ([1-9]\d*-[a-f0-9]{64})/.exec(show); assert.ok(token);
+      firstContinuation = `${command} 1 rev ${token[1]}`;
+    }
+    assert.match(await f.run(`edit ${id} | title | Changed ${count}`), /^Saved/);
+    const rejected = await f.run(firstContinuation);
+    assert.match(rejected, /changed; stale continuation rejected.*Restart page 1/);
+    const restart = /Restart page 1: \/nobo-help agent feedback-builder ([^\n]+)/.exec(rejected); assert.ok(restart);
+    assert.match(await f.run(restart[1]), /Page 1\//);
+  }
+  const state = await f.store().read<any>("state"); state.records[0].revision = 999_999_999;
+  f.backend.data.set(f.key("state"), JSON.stringify(state));
+  const page = await f.run(`show ${id}`), issued = /\nNext: \/nobo-help agent feedback-builder ([^\n]+)$/.exec(page); assert.ok(issued);
+  assert.match(await f.run(`clear ${id} title confirm`), /^Saved/);
+  assert.equal((await record(f,id)).revision, 999_999_999);
+  assert.match(await f.run(issued[1]), /stale continuation rejected/);
+  assert.match(await f.run(`show ${id} 1 rev invalid`), /Invalid revision token/);
 });

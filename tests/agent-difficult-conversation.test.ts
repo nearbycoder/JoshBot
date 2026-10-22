@@ -35,7 +35,7 @@ test("maximal card and final attempt remain accessible through bounded complete 
  const f=createAgentFeatureFixture(feature),id=await create(f);for(let i=0;i<12;i++)assert.match(await f.run(`objection ${id} add Objection ${i} | Prepared response ${i}`),/^Saved/);
  let r=await record(f,id);assert.equal(r.cards.length,12);assert.match(await f.run(`objection ${id} add Excess | Excess`),/Maximum 12/);
  const last=r.cards[11].id;for(let i=0;i<2;i++){await f.run(`practice ${id} ${last}`);await f.run(`respond ${id} | ${"🧭".repeat(80)}`);}r=await record(f,id);assert.equal(r.cards[11].attempts.length,2);
- let cmd=`show ${id}`,all="",n=0;do{const reply=await f.run(cmd);assert.ok(reply.length<=3500);all+=reply;cmd=/Next: \/nobo-help agent difficult-conversation (show \S+ \d+)/.exec(reply)?.[1]??"";n++;}while(cmd&&n<30);
+ let cmd=`show ${id}`,all="",n=0;do{const reply=await f.run(cmd);assert.ok(reply.length<=3500);all+=reply;cmd=/Next: \/nobo-help agent difficult-conversation (show [^\n]+)/.exec(reply)?.[1]??"";n++;}while(cmd&&n<30);
  assert.ok(all.includes(r.cards[11].attempts[1].id));assert.ok(all.includes(r.cards[11].attempts[1].text));assert.ok(Buffer.byteLength(await f.run(`export ${id}`))<=24576);
  assert.match(await f.run(`review ${id} ${last}`),/Prepared response 11/);
 });
@@ -102,4 +102,43 @@ test("mutation intent rejects same-record races, preserves deletions, and retrie
     }
     assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
   }
+});
+
+test("actual saved/report continuations recover complete data and reject edits, including revision-ceiling removals", async () => {
+  const f = createAgentFeatureFixture(feature), id = await create(f);
+  for (let i=0;i<5;i++) await f.run(`objection ${id} add ${i} ${"x".repeat(700)} | ${"y".repeat(500)}`); for (const field of ["boundary","concession","stop"]) await f.run(`${field} ${id} | ${"z".repeat(1000)}`); const c = (await record(f,id)).cards[0].id; await f.run(`practice ${id} ${c}`); await f.run(`respond ${id} | ${"r".repeat(320)}`);
+  const commands = [`show ${id}`, `prepare ${id}`, `review ${id} ${c}`];
+  for (const command of commands) {
+    let next = command, body = "", count = 0, firstContinuation = "";
+    do {
+      const reply = await f.run(next); assert.ok(reply.length <= 3500); assert.ok(reply.isWellFormed());
+      const header = /\nPage (\d+)\/(\d+)\n/.exec(reply); assert.ok(header, reply);
+      assert.equal(Number(header[1]), ++count);
+      const more = Number(header[1]) < Number(header[2]);
+      const footer = more ? /\nNext: \/nobo-help agent difficult-conversation ([^\n]+)$/.exec(reply) : null;
+      assert.ok(!more || footer, reply);
+      body += reply.slice(header.index + header[0].length, footer?.index);
+      next = footer?.[1] ?? "";
+      if (next) { assert.match(next, / rev [1-9]\d*-[a-f0-9]{64}$/); firstContinuation ||= next; }
+      assert.ok(count < 100);
+    } while (next);
+    if (command.startsWith("show ")) assert.deepEqual(JSON.parse(body), JSON.parse(await f.run(`export ${id}`)));
+    // A short report still accepts and validates the same saved revision token.
+    if (!firstContinuation) {
+      const show = await f.run(`show ${id}`), token = / rev ([1-9]\d*-[a-f0-9]{64})/.exec(show); assert.ok(token);
+      firstContinuation = `${command} 1 rev ${token[1]}`;
+    }
+    assert.match(await f.run(`edit ${id} | title | Changed ${count}`), /^Saved/);
+    const rejected = await f.run(firstContinuation);
+    assert.match(rejected, /changed; stale continuation rejected.*Restart page 1/);
+    const restart = /Restart page 1: \/nobo-help agent difficult-conversation ([^\n]+)/.exec(rejected); assert.ok(restart);
+    assert.match(await f.run(restart[1]), /Page 1\//);
+  }
+  const state = await f.store().read<any>("state"); state.records[0].revision = 999_999_999;
+  f.backend.data.set(f.key("state"), JSON.stringify(state));
+  const page = await f.run(`show ${id}`), issued = /\nNext: \/nobo-help agent difficult-conversation ([^\n]+)$/.exec(page); assert.ok(issued);
+  assert.match(await f.run(`clear ${id} title confirm`), /^Saved/);
+  assert.equal((await record(f,id)).revision, 999_999_999);
+  assert.match(await f.run(issued[1]), /stale continuation rejected/);
+  assert.match(await f.run(`show ${id} 1 rev invalid`), /Invalid revision token/);
 });

@@ -6,12 +6,12 @@ Start with `/nobo-help agent delegation-brief create Review onboarding | Reviewe
 
 - `scope ID | in/out | TEXT`, `resource ID | TEXT`, `checkpoint ID | YYYY-MM-DD | TEXT` add entries with stable IDs.
 - `authority ID | TEXT`, `done ID | TEXT` set decision rights and handoff acceptance tests.
-- `draft ID [page]` renders the complete unsent request and missing-field audit.
+- `draft ID [page [rev REV]]` renders the complete unsent request and missing-field audit.
 - `edit ID | title/recipient/outcome/authority/done | TEXT` replaces a field; `clear ID FIELD confirm` removes it.
 - `entry ID edit ENTRY | in/out/resource/checkpoint | YYYY-MM-DD-or-- | TEXT` replaces an entry; use `-` for a non-checkpoint date. `entry ID remove ENTRY confirm` removes it.
 - `accept ID confirm` records your report of acceptance locally; `unaccept ID confirm` clears it. Neither verifies agreement. Any content edit invalidates recorded acceptance.
 - `polish ID` optionally sends entered fields to the configured text model once. Output is unsaved and must contain every original field verbatim inside its referenced suggestion. Review added wording for meaning; validated references do not prove truth.
-- `list [page]`, `show ID [page]`, `export ID`, `delete ID confirm` inspect and remove complete records. Without `confirm`, delete only displays its exact confirmation command.
+- `list [page]`, `show ID [page [rev REV]]`, `export ID`, `delete ID confirm` inspect and remove complete records. Without `confirm`, delete only displays its exact confirmation command.
 
 Use `\|` for literal pipes and `\\` for backslashes. Unknown/trailing escapes and excess separators reject. Delimiter-adjacent whitespace is trimmed; accepted field content is otherwise retained. Recipients and URLs are inert plain text.
 
@@ -28,3 +28,5 @@ Acceptance evidence: `tests/agent-delegation-brief.test.ts` covers the exact fir
 Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.
 
 Persisted enum fields require exact strings: arrays, nested arrays and coercible objects are malformed. Reads, rendering, edits and even confirmed deletion preserve corrupt raw bytes for scoped recovery.
+
+Every saved-record and derived-report continuation includes `PAGE rev REV`. Copy the whole emitted command: REV combines the record revision with a content stamp, including at the revision ceiling. A mismatch rejects before rendering and gives a fresh page-1 command. Existing first-page commands and manually entered page numbers still render the current record; root lists are recomputed. No unsaved model output uses pagination.

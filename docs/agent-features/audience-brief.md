@@ -8,8 +8,8 @@ Start: `/nobo-help agent audience-brief create Pilot update`. Replace `ID`, `FAC
 - `audience ID add NAME | NEEDS | WORDS`, `audience ID edit AUDIENCE | NAME | NEEDS | WORDS`, `audience ID remove AUDIENCE confirm`.
 - `require ID AUDIENCE | FACT`, `unrequire ID AUDIENCE | FACT confirm`. Removing an audience-specific requirement does not override a fact's global required importance.
 - `lead ID | TEXT`, `ask ID | TEXT`, `edit ID | title/lead/ask | TEXT`, `clear ID FIELD confirm`.
-- `render ID AUDIENCE [page]` returns the unsent variant and coverage matrix. `polish ID AUDIENCE` optionally requests one unsaved compact narrative.
-- `list [page]`, `show ID [page]`, `export ID`, `delete ID confirm` retrieve/remove complete private records. Without confirmation, deletion only returns its exact confirmation command.
+- `render ID AUDIENCE [page [rev REV]]` returns the unsent variant and coverage matrix. `polish ID AUDIENCE` optionally requests one unsaved compact narrative.
+- `list [page]`, `show ID [page [rev REV]]`, `export ID`, `delete ID confirm` retrieve/remove complete private records. Without confirmation, deletion only returns its exact confirmation command.
 
 Words are whitespace-separated tokens in lead, ask and fact text; labels/IDs/coverage do not consume the content budget. This is a disclosed convention, not linguistic segmentation. Audiences accept 20–1000 words. Global and audience-specific required facts plus lead/ask are mandatory. If they cannot fit, no complete variant is produced and no polish call starts. Otherwise optional facts are selected by important before optional, then distinct lowercase Unicode word overlap with audience needs, then stable entered order. Whole facts are included only if they fit. This bounded lexical heuristic is not a semantic relevance or truth guarantee; every omission is visible in coverage.
 
@@ -30,3 +30,5 @@ Pure synchronous transforms validate current schema, references and quota on eve
 Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.
 
 Persisted enum fields require exact strings: arrays, nested arrays and coercible objects are malformed. Reads, rendering, edits and even confirmed deletion preserve corrupt raw bytes for scoped recovery.
+
+Every saved-record and derived-report continuation includes `PAGE rev REV`. Copy the whole emitted command: REV combines the record revision with a content stamp, including at the revision ceiling. A mismatch rejects before rendering and gives a fresh page-1 command. Existing first-page commands and manually entered page numbers still render the current record; root lists are recomputed. No unsaved model output uses pagination.
