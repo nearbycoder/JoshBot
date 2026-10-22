@@ -95,7 +95,10 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   if ((m = command.match(/^labels (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [beforeLabel, afterLabel] = fields(input, [80, 80]); return edit(key, r => { Object.assign(r, { beforeLabel, afterLabel }); invalidate(r); }); }
   if ((m = command.match(/^classify (\S+) ([\s\S]+)$/))) { const [, key, input] = m, [hunkId, labelInput, note] = fields(input, [64, 11, 96]), label = v.parse(v.picklist(["substantive", "cosmetic"]), labelInput); return edit(key, r => { if (!hunks(r).some(h => h.id === hunkId)) throw new Error("Hunk changed or not found. Run compare for current full hunk IDs; old classifications cannot apply."); r.classifications = [...r.classifications.filter(c => c.hunkId !== hunkId), { hunkId, label, note }]; }, "lifecycle"); }
   if ((m = command.match(/^unclassify (\S+) (\S+) confirm$/))) { const [, key, hid] = m; return edit(key, r => { if (!r.classifications.some(c => c.hunkId === hid)) throw new Error("Classification not found; use show/compare."); r.classifications = r.classifications.filter(c => c.hunkId !== hid); }, "remove"); }
-  if ((m = command.match(/^clear (\S+) (before|after|classifications) confirm$/))) { const [, key, field] = m; return edit(key, r => { if (field === "before") r.before = ""; else if (field === "after") r.after = null; invalidate(r); }, field === "classifications" || field === "after" ? "remove" : "content"); }
+  // Clearing before may create/restructure hunks against an existing after.
+  // Reproject their full classification reserve under hard lifecycle caps, not
+  // the lower new-content admission cap; after/classification removal adds none.
+  if ((m = command.match(/^clear (\S+) (before|after|classifications) confirm$/))) { const [, key, field] = m; return edit(key, r => { if (field === "before") r.before = ""; else if (field === "after") r.after = null; invalidate(r); }, field === "before" ? "lifecycle" : "remove"); }
   throw new Error(`Unknown or incomplete command. Use ${route} help`);
 }
 export default { ...metadata, execute } satisfies AgentFeature;

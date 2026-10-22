@@ -55,3 +55,36 @@ test("actual CAS text edit wins over classification and leaves no stale review",
   let armed = false; const backend = createMemoryAgentBackend({ beforeCompareSet(key, previous) { if (!armed || !previous || !key.endsWith(":state")) return; armed = false; const s = JSON.parse(previous); s.records[0].after = "Concurrent edit"; s.records[0].revision++; s.records[0].diffRevision++; s.records[0].classifications = []; backend.data.set(key, JSON.stringify(s)); } });
   const f = createAgentFeatureFixture(feature, { backend }), id = root(await f.run("create T | old | Before")); await f.run(`after ${id} | After`); const h = hids(await f.run(`compare ${id}`))[0]; armed = true; await assert.rejects(f.run(`classify ${id} ${h} | cosmetic | stale`), /changed/); assert.equal((await rec(f, id)).after, "Concurrent edit"); assert.equal((await rec(f, id)).classifications.length, 0); assert.equal(backend.calls.conflicts, 1);
 });
+
+test("clearing before above content quota preserves remaining hunk lifecycle capacity", async () => {
+  for (const remaining of [null, "removable before", "changed after", ""]) {
+    const f = createAgentFeatureFixture(feature), ids: string[] = [];
+    const before = Array.from({ length: 120 }, (_, i) => i % 2 ? `s${i}` : `a${i}`).join("\n");
+    const after = Array.from({ length: 120 }, (_, i) => i % 2 ? `s${i}` : `b${i}`).join("\n");
+    for (let i = 0; i < 3; i++) {
+      const id = root(await f.run(`create T${i} | old | ${before}`)); ids.push(id);
+      await f.run(`after ${id} | ${after}`);
+    }
+    const small = root(await f.run("create Small | old | removable before"));
+    if (remaining !== null) await f.run(`after ${small} | ${remaining}`);
+    const note = '"'.repeat(96);
+    for (const id of ids) {
+      const hs = hids(await all(f, `compare ${id}`)); assert.equal(hs.length, 60);
+      for (const h of hs) await f.run(`classify ${id} ${h} | substantive | ${note}`);
+    }
+    const previous = await rec(f, small), bytes = Buffer.byteLength(f.backend.data.get(f.key("state"))!);
+    assert.ok(bytes > 49152);
+    assert.match(await f.run(`clear ${small} before confirm`), /^Saved/);
+    const cleared = await rec(f, small);
+    assert.equal(cleared.before, ""); assert.equal(cleared.after, remaining);
+    assert.equal(cleared.diffRevision, previous.diffRevision + 1); assert.deepEqual(cleared.classifications, []);
+    const report = await f.run(`compare ${small}`), hs = hids(report);
+    assert.equal(hs.length, remaining ? 1 : 0);
+    if (remaining) { assert.match(report, /INSERTION/); assert.ok(report.includes(JSON.stringify(remaining))); }
+    for (const h of hs) await f.run(`classify ${small} ${h} | substantive | ${note}`);
+    for (const id of [...ids, small]) assert.ok(Buffer.byteLength(await f.run(`export ${id}`)) <= 24576);
+    assert.ok(Buffer.byteLength(f.backend.data.get(f.key("state"))!) <= 65536);
+    for (const id of ids) assert.equal((await rec(f, id)).classifications.length, 60);
+    assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  }
+});
