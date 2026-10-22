@@ -22,7 +22,15 @@ const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{
 const revSchema = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const instantSchema = v.pipe(v.string(), v.check(s => { try { return normalizeInstant(s) === s; } catch { return false; } }));
 const daySchema = v.pipe(v.string(), v.check(s => { try { civilDate(s); return true; } catch { return false; } }));
-const bump = (n: number) => Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+function bump(n: number, removal = false) {
+  if (n === Number.MAX_SAFE_INTEGER && !removal)
+    throw new InputError('Revision limit reached. Export saved records before explicit field removal or delete ID confirm. This finite limit cannot be retried or reset.');
+  return Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+}
+function writable(state: {revision: number}, record?: {revision: number}) {
+  bump(state.revision);
+  if (record) bump(record.revision);
+}
 const stamp = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fields = (input: string, limits: number[], empty = false) => checked(() => pipeFields(input,
   limits.map(maxBytes => ({label: 'Field', maxBytes: maxBytes + 32, allowEmpty: empty})))
@@ -135,8 +143,8 @@ function report(r:Review,currentZone:string,recovery?:number){if(!r.snapshot)thr
 function reportPage(r:Review,zone:string,verb:string,n=1,expected?:string,digest?:string,recovery?:number){const view={revision:r.revision,record:r,currentZone:zone};guard(view,expected,digest);return pages(report(r,zone,recovery),verb,view,n);}
 async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  checked(()=>boundedText(command,{label:'Command',maxBytes:16000}));if(command==='help')return metadata.help;const s=validate(await ctx.store.read('state')??initial),newId=randomUUID();
- const save=(change:(next:State)=>Review|null,mode:'content'|'lifecycle'|'remove'='content',render=false)=>ctx.store.update('state',initial,raw=>{const next=validate(raw),r=change(next);next.revision=bump(next.revision);validate(next);admit(next,mode);return {value:next,result:r&&render?reportPage(r,ctx.timezone,`report ${r.id}`):r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} ${r.snapshot?'report':'show'} ${r.id}`:'Deleted privately. Use list to inspect remaining configurations.'};});
- const edit=(key:string,change:(r:Review)=>void,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{const expected=get(s,key);return save(next=>{const r=get(next,key);assertSame(r,expected);change(r);r.revision=bump(r.revision);return r;},mode,render);};let m:RegExpMatchArray|null;
+ const save=(change:(next:State)=>Review|null,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{if(mode!=='remove')writable(s);return ctx.store.update('state',initial,raw=>{const next=validate(raw);if(mode!=='remove')writable(next);const r=change(next);next.revision=bump(next.revision,mode==='remove');validate(next);admit(next,mode);return {value:next,result:r&&render?reportPage(r,ctx.timezone,`report ${r.id}`):r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} ${r.snapshot?'report':'show'} ${r.id}`:'Deleted privately. Use list to inspect remaining configurations.'};});};
+ const edit=(key:string,change:(r:Review)=>void,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{const expected=get(s,key);if(mode!=='remove')writable(s,expected);return save(next=>{const r=get(next,key);assertSame(r,expected);if(mode!=='remove')writable(next,r);change(r);r.revision=bump(r.revision,mode==='remove');return r;},mode,render);};let m:RegExpMatchArray|null;
  if((m=command.match(/^list(?: (?:page )?(\d+))?$/))){const n=checked(()=>parsePage(m![1]));if(n!==1)throw new InputError('Only one list page; at most eight configurations.');return `Current list; ${s.records.length}/8 configurations; ${serializedBytes(s)}/49152 bytes\n`+([...s.records].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>`${r.id} · ${r.title||'untitled'} · ${r.snapshot?'captured '+r.snapshot.captureDay:'not analyzed'}`).join('\n')||`No configurations. Start: ${metadata.example}`);}
  if((m=command.match(/^show (\S+)(?: (?:page )?(\d+))?(?: rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[1]);guard(r,m[3],m[4]);return pages(JSON.stringify(envelope(r),null,2),`show ${r.id}`,r,checked(()=>parsePage(m![2])));}
  if((m=command.match(/^report (\S+)(?: (?:page )?(\d+))?(?: rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[1]);return reportPage(r,ctx.timezone,`report ${r.id}`,checked(()=>parsePage(m![2])),m[3],m[4]);}
@@ -149,7 +157,7 @@ async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  if((m=command.match(/^settings (\S+)\s*\|([\s\S]*)$/))){const [window,focus,recovery]=fields(m[2],[11,4,4]),times=/^(\d{2}:\d{2})-(\d{2}:\d{2})$/.exec(window);if(!times)throw new InputError('Work window must be HH:MM-HH:MM.');const work={start:times[1],end:times[2],focus:num(focus,1,1440),recovery:num(recovery,0,1440)};return edit(m[1],r=>{r.config.work=work;},'lifecycle');}
  if((m=command.match(/^labels (\S+)\s*\|([\s\S]*)$/))){const [bytes]=fields(m[2],[2]),value=num(bytes,0,80);return edit(m[1],r=>{r.config.labelBytes=value;},'lifecycle');}
  if((m=command.match(/^clear (\S+) (title|range|settings|snapshot|labels) confirm$/))){const field=m[2];return edit(m[1],r=>{if(field==='title')r.title='';else if(field==='range')r.config.range=null;else if(field==='settings')r.config.work=null;else if(field==='labels')r.config.labelBytes=80;else r.snapshot=null;},'remove');}
- if((m=command.match(/^analyze (\S+)$/))){const key=m[1],expected=get(s,key);if(!expected.config.range||!expected.config.work)throw new InputError('Set range and settings before analyzing.');
+ if((m=command.match(/^analyze (\S+)$/))){const key=m[1],expected=get(s,key);writable(s,expected);if(!expected.config.range||!expected.config.work)throw new InputError('Set range and settings before analyzing.');
   // Resolve work boundaries before the one source read; a DST gap/fold cannot imply free time.
   const zone=new ZonedTime(ctx.timezone);for(let i=0;i<=civilDaysBetween(expected.config.range.start,expected.config.range.end);i++){const day=addCivilDays(expected.config.range.start,i);checked(()=>zone.local(day,expected.config.work!.start));checked(()=>zone.local(day,expected.config.work!.end));}
   const snapshot=await capture(ctx,expected.config);return edit(key,r=>{r.snapshot=snapshot;},expected.snapshot?'lifecycle':'content',true);

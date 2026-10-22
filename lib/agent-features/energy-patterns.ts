@@ -20,7 +20,15 @@ const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{
 const revSchema = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const instantSchema = v.pipe(v.string(), v.check(s => { try { return normalizeInstant(s) === s; } catch { return false; } }));
 const daySchema = v.pipe(v.string(), v.check(s => { try { civilDate(s); return true; } catch { return false; } }));
-const bump = (n: number) => Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+function bump(n: number, removal = false) {
+  if (n === Number.MAX_SAFE_INTEGER && !removal)
+    throw new InputError('Revision limit reached. Export saved records before explicit field removal or delete ID confirm. This finite limit cannot be retried or reset.');
+  return Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+}
+function writable(state: {revision: number}, record?: {revision: number}) {
+  bump(state.revision);
+  if (record) bump(record.revision);
+}
 const stamp = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fields = (input: string, limits: number[], empty = false) => checked(() => pipeFields(input,
   limits.map(maxBytes => ({label: 'Field', maxBytes: maxBytes + 32, allowEmpty: empty})))
@@ -100,8 +108,8 @@ function input(input:string) {const [d,b,e,activity,note]=fields(input,[10,9,1,8
 async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  checked(()=>boundedText(command,{label:'Command',maxBytes:16000}));if(command==='help')return metadata.help;
  const s=validate(await ctx.store.read('state')??initial),newId=randomUUID(),capturedAt=ctx.now.toISOString();
- const save=(change:(next:State)=>Checkin|null,mode:'content'|'lifecycle'|'remove'='content')=>ctx.store.update('state',initial,raw=>{const next=validate(raw),r=change(next);next.revision=bump(next.revision);validate(next);admit(next,mode);return {value:next,result:r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} show ${r.id}`:'Deleted privately. Use list to inspect remaining check-ins.'};});
- const edit=(key:string,change:(r:Checkin)=>void,mode:'content'|'lifecycle'|'remove'='content')=>{const expected=get(s,key);return save(next=>{const r=get(next,key);assertSame(r,expected);change(r);r.revision=bump(r.revision);return r;},mode);};
+ const save=(change:(next:State)=>Checkin|null,mode:'content'|'lifecycle'|'remove'='content')=>{if(mode!=='remove')writable(s);return ctx.store.update('state',initial,raw=>{const next=validate(raw);if(mode!=='remove')writable(next);const r=change(next);next.revision=bump(next.revision,mode==='remove');validate(next);admit(next,mode);return {value:next,result:r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} show ${r.id}`:'Deleted privately. Use list to inspect remaining check-ins.'};});};
+ const edit=(key:string,change:(r:Checkin)=>void,mode:'content'|'lifecycle'|'remove'='content')=>{const expected=get(s,key);if(mode!=='remove')writable(s,expected);return save(next=>{const r=get(next,key);assertSame(r,expected);if(mode!=='remove')writable(next,r);change(r);r.revision=bump(r.revision,mode==='remove');return r;},mode);};
  let m:RegExpMatchArray|null;
  if((m=command.match(/^list(?: (?:page )?(\d+))?$/))){const n=checked(()=>parsePage(m![1])),all=[...s.records].sort((a,b)=>(a.date??'~').localeCompare(b.date??'~')||a.id.localeCompare(b.id));if(n>Math.max(1,Math.ceil(all.length/10)))throw new InputError('Page out of range; restart list.');return `Current list ${n}/${Math.max(1,Math.ceil(all.length/10))}; ${serializedBytes(s)}/49152 bytes\n`+(all.slice((n-1)*10,n*10).map(r=>`${r.id} · ${r.date??'undated'} · ${r.band??'no band'} · ${r.energy??'unknown'} · ${r.activity}`).join('\n')||`No check-ins. Start: ${metadata.example}`)+(n*10<all.length?`\nNext: ${route} list ${n+1}`:'');}
  if((m=command.match(/^show (\S+)(?: (?:page )?(\d+))?(?: rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[1]);guard(r,m[3],m[4]);return pages(JSON.stringify(envelope(r),null,2),`show ${r.id}`,r,checked(()=>parsePage(m![2])));}
@@ -116,7 +124,7 @@ async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
   const selected=items.filter(x=>x.item.metadata?.day===day);return pages(`Owned journal context for literal day ${day}; fresh bounded read, ${items.length} available items.\n`+(selected.map(x=>`${x.item.id}\nFingerprint ${x.fingerprint}\n${x.item.title}\nOpen: ${route} journal ${x.item.id}\n`).join('')||'No journal entry for this literal day in the permitted snapshot.\n')+'Context only; mood is never energy. Explicitly attach an exact excerpt (up to 400 JS units) using attach CHECKIN | SOURCE_ID | FINGERPRINT | EXCERPT.\n',`journals ${day}`,view,checked(()=>parsePage(m![2])));}
  if((m=command.match(/^journal (\S+)(?: page (\d+) rev (\d+) stamp ([0-9a-f]{64}))?$/))){const items=await journals(ctx),view={revision:s.revision,items:items.map(x=>({id:x.item.id,fingerprint:x.fingerprint}))};guard(view,m[3],m[4]);const source=items.find(x=>x.item.id===m![1]);if(!source)throw new InputError('Journal source absent from this permitted snapshot; rerun journals.');return pages(JSON.stringify(source,null,2),`journal ${source.item.id}`,view,checked(()=>parsePage(m![2])));}
  if((m=command.match(/^attach (\S+)\s*\|([\s\S]*)$/))){const key=m[1],expected=get(s,key),[sourceId,fingerprint,excerpt]=fields(m[2],[256,67,1600]);checked(()=>boundedText(excerpt,{label:'Excerpt',maxBytes:1600,maxUnits:400,trim:false}));
-  const items=await journals(ctx),source=items.find(x=>x.item.id===sourceId);if(!source)throw new InputError('Journal source absent from this permitted snapshot; rerun journals.');if(source.fingerprint!==fingerprint)throw new InputError('Journal source changed; rerun journals and select its current fingerprint.');if(!source.item.text.includes(excerpt))throw new InputError('Excerpt must occur exactly in the current journal source text.');
+  writable(s,expected);const items=await journals(ctx),source=items.find(x=>x.item.id===sourceId);if(!source)throw new InputError('Journal source absent from this permitted snapshot; rerun journals.');if(source.fingerprint!==fingerprint)throw new InputError('Journal source changed; rerun journals and select its current fingerprint.');if(!source.item.text.includes(excerpt))throw new InputError('Excerpt must occur exactly in the current journal source text.');
   const item=source.item,evidence=checked(()=>captureEvidence([{id:item.id,kind:'journal',title:item.title,text:excerpt,...(item.updatedAt?{updatedAt:item.updatedAt}:{}),metadata:{day:item.metadata!.day,...(item.metadata!.mood!==undefined?{mood:item.metadata!.mood}:{}),source:'Personal toolbox / journal',...(item.metadata!.createdAt?{createdAt:item.metadata!.createdAt}:{}),coverage:'explicit selected excerpt; not complete journal text',textTruncated:true,titleTruncated:item.metadata?.titleTruncated??false}}],evidenceOptions));
   const existing=expected.sources.find(a=>(a.evidence.sources[0] as AgentContextItem).id===sourceId);
   return edit(key,r=>{const attachment={id:existing?.id??newId,capturedAt,sourceFingerprint:fingerprint,evidence};r.sources=r.sources.filter(a=>(a.evidence.sources[0] as AgentContextItem).id!==sourceId);r.sources.push(attachment);},existing?'lifecycle':'content');}

@@ -41,7 +41,7 @@ test('real CAS: a later loop edit defeats old close; unrelated-day changes retry
  pause=true;const close=f.run(`close ${a}`);await enter.promise;await f.run(`loop ${a} edit ${loop} | New work`);resume.resolve();assert.match(await close,/changed/);assert.equal((await record(f,a)).closedAt,null);
  enter=deferred();resume=deferred();pause=true;const next=f.run(`first-step ${a} | Another start`);await enter.promise;await f.run(`first-step ${b} | Other day`);resume.resolve();assert.match(await next,/Saved privately/);assert.equal((await record(f,b)).firstStep,'Other day');
  const s=await state(f);s.records[0].revision=Number.MAX_SAFE_INTEGER;backend.data.set(f.key('state'),JSON.stringify(s));
- enter=deferred();resume=deferred();pause=true;const removal=f.run(`loop ${a} remove ${loop} confirm`);await enter.promise;await f.run(`loop ${a} edit ${loop} | Latest`);resume.resolve();assert.match(await removal,/changed/);assert.equal((await record(f,a)).loops[0].text,'Latest');
+ enter=deferred();resume=deferred();pause=true;const removal=f.run(`loop ${a} remove ${loop} confirm`);await enter.promise;assert.match(await f.run(`loop ${a} edit ${loop} | Latest`),/Revision limit/);assert.match(await f.run(`clear ${a} first-step confirm`),/^Saved/);resume.resolve();assert.match(await removal,/changed/);assert.equal((await record(f,a)).loops[0].text,'New work');assert.equal((await record(f,a)).firstStep,'');
 });
 test('lossless maximum Unicode/escaping retrieval and all mandatory closure fields after saturated admission',async()=>{
  const f=createAgentFeatureFixture(feature),days:string[]=[];
@@ -71,4 +71,64 @@ test('otherwise valid CLOSED reviews reject impossible and noncanonical timestam
    assert.match(await f.run(command),/Invalid saved shutdown-review schema/);assert.equal(f.backend.data.get(f.key('state')),raw);
   }
  }
+});
+
+
+test('finite revisions prevent paused-CAS constant-clock ABA at record and collection ceilings',async()=>{
+ for(const ceiling of ['record','collection','both']){
+  let pause=false;const entered=deferred<void>(),release=deferred<void>();
+  const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+  const f=createAgentFeatureFixture(feature,{backend,now:new Date('2026-10-22T15:00:00Z')});
+  const key=id(await f.run('start 2026-10-22'));
+  const edit=(key:string,value:string)=>`first-step ${key} | ${value}`;assert.match(await f.run(edit(key,'Original')),/^Saved/);
+  const s=await state(f);if(ceiling!=='record')s.revision=Number.MAX_SAFE_INTEGER-1;if(ceiling!=='collection')s.records[0].revision=Number.MAX_SAFE_INTEGER-1;backend.data.set(f.key('state'),JSON.stringify(s));
+  pause=true;const pending=f.run(edit(key,'Old intent'));await entered.promise;
+  try{
+   assert.match(await f.run(edit(key,'Winning change')),/^Saved/);const winner=backend.data.get(f.key('state')),writes=backend.calls.writes;
+   assert.match(await f.run(edit(key,'Original')),/Revision limit/);assert.equal(backend.calls.writes,writes);assert.equal(backend.data.get(f.key('state')),winner);
+   release.resolve();assert.match(await pending,/changed|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);assert.equal(backend.calls.conflicts,1);
+  }finally{release.resolve();await pending;}
+ }
+});
+
+test('ceiling erasure remains exact, unrelated exhausted records do not block edits, collection ceiling rechecks on retry',async()=>{
+ const edit=(key:string,value:string)=>`first-step ${key} | ${value}`;
+ for(const mode of ['unrelated','collection','target-erasure','target-delete']){
+  let pause=false;const entered=deferred<void>(),release=deferred<void>();
+  const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+  const f=createAgentFeatureFixture(feature,{backend});const key=id(await f.run('start 2026-10-22')),other=id(await f.run('start 2026-10-23'));
+  assert.match(await f.run(edit(key,'Original')),/^Saved/);
+  const s=await state(f);if(mode==='collection')s.revision=Number.MAX_SAFE_INTEGER-1;else if(mode==='unrelated')s.records[1].revision=Number.MAX_SAFE_INTEGER-1;
+  else{s.revision=Number.MAX_SAFE_INTEGER;s.records[0].revision=Number.MAX_SAFE_INTEGER;}
+  backend.data.set(f.key('state'),JSON.stringify(s));pause=true;
+  const pending=f.run(mode==='target-delete'?`delete ${key} confirm`:mode==='target-erasure'?`clear ${key} first-step confirm`:edit(key,'Pending'));
+  await entered.promise;
+  try{
+   if(mode==='target-erasure')assert.match(await f.run(`clear ${key} first-step confirm`),/^Saved/);
+   else if(mode==='target-delete')assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);
+   else assert.match(await f.run(edit(other,'Winner')),/^Saved/);
+   const winner=backend.data.get(f.key('state'));release.resolve();const out=await pending;assert.equal(backend.calls.conflicts,1);
+   if(mode==='unrelated'){assert.match(out,/^Saved/);const records=(await state(f)).records;assert.equal(records[0].firstStep,'Pending');assert.equal(records[1].firstStep,'Winner');assert.equal(records[1].revision,Number.MAX_SAFE_INTEGER);}
+   else{assert.match(out,/changed|not found|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);}
+  }finally{release.resolve();await pending;}
+ }
+ const f=createAgentFeatureFixture(feature),key=id(await f.run('start 2026-10-22'));assert.match(await f.run(edit(key,'Original')),/^Saved/);
+ const s=await state(f);s.revision=Number.MAX_SAFE_INTEGER;s.records[0].revision=Number.MAX_SAFE_INTEGER;f.backend.data.set(f.key('state'),JSON.stringify(s));const before=f.backend.data.get(f.key('state')),writes=f.backend.calls.writes;
+ for(const cmd of [edit(key,'Blocked'),'start 2026-10-23']){assert.match(await f.run(cmd),/Revision limit/);assert.equal(f.backend.data.get(f.key('state')),before);assert.equal(f.backend.calls.writes,writes);}
+ assert.match(await f.run(`show ${key}`),/^Revision/);assert.equal(JSON.parse(await f.run(`export ${key}`)).record.id,key);
+ assert.match(await f.run(`clear ${key} first-step confirm`),/^Saved/);assert.equal((await state(f)).records[0].firstStep,'');assert.equal((await state(f)).revision,Number.MAX_SAFE_INTEGER);
+ assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);assert.equal((await state(f)).records.length,0);
+ assert.match(await f.run('start 2026-10-22'),/Revision limit/);
+});
+
+test('paused close cannot override a successful close and reopen at a constant clock',async()=>{
+ let pause=false;const entered=deferred<void>(),release=deferred<void>();
+ const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+ const f=createAgentFeatureFixture(feature,{backend,now:new Date('2026-10-22T15:00:00Z')}),key=id(await f.run('start 2026-10-22'));
+ await f.run(`first-step ${key} | Restart`);const s=await state(f);s.revision=Number.MAX_SAFE_INTEGER-1;s.records[0].revision=Number.MAX_SAFE_INTEGER-1;backend.data.set(f.key('state'),JSON.stringify(s));
+ pause=true;const pending=f.run(`close ${key}`);await entered.promise;
+ try{
+  assert.match(await f.run(`close ${key}`),/closed/);assert.match(await f.run(`reopen ${key}`),/^Saved/);const winner=backend.data.get(f.key('state'));release.resolve();assert.match(await pending,/changed|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);assert.equal((await state(f)).records[0].closedAt,null);
+  const writes=backend.calls.writes;assert.match(await f.run(`close ${key}`),/Revision limit/);assert.equal(backend.calls.writes,writes);
+ }finally{release.resolve();await pending;}
 });

@@ -17,7 +17,15 @@ const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{
 const revSchema = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const instantSchema = v.pipe(v.string(), v.check(s => { try { return normalizeInstant(s) === s; } catch { return false; } }));
 const daySchema = v.pipe(v.string(), v.check(s => { try { civilDate(s); return true; } catch { return false; } }));
-const bump = (n: number) => Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+function bump(n: number, removal = false) {
+  if (n === Number.MAX_SAFE_INTEGER && !removal)
+    throw new InputError('Revision limit reached. Export saved records before explicit field removal or delete ID confirm. This finite limit cannot be retried or reset.');
+  return Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+}
+function writable(state: {revision: number}, record?: {revision: number}) {
+  bump(state.revision);
+  if (record) bump(record.revision);
+}
 const stamp = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fields = (input: string, limits: number[], empty = false) => checked(() => pipeFields(input,
   limits.map(maxBytes => ({label: 'Field', maxBytes: maxBytes + 32, allowEmpty: empty})))
@@ -81,12 +89,12 @@ function check(r:Review) {
 async function execute(command:string,ctx:AgentFeatureContext):Promise<string> {
  checked(()=>boundedText(command,{label:'Command',maxBytes:16000}));if(command==='help')return metadata.help;
  const s=validate(await ctx.store.read('state')??initial),newId=randomUUID(),now=ctx.now.toISOString();
- const save=(change:(next:State)=>Review|null,mode:'content'|'lifecycle'|'remove'='content')=>ctx.store.update('state',initial,raw=>{
-  const next=validate(raw),r=change(next);next.revision=bump(next.revision);validate(next);admit(next,mode);
+ const save=(change:(next:State)=>Review|null,mode:'content'|'lifecycle'|'remove'='content')=>{if(mode!=='remove')writable(s);return ctx.store.update('state',initial,raw=>{
+  const next=validate(raw);if(mode!=='remove')writable(next);const r=change(next);next.revision=bump(next.revision,mode==='remove');validate(next);admit(next,mode);
   return {value:next,result:r?`Saved privately: ${r.id} · ${r.closedAt?'closed':'open'} · revision ${r.revision}\nNext: ${route} check ${r.id}`:'Deleted privately. Use list to inspect remaining reviews.'};
- });
+ });};
  const edit=(key:string,change:(r:Review)=>void,mode:'content'|'lifecycle'|'remove'='content',closing=false)=>{
-  const expected=get(s,key);return save(next=>{const r=get(next,key);assertSame(r,expected);if(!closing)r.closedAt=null;change(r);r.revision=bump(r.revision);return r;},mode);
+  const expected=get(s,key);if(mode!=='remove')writable(s,expected);return save(next=>{const r=get(next,key);assertSame(r,expected);if(mode!=='remove')writable(next,r);if(!closing)r.closedAt=null;change(r);r.revision=bump(r.revision,mode==='remove');return r;},mode);
  };
  let m:RegExpMatchArray|null;
  if((m=command.match(/^list(?: (?:page )?(\d+))?$/))){const n=checked(()=>parsePage(m![1])),all=[...s.records].sort((a,b)=>a.day.localeCompare(b.day)||a.id.localeCompare(b.id));

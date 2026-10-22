@@ -65,10 +65,60 @@ test('saturate content then finish all measurements and remove records above adm
  for(let i=0;i<80;i++) {const out=await f.run('log 2026-10-22 | '+ 'c'.repeat(80)+' | '+'\\\\'.repeat(240)+' | unknown | unknown | estimated');if(!out.includes('Saved privately'))break;}
  const s=await state(f);assert.ok(s.records.length>20&&s.records.length<80);const saved=s.records.length;
  for(const r of s.records)assert.match(await f.run(`measure ${r.id} | 1440 | 1440 | estimated`),/Saved privately/);
- const final=await state(f);assert.equal(final.records.length,saved);assert.ok(Buffer.byteLength(JSON.stringify(final))<=49152);
+ assert.match(await f.run('review 2026-10-01 | 2026-10-31'),/total reported minutes/);
+ const final=await state(f);assert.equal(final.records.length,saved+1);assert.ok(Buffer.byteLength(JSON.stringify(final))<=49152);
  // Valid lifecycle-grown state remains removable even beyond the content threshold.
  final.revision=Number.MAX_SAFE_INTEGER;for(const r of final.records)r.revision=Number.MAX_SAFE_INTEGER;
  f.backend.data.set(f.key('state'),JSON.stringify(final));
- assert.match(await f.run('review 2026-10-01 | 2026-10-31'),/total reported minutes/);
+ const before=f.backend.data.get(f.key('state'));assert.match(await f.run('review 2026-10-01 | 2026-10-31'),/Revision limit/);assert.equal(f.backend.data.get(f.key('state')),before);
+ assert.match(await f.run(`report ${final.records.find((r:any)=>r.kind==='range').id}`),/total reported minutes/);
  for(const r of (await state(f)).records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
+});
+
+
+test('finite revisions prevent paused-CAS constant-clock ABA at record and collection ceilings',async()=>{
+ for(const ceiling of ['record','collection','both']){
+  let pause=false;const entered=deferred<void>(),release=deferred<void>();
+  const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+  const f=createAgentFeatureFixture(feature,{backend,now:new Date('2026-10-22T15:00:00Z')});
+  const key=id(await f.run('log 2026-10-22 | chat | Original | 1 | 2 | measured'));
+  const edit=(key:string,value:string)=>`edit ${key} | 2026-10-22 | chat | ${value} | 1 | 2 | measured`;assert.match(await f.run(edit(key,'Original')),/^Saved/);
+  const s=await state(f);if(ceiling!=='record')s.revision=Number.MAX_SAFE_INTEGER-1;if(ceiling!=='collection')s.records[0].revision=Number.MAX_SAFE_INTEGER-1;backend.data.set(f.key('state'),JSON.stringify(s));
+  pause=true;const pending=f.run(edit(key,'Old intent'));await entered.promise;
+  try{
+   assert.match(await f.run(edit(key,'Winning change')),/^Saved/);const winner=backend.data.get(f.key('state')),writes=backend.calls.writes;
+   assert.match(await f.run(edit(key,'Original')),/Revision limit/);assert.equal(backend.calls.writes,writes);assert.equal(backend.data.get(f.key('state')),winner);
+   release.resolve();assert.match(await pending,/changed|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);assert.equal(backend.calls.conflicts,1);
+  }finally{release.resolve();await pending;}
+ }
+});
+
+test('ceiling erasure remains exact, unrelated exhausted records do not block edits, collection ceiling rechecks on retry',async()=>{
+ const edit=(key:string,value:string)=>`edit ${key} | 2026-10-22 | chat | ${value} | 1 | 2 | measured`;
+ for(const mode of ['unrelated','collection','target-erasure','target-delete']){
+  let pause=false;const entered=deferred<void>(),release=deferred<void>();
+  const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+  const f=createAgentFeatureFixture(feature,{backend});const key=id(await f.run('log 2026-10-22 | chat | Original | 1 | 2 | measured')),other=id(await f.run('log 2026-10-22 | chat | Other | 1 | 2 | measured'));
+  assert.match(await f.run(edit(key,'Original')),/^Saved/);
+  const s=await state(f);if(mode==='collection')s.revision=Number.MAX_SAFE_INTEGER-1;else if(mode==='unrelated')s.records[1].revision=Number.MAX_SAFE_INTEGER-1;
+  else{s.revision=Number.MAX_SAFE_INTEGER;s.records[0].revision=Number.MAX_SAFE_INTEGER;}
+  backend.data.set(f.key('state'),JSON.stringify(s));pause=true;
+  const pending=f.run(mode==='target-delete'?`delete ${key} confirm`:mode==='target-erasure'?`clear ${key} task confirm`:edit(key,'Pending'));
+  await entered.promise;
+  try{
+   if(mode==='target-erasure')assert.match(await f.run(`clear ${key} task confirm`),/^Saved/);
+   else if(mode==='target-delete')assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);
+   else assert.match(await f.run(edit(other,'Winner')),/^Saved/);
+   const winner=backend.data.get(f.key('state'));release.resolve();const out=await pending;assert.equal(backend.calls.conflicts,1);
+   if(mode==='unrelated'){assert.match(out,/^Saved/);const records=(await state(f)).records;assert.equal(records[0].task,'Pending');assert.equal(records[1].task,'Winner');assert.equal(records[1].revision,Number.MAX_SAFE_INTEGER);}
+   else{assert.match(out,/changed|not found|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);}
+  }finally{release.resolve();await pending;}
+ }
+ const f=createAgentFeatureFixture(feature),key=id(await f.run('log 2026-10-22 | chat | Original | 1 | 2 | measured'));assert.match(await f.run(edit(key,'Original')),/^Saved/);
+ const s=await state(f);s.revision=Number.MAX_SAFE_INTEGER;s.records[0].revision=Number.MAX_SAFE_INTEGER;f.backend.data.set(f.key('state'),JSON.stringify(s));const before=f.backend.data.get(f.key('state')),writes=f.backend.calls.writes;
+ for(const cmd of [edit(key,'Blocked'),'log 2026-10-22 | chat | Other | 1 | 2 | measured']){assert.match(await f.run(cmd),/Revision limit/);assert.equal(f.backend.data.get(f.key('state')),before);assert.equal(f.backend.calls.writes,writes);}
+ assert.match(await f.run(`show ${key}`),/^Revision/);assert.equal(JSON.parse(await f.run(`export ${key}`)).record.id,key);
+ assert.match(await f.run(`clear ${key} task confirm`),/^Saved/);assert.equal((await state(f)).records[0].task,'');assert.equal((await state(f)).revision,Number.MAX_SAFE_INTEGER);
+ assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);assert.equal((await state(f)).records.length,0);
+ assert.match(await f.run('log 2026-10-22 | chat | Original | 1 | 2 | measured'),/Revision limit/);
 });

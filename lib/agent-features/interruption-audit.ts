@@ -16,7 +16,15 @@ const text = (bytes: number, units = bytes) => v.pipe(v.string(), v.check(s => {
 const idSchema = v.pipe(v.string(), v.regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/));
 const revSchema = v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(Number.MAX_SAFE_INTEGER));
 const daySchema = v.pipe(v.string(), v.check(s => { try { civilDate(s); return true; } catch { return false; } }));
-const bump = (n: number) => Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+function bump(n: number, removal = false) {
+  if (n === Number.MAX_SAFE_INTEGER && !removal)
+    throw new InputError('Revision limit reached. Export saved records before explicit field removal or delete ID confirm. This finite limit cannot be retried or reset.');
+  return Math.min(Number.MAX_SAFE_INTEGER, n + 1);
+}
+function writable(state: {revision: number}, record?: {revision: number}) {
+  bump(state.revision);
+  if (record) bump(record.revision);
+}
 const stamp = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const fields = (input: string, limits: number[], empty = false) => checked(() => pipeFields(input,
   limits.map(maxBytes => ({label: 'Field', maxBytes: maxBytes + 32, allowEmpty: empty})))
@@ -113,14 +121,17 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   checked(() => boundedText(command, {label: 'Command', maxBytes: 16000}));
   if (command === 'help') return metadata.help;
   const s = validate(await ctx.store.read('state') ?? initial), newId = randomUUID();
-  const save = (change: (next: State) => Record | null, mode: 'content' | 'lifecycle' | 'remove' = 'content') =>
-    ctx.store.update('state', initial, raw => {
-      const next = validate(raw), r = change(next); next.revision = bump(next.revision); validate(next); admit(next, mode);
+  const save = (change: (next: State) => Record | null, mode: 'content' | 'lifecycle' | 'remove' = 'content') => {
+    if (mode !== 'remove') writable(s);
+    return ctx.store.update('state', initial, raw => {
+      const next = validate(raw); if (mode !== 'remove') writable(next);
+      const r = change(next); next.revision = bump(next.revision, mode === 'remove'); validate(next); admit(next, mode);
       return {value: next, result: r ? `Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} ${r.kind === 'range' ? 'report' : 'show'} ${r.id}` : 'Deleted privately. Use list to inspect remaining records.'};
     });
+  };
   const edit = (id: string, change: (r: Record) => void, mode: 'content' | 'lifecycle' | 'remove' = 'content') => {
-    const expected = get(s, id);
-    return save(next => {const r = get(next, id); assertSame(r, expected); change(r); r.revision = bump(r.revision); return r;}, mode);
+    const expected = get(s, id); if (mode !== 'remove') writable(s, expected);
+    return save(next => {const r = get(next, id); assertSame(r, expected); if (mode !== 'remove') writable(next, r); change(r); r.revision = bump(r.revision, mode === 'remove'); return r;}, mode);
   };
   let m: RegExpMatchArray | null;
   if ((m = command.match(/^list(?: (?:page )?(\d+))?$/))) {
@@ -155,9 +166,9 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   }
   if (command.startsWith('review ')) {
     const [start,end] = fields(command.slice(7),[10,10]); date(start);date(end);if(start>end) throw new InputError('Range end must not precede start.');
-    const expected = s.records.find(r=>r.kind==='range');
+    const expected = s.records.find(r=>r.kind==='range'); writable(s, expected);
     const next = await ctx.store.update('state',initial,raw=>{
-      const current=validate(raw), existing=current.records.find(r=>r.kind==='range'); assertSame(existing??null,expected??null);
+      const current=validate(raw), existing=current.records.find(r=>r.kind==='range'); assertSame(existing??null,expected??null); writable(current, existing);
       const r: Record={id:expected?.id??newId,revision:expected?bump(expected.revision):1,kind:'range',start,end};
       current.records=current.records.filter(x=>x.kind!=='range');current.records.push(r);current.revision=bump(current.revision);validate(current);admit(current,'lifecycle');
       return {value:current,result:current};

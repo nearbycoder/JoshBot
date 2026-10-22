@@ -122,3 +122,60 @@ test('valid changed baseline, absent/changed sources, unknown dates and empty ob
   const out=await f.run(`compare ${exp}`);assert.match(out,days===undefined?/recorded unknown; opportunities 0; adherence unknown/:/recorded 0; opportunities 0; adherence undefined/);assert.match(out,/opportunities unknown; adherence not shown/);assert.equal(f.backend.data.get(key),rawSource);
  }
 });
+
+
+test('finite revisions prevent paused-CAS constant-clock ABA at record and collection ceilings',async()=>{
+ for(const ceiling of ['record','collection','both']){
+  let pause=false;const entered=deferred<void>(),release=deferred<void>();
+  const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+  const f=createAgentFeatureFixture(feature,{backend,now:new Date('2026-10-22T15:00:00Z')});
+  const key=id(await f.run('create Original | cue'));
+  const edit=(key:string,value:string)=>`edit ${key} title | ${value}`;assert.match(await f.run(edit(key,'Original')),/^Saved/);
+  const s=await state(f);if(ceiling!=='record')s.revision=Number.MAX_SAFE_INTEGER-1;if(ceiling!=='collection')s.records[0].revision=Number.MAX_SAFE_INTEGER-1;backend.data.set(f.key('state'),JSON.stringify(s));
+  pause=true;const pending=f.run(edit(key,'Old intent'));await entered.promise;
+  try{
+   assert.match(await f.run(edit(key,'Winning change')),/^Saved/);const winner=backend.data.get(f.key('state')),writes=backend.calls.writes;
+   assert.match(await f.run(edit(key,'Original')),/Revision limit/);assert.equal(backend.calls.writes,writes);assert.equal(backend.data.get(f.key('state')),winner);
+   release.resolve();assert.match(await pending,/changed|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);assert.equal(backend.calls.conflicts,1);
+  }finally{release.resolve();await pending;}
+ }
+});
+
+test('ceiling erasure remains exact, unrelated exhausted records do not block edits, collection ceiling rechecks on retry',async()=>{
+ const edit=(key:string,value:string)=>`edit ${key} title | ${value}`;
+ for(const mode of ['unrelated','collection','target-erasure','target-delete']){
+  let pause=false;const entered=deferred<void>(),release=deferred<void>();
+  const backend=createMemoryAgentBackend({beforeCompareSet:async()=>{if(pause){pause=false;entered.resolve();await release.promise;}}});
+  const f=createAgentFeatureFixture(feature,{backend});const key=id(await f.run('create Original | cue')),other=id(await f.run('create Other | cue'));
+  assert.match(await f.run(edit(key,'Original')),/^Saved/);
+  const s=await state(f);if(mode==='collection')s.revision=Number.MAX_SAFE_INTEGER-1;else if(mode==='unrelated')s.records[1].revision=Number.MAX_SAFE_INTEGER-1;
+  else{s.revision=Number.MAX_SAFE_INTEGER;s.records[0].revision=Number.MAX_SAFE_INTEGER;}
+  backend.data.set(f.key('state'),JSON.stringify(s));pause=true;
+  const pending=f.run(mode==='target-delete'?`delete ${key} confirm`:mode==='target-erasure'?`clear ${key} title confirm`:edit(key,'Pending'));
+  await entered.promise;
+  try{
+   if(mode==='target-erasure')assert.match(await f.run(`clear ${key} title confirm`),/^Saved/);
+   else if(mode==='target-delete')assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);
+   else assert.match(await f.run(edit(other,'Winner')),/^Saved/);
+   const winner=backend.data.get(f.key('state'));release.resolve();const out=await pending;assert.equal(backend.calls.conflicts,1);
+   if(mode==='unrelated'){assert.match(out,/^Saved/);const records=(await state(f)).records;assert.equal(records[0].title,'Pending');assert.equal(records[1].title,'Winner');assert.equal(records[1].revision,Number.MAX_SAFE_INTEGER);}
+   else{assert.match(out,/changed|not found|Revision limit/);assert.equal(backend.data.get(f.key('state')),winner);}
+  }finally{release.resolve();await pending;}
+ }
+ const f=createAgentFeatureFixture(feature),key=id(await f.run('create Original | cue'));assert.match(await f.run(edit(key,'Original')),/^Saved/);
+ const s=await state(f);s.revision=Number.MAX_SAFE_INTEGER;s.records[0].revision=Number.MAX_SAFE_INTEGER;f.backend.data.set(f.key('state'),JSON.stringify(s));const before=f.backend.data.get(f.key('state')),writes=f.backend.calls.writes;
+ for(const cmd of [edit(key,'Blocked'),'create Other | cue']){assert.match(await f.run(cmd),/Revision limit/);assert.equal(f.backend.data.get(f.key('state')),before);assert.equal(f.backend.calls.writes,writes);}
+ assert.match(await f.run(`show ${key}`),/^Revision/);assert.equal(JSON.parse(await f.run(`export ${key}`)).record.id,key);
+ assert.match(await f.run(`clear ${key} title confirm`),/^Saved/);assert.equal((await state(f)).records[0].title,'');assert.equal((await state(f)).revision,Number.MAX_SAFE_INTEGER);
+ assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);assert.equal((await state(f)).records.length,0);
+ assert.match(await f.run('create Original | cue'),/Revision limit/);
+});
+
+test('known target or collection revision exhaustion rejects selection and observations before reading habits',async()=>{
+ const {f,h,exp}=await setup(),good=await state(f);
+ for(const ceiling of ['record','collection']){const s=structuredClone(good);if(ceiling==='record')s.records[0].revision=Number.MAX_SAFE_INTEGER;else s.revision=Number.MAX_SAFE_INTEGER;const raw=JSON.stringify(s);f.backend.data.set(f.key('state'),raw);const calls={...f.calls},cas=f.backend.calls.compareSets;
+  for(const command of [`attach ${exp} | toolbox:habits:${h}`,`freeze ${exp}`,`compare ${exp}`]){
+   assert.match(await f.run(command),/Revision limit/);assert.deepEqual(f.calls,calls);assert.equal(f.backend.calls.compareSets,cas);assert.equal(f.backend.data.get(f.key('state')),raw);
+  }
+ }
+});
