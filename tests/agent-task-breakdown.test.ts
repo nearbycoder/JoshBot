@@ -95,3 +95,20 @@ test("maximum root/step retrieval and Unicode quota reserve all mandatory comple
   f.backend.data.set(f.key("state"), JSON.stringify(corrupt)); const before = f.backend.data.get(f.key("state"));
   assert.match(await f.run(`delete ${works[0]} confirm`), /could not be read safely/); assert.equal(f.backend.data.get(f.key("state")), before);
 });
+
+
+test("optional drafts reject oversized, unknown-field and over-count results with no repair call", async () => {
+  let response = "";
+  const f = createAgentFeatureFixture(feature, { services: { generate: async () => response } });
+  const work = idFrom(await f.run("create Guide | Reader succeeds | 30"), "work"), before = f.backend.data.get(f.key("state"));
+  const step = { action: "Draft section", minutes: 10, proof: "Saved section" };
+  const invalid = [
+    JSON.stringify({ steps: Array.from({ length: 9 }, () => step) }),
+    JSON.stringify({ steps: [{ ...step, sourceId: "invented" }] }),
+    JSON.stringify({ steps: [{ ...step, action: "D".repeat(401) }] }),
+    "not JSON",
+    "😀".repeat(2001),
+  ];
+  for (const value of invalid) { response = value; assert.match(await f.run(`suggest ${work}`), /invalid or oversized/); assert.equal(f.backend.data.get(f.key("state")), before); }
+  assert.equal(f.calls.generate, invalid.length); assert.equal(f.calls.search, 0); assert.equal(f.calls.readContext, 0);
+});

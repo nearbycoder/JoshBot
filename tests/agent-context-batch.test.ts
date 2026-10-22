@@ -54,6 +54,9 @@ test("maximum board and action pages recover final IDs and complete Unicode fiel
   for (let i = 0; i < 12; i++) board = idFrom(await f.run(`create Board ${i} | 10080`), "board");
   assert.ok((await f.run("list 2")).includes(board));
   assert.match(await f.run("create Excess | 60"), /Maximum 12/);
+  let setup = "";
+  for (let i = 0; i < 12; i++) setup = idFrom(await f.run(`setup ${board} | setup ${i} | 0`), "setup");
+  assert.match(await f.run(`setup ${board} | extra | 0`), /Maximum 12/);
   let child = "";
   for (let i = 0; i < 40; i++) child = idFrom(await f.run(`action ${board} add ${i} 漢😀 <@UOTHER> & é | 1 | - | - | -`), "action");
   assert.match(await f.run(`action ${board} add extra | 1 | - | - | -`), /Maximum 40/);
@@ -61,7 +64,7 @@ test("maximum board and action pages recover final IDs and complete Unicode fiel
   const first = await f.run(`show ${board}`), pages = Number(first.match(/Page 1\/(\d+)/)![1]);
   let all = "";
   for (let page = 1; page <= pages; page++) { const result = await f.run(`show ${board} ${page}`); assert.ok(result.length <= 3500); assert.ok(result.isWellFormed()); all += result; }
-  assert.ok(all.includes(child)); assert.ok(all.includes("漢😀 <@UOTHER> & é")); assert.ok(!all.includes("&amp;"));
+  assert.ok(all.includes(setup)); assert.ok(all.includes(child)); assert.ok(all.includes("漢😀 <@UOTHER> & é")); assert.ok(!all.includes("&amp;"));
   await f.run(`batch ${board} | - | -`);
   const reportFirst = await f.run(`batch ${board}`), reportPages = Number(reportFirst.match(/Page 1\/(\d+)/)![1]);
   let reports = "";

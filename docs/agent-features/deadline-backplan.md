@@ -62,7 +62,7 @@ Dates use shared civil arithmetic and the injected `now`/IANA timezone, not serv
 
 ## Validation
 
-Six in-memory actual-runtime tests cover the exact first example, complete edit/removal, shared-prerequisite latest starts and slack, cycle-path/missing-dependency atomic refusal, leap days/DST/local-today risk, bounded infeasibility, all maximum node/edge/date counts, final-page retrieval, Unicode quotas and corrupt-state preservation. No live model/Slack/production service or deployment was used.
+Seven in-memory actual-runtime tests cover the exact first example, complete edit/removal, shared-prerequisite latest starts and slack, cycle-path/missing-dependency atomic refusal including a competing CAS retry, owner isolation, leap days/DST/local-today risk, bounded infeasibility, all maximum node/edge/date counts, final-page retrieval, Unicode quotas and corrupt-state preservation. No live model/Slack/production service or deployment was used.
 
 ```sh
 node --import tsx --test tests/agent-deadline-backplan.test.ts

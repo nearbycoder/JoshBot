@@ -60,7 +60,7 @@ The full schema is validated before mutations; malformed data is preserved rathe
 
 ## Validation
 
-`tests/agent-task-breakdown.test.ts` uses the actual runtime/scoped store with in-memory storage. Five tests cover the documented full workflow, edits/removal, effort/verb/proof refusals, optional failure and structural validation, stale edit/delete during generation, maximum pages, and Unicode admission followed by all maximum-sized completion reports. No live provider, Slack, or deployment behavior is claimed.
+`tests/agent-task-breakdown.test.ts` uses the actual runtime/scoped store with in-memory storage. Six tests cover the documented full workflow, edits/removal, effort/verb/proof refusals, optional failure, count/byte/unknown-field validation with no repair calls, stale edit/delete during generation, maximum pages, and Unicode admission followed by all maximum-sized completion reports. No live provider, Slack, or deployment behavior is claimed.
 
 ```sh
 node --import tsx --test tests/agent-task-breakdown.test.ts

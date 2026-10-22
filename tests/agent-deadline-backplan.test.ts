@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import feature from "../lib/agent-features/deadline-backplan.js";
-import { createAgentFeatureFixture } from "./helpers/agent-feature-fixture.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
 const idFrom = (reply: string, prefix: string) => { const id = reply.match(new RegExp(`${prefix}-[0-9a-f-]{36}`))?.[0]; assert.ok(id, reply); return id; };
 const record = async (f: ReturnType<typeof createAgentFeatureFixture>, id: string) => JSON.parse(await f.run(`export ${id}`)).record;
 async function allPages(f: ReturnType<typeof createAgentFeatureFixture>, command: string) {
@@ -106,4 +106,27 @@ test("Unicode admission near quota preserves rejected content and permits comple
   assert.ok(refused); assert.ok(Buffer.byteLength(f.backend.data.get(f.key("state"))!) <= 32768);
   await allPages(f, `backplan ${plans[0]}`); await f.run(`delete ${plans[0]} confirm`);
   assert.match(await f.run(`milestone ${plans[7]} add Retry | 1 | 0`), /Saved privately/);
+});
+
+
+test("a cycle introduced by a competing CAS is rejected after retry and another owner cannot inspect the plan", async () => {
+  const entered = deferred<void>(), release = deferred<void>();
+  let intercept = false, firstId = "", secondId = "";
+  const backend = createMemoryAgentBackend({ beforeCompareSet: async (_key, _previous, next) => {
+    if (!intercept) return;
+    const pending = JSON.parse(next).records?.[0]?.milestones?.find((m: { id: string }) => m.id === firstId);
+    if (pending?.predecessors.includes(secondId)) { intercept = false; entered.resolve(); await release.promise; }
+  } });
+  const f = createAgentFeatureFixture(feature, { backend }), plan = idFrom(await f.run("create Concurrent graph | 2026-12-04 | mon,tue,wed,thu,fri"), "plan");
+  firstId = idFrom(await f.run(`milestone ${plan} add First | 1 | 0`), "milestone");
+  secondId = idFrom(await f.run(`milestone ${plan} add Second | 1 | 0`), "milestone");
+  intercept = true;
+  const pending = f.run(`depends ${plan} ${firstId} | ${secondId}`); await entered.promise;
+  assert.match(await f.run(`depends ${plan} ${secondId} | ${firstId}`), /Saved privately/);
+  release.resolve(); assert.match(await pending, /Cycle:/);
+  const saved = await record(f, plan);
+  assert.deepEqual(saved.milestones[0].predecessors, []);
+  assert.deepEqual(saved.milestones[1].predecessors, [firstId]);
+  assert.equal(backend.calls.conflicts, 1);
+  assert.match(await f.run(`show ${plan}`, { owner: { userId: "UOTHER" } }), /not found/);
 });
