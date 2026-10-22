@@ -34,6 +34,47 @@ function deferred<T>() {
   const promise = new Promise<T>(r => { resolve = r; });
   return { promise, resolve };
 }
+function heavyPacket(token: string) {
+  const fill = (length: number) => token.repeat(Math.floor(length / token.length));
+  const items = Array.from({ length: 6 }, (_, i) => ({
+    ...source, id: `note:${i}`, title: fill(140), text: fill(500), sourceUrl: `https://example.com/${fill(480)}`,
+  }));
+  const command = `capture ${fill(240)} | done: ${fill(1000)} | next: ${fill(1000)} | questions: ${fill(800)} | constraints: ${fill(800)} | sources: ${items.map(s => s.id).join(",")}`;
+  const h = setup(items);
+  const store = h.ctx.store;
+  let maximumWrite = 0;
+  let overflowWrites = 0;
+  h.ctx.store = {
+    read: key => store.read(key),
+    update: (key, initial, transform) => store.update(key, initial, current => {
+      const next = transform(current);
+      const size = Buffer.byteLength(JSON.stringify(next.value), "utf8");
+      maximumWrite = Math.max(size, maximumWrite);
+      if (size >= 480_000) overflowWrites++;
+      assert.ok(size < 480_000, `attempted ${size}-byte write exceeds feature quota`);
+      return next;
+    }),
+  };
+  return { ...h, command, maximumWrite: () => maximumWrite, overflowWrites: () => overflowWrites };
+}
+
+async function fillByteQuota(h: ReturnType<typeof heavyPacket>): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i <= 20; i++) {
+    const before = await raw(h.ctx);
+    const result = await h.run(h.command);
+    if (!result.startsWith("Captured")) {
+      assert.match(result, /Handoff byte quota reached/);
+      assert.match(result, /UTF-8 bytes plus \d+ reserved for closing/);
+      assert.match(result, /delete <id> confirm/);
+      assert.equal(await raw(h.ctx), before);
+      assert.ok(ids.length > 0 && ids.length < 20, "byte quota should precede the packet-count limit");
+      return ids;
+    }
+    ids.push(capturedId(result));
+  }
+  assert.fail("Expected a byte quota rejection before 20 heavy packets");
+}
 
 test("complete private capture, resume, revise, close, history and deletion flow", async () => {
   const h = setup([source]);
@@ -299,6 +340,71 @@ test("packet and revision bounds retain current work and never silently evict wh
   capturedId(await h.run(capture));
 });
 
+test("serialized UTF-8 quota includes Unicode and JSON escaping and reserves all closing revisions", async () => {
+  for (const token of ["漢", "😀", "\ud800"]) {
+    const h = heavyPacket(token);
+    const ids = await fillByteQuota(h);
+    const saved = await raw(h.ctx);
+    if (token !== "\ud800") assert.ok(Buffer.byteLength(saved, "utf8") > saved.length);
+    else assert.ok(saved.includes("\\ud800"), "JSON escaping must be included in the measured size");
+    const listing = await h.run("list all");
+    assert.ok(listing.includes(`Storage: ${Buffer.byteLength(saved, "utf8")} UTF-8 bytes`));
+    assert.match(listing, /\d+ reserved for closing/);
+
+    // The limit applies to histories as well as new captures. Rejected revisions
+    // must leave the last accepted fields and revision number untouched.
+    let quotaHit = false;
+    for (let i = 0; i < 16; i++) {
+      const before = await raw(h.ctx);
+      const reply = await h.run(`update ${ids[0]} | objective: Progress ${i}`);
+      if (reply.includes("byte quota reached")) {
+        assert.equal(await raw(h.ctx), before);
+        quotaHit = true;
+        break;
+      }
+      assert.match(reply, /Updated/);
+    }
+    assert.ok(quotaHit, "adding revision history must respect the same byte quota");
+    assert.ok((await h.run(`resume ${ids[0]}`)).length <= 28_000);
+    for (const id of ids) {
+      assert.match(await h.run(`close ${id}`), /Closed/);
+      assert.match(await h.run(`show ${id}`), /CLOSED: reference only/);
+    }
+    assert.ok(h.maximumWrite() < 480_000);
+    assert.equal(h.overflowWrites(), 0);
+    assert.match(await h.run("list all"), /\+ 0 reserved for closing/);
+    for (const id of ids) assert.match(await h.run(`delete ${id} confirm`), /Deleted/);
+    capturedId(await h.run(h.command));
+    assert.equal(h.forbidden(), 0);
+  }
+});
+
+test("concurrent captures recheck the byte quota against the latest atomic state", async () => {
+  const h = heavyPacket("漢");
+  const ids = await fillByteQuota(h);
+  await h.run(`delete ${ids[0]} confirm`);
+  const responses = await Promise.all([h.run(h.command), h.run(h.command)]);
+  assert.equal(responses.filter(r => r.startsWith("Captured")).length, 1);
+  assert.equal(responses.filter(r => r.includes("byte quota reached")).length, 1);
+  const saved = JSON.parse(await raw(h.ctx));
+  assert.equal(saved.packets.length, ids.length);
+  for (const packet of saved.packets) assert.match(await h.run(`close ${packet.id}`), /Closed/);
+  assert.equal(h.overflowWrites(), 0);
+});
+
+test("the final revision number remains available to close an accepted packet", async () => {
+  const h = setup();
+  const id = capturedId(await h.run(capture));
+  const saved = JSON.parse(await raw(h.ctx));
+  saved.packets[0].revisions[0].number = 999_999;
+  await h.ctx.store.update(KEY, null, () => ({ value: saved, result: null }));
+  const before = await raw(h.ctx);
+  assert.match(await h.run(`update ${id} | next: Further work`), /final revision number is reserved for closing/);
+  assert.equal(await raw(h.ctx), before);
+  assert.match(await h.run(`close ${id}`), /Closed.*r1000000/);
+  assert.match(await h.run(`resume ${id}`), /CLOSED: reference only/);
+});
+
 test("malformed saved state is rejected without replacing or partially repairing it", async () => {
   const h = setup([source]);
   const id = capturedId(await h.run(`${capture} | sources: note:login`));
@@ -368,6 +474,26 @@ test("cancellation while selecting sources prevents writes and provider diagnost
     update: async () => { throw new Error("secret-storage-endpoint"); },
   } });
   assert.equal(await feature.execute("list", failing), "Handoffs could not complete this request. Check list/show before retrying; no automatic retry or reset was attempted.");
+});
+
+test("a late source response after cancellation cannot persist a capture or refresh", async () => {
+  for (const operation of ["capture", "update"]) {
+    const h = setup([source]);
+    const id = capturedId(await h.run(`${capture} | sources: note:login`));
+    const before = await raw(h.ctx);
+    const controller = new AbortController();
+    h.ctx.signal = controller.signal;
+    const started = deferred<void>();
+    const pending = deferred<AgentContextItem[]>();
+    h.ctx.services.readContext = async () => { started.resolve(); return pending.promise; };
+    const running = h.run(operation === "capture" ? `${capture} | sources: note:login`
+      : `update ${id} | done: Late progress | sources: note:login`);
+    await started.promise;
+    controller.abort();
+    pending.resolve([{ ...source, text: "Late source response" }]);
+    assert.match(await running, /cancelled/);
+    assert.equal(await raw(h.ctx), before);
+  }
 });
 
 test("source text stays inert and replies remain within Slack limits even with markup expansion", async () => {

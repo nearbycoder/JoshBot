@@ -5,6 +5,8 @@ const KEY = "packets-v1";
 const MAX_PACKETS = 20;
 const MAX_REVISIONS = 8;
 const MAX_SOURCES = 6;
+const MAX_STATE_BYTES = 480_000;
+const MAX_REVISION_NUMBER = 1_000_000;
 const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 const FIELD_LIMITS = { objective: 240, done: 1000, questions: 800, next: 1000, constraints: 800 };
 const KINDS: AgentContextKind[] = ["note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder", "monitor", "digest", "artifact", "memory", "event"];
@@ -149,7 +151,9 @@ function now(ctx: AgentFeatureContext): string {
   if (typeof ctx.timezone !== "string" || !ctx.timezone.trim()) fail("The runtime must supply a valid IANA timezone.");
   try { new Intl.DateTimeFormat("en-US", { timeZone: ctx.timezone }).format(ctx.now); }
   catch { fail("The runtime must supply a valid IANA timezone."); }
-  return ctx.now.toISOString();
+  const at = ctx.now.toISOString();
+  if (!iso(at)) fail("The runtime supplied an unsupported current time; use a four-digit ISO year.");
+  return at;
 }
 function date(instant: string, ctx: AgentFeatureContext): string {
   return `${new Intl.DateTimeFormat("en-US", { timeZone: ctx.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(instant))} (${ctx.timezone})`;
@@ -170,7 +174,8 @@ function providerDate(value: unknown): string | null | undefined {
   // Reject rollover dates such as February 30, while accepting explicit offsets.
   const day = value.slice(0, 10);
   if (new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) return undefined;
-  return new Date(value).toISOString();
+  const instant = new Date(value).toISOString();
+  return iso(instant) ? instant : undefined;
 }
 function snapshot(raw: unknown): Source | null {
   if (!record(raw) || typeof raw.id !== "string" || !SOURCE_ID.test(raw.id)
@@ -220,11 +225,35 @@ async function selectSources(ids: string[], ctx: AgentFeatureContext): Promise<S
   });
 }
 function append(p: Packet, r: Revision): Packet {
-  if (r.number > 1_000_000) fail("Revision limit reached. Capture a new handoff.");
+  if (r.number > MAX_REVISION_NUMBER || (r.status === "open" && r.number >= MAX_REVISION_NUMBER)) {
+    fail("Revision limit reached. Close this handoff and capture a new one; the final revision number is reserved for closing.");
+  }
   return { ...p, revisions: [...p.revisions, r].slice(-MAX_REVISIONS) };
 }
 function replace(s: State, packet: Packet): State {
   return { ...s, packets: s.packets.map(p => p.id === packet.id ? packet : p) };
+}
+function bytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
+function storageBudget(s: State): { used: number; reserved: number } {
+  let reserved = 0;
+  for (const p of s.packets) {
+    const r = latest(p);
+    if (r.status === "closed") continue;
+    // All stored ISO timestamps have the same encoded length. Project the exact
+    // close shape without a clock, UUID, mutation, or service call in the CAS.
+    const closed: Packet = { ...p, revisions: [...p.revisions, {
+      ...r, number: r.number + 1, status: "closed" as const, changes: ["status" as const],
+    }].slice(-MAX_REVISIONS) };
+    reserved += Math.max(0, bytes(closed) - bytes(p));
+  }
+  return { used: bytes(s), reserved };
+}
+function withinQuota(s: State): State {
+  const { used, reserved } = storageBudget(s);
+  if (used + reserved >= MAX_STATE_BYTES) {
+    fail(`Handoff byte quota reached: ${used} UTF-8 bytes plus ${reserved} reserved for closing must stay below 480,000. Nothing was saved. Use list all, copy needed context with show/resume, then delete <id> confirm to free space. Closing keeps history and may not free space.`);
+  }
+  return s;
 }
 function age(source: Source, ctx: AgentFeatureContext): string {
   if (!source.updatedAt) return "AGE UNKNOWN: source has no updatedAt timestamp";
@@ -286,7 +315,7 @@ close <id> — keep a final read-only revision
 delete <id> confirm — remove packet and its retained revisions
 Example: capture Ship onboarding fix | done: Reproduced login loop; added regression test | next: Review cookie handling | questions: Should existing sessions expire? | constraints: No production changes
 Update only the fields you want to replace; use - to clear a field. Objective cannot be cleared. Sources are opt-in; re-selecting the full source list refreshes their snapshots.
-Keep up to 20 packets, 8 revisions each, and 6 sources per packet. Closing keeps history; delete frees capacity. No model calls, execution, sending, or restoration of running sessions.`;
+Keep up to 20 packets, 8 revisions each, and 6 sources per packet. Total JSON plus reserved closing space must stay below 480,000 UTF-8 bytes; this quota can be reached before the count limits. Closing keeps history; copy needed packets with show/resume, then delete <id> confirm to free capacity. No model calls, execution, sending, or restoration of running sessions.`;
 
 async function execute(command: string, ctx: AgentFeatureContext): Promise<string> {
   if (!text(command, 8000)) fail("Command must fit 8,000 characters without control characters.");
@@ -327,15 +356,18 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const current = state(raw);
       if (current.packets.length >= MAX_PACKETS) fail("Handoff storage is full (20 packets). Use list all, then delete <id> confirm to free a slot; closing does not free storage.");
       if (current.packets.some(p => p.id === packet.id)) fail("ID conflict; retry capture.");
-      return { value: { ...current, packets: [...current.packets, packet] }, result: `Captured ${packet.id} · r1.\n${render(packet, latest(packet), ctx)}` };
+      return { value: withinQuota({ ...current, packets: [...current.packets, packet] }), result: `Captured ${packet.id} · r1.\n${render(packet, latest(packet), ctx)}` };
     });
   }
   if (verb === "list") {
     const filter = args || "open";
     if (!["all", "open", "closed"].includes(filter)) fail("Use list [open|closed|all].");
-    const packets = (await read(ctx)).packets.filter(p => filter === "all" || latest(p).status === filter).reverse();
-    return packets.length ? packets.map(p => `${p.id} · r${latest(p).number} · ${latest(p).status}\n${display(latest(p).fields.objective, 480)}\nUpdated ${date(latest(p).at, ctx)}`).join("\n\n")
+    const saved = await read(ctx);
+    const packets = saved.packets.filter(p => filter === "all" || latest(p).status === filter).reverse();
+    const { used, reserved } = storageBudget(saved);
+    const entries = packets.length ? packets.map(p => `${p.id} · r${latest(p).number} · ${latest(p).status}\n${display(latest(p).fields.objective, 480)}\nUpdated ${date(latest(p).at, ctx)}`).join("\n\n")
       : "No matching handoffs. Start with capture <objective> | done: <progress> | next: <steps>; use list all to include closed packets.";
+    return `${entries}\n\nStorage: ${used} UTF-8 bytes + ${reserved} reserved for closing; limit below 480,000. Copy needed packets with show/resume, then delete <id> confirm to free space.`;
   }
   if (verb === "update") {
     const [head, ...parts] = args.split("|").map(s => s.trim());
@@ -356,7 +388,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       if (sources !== undefined && JSON.stringify(sources) !== JSON.stringify(previous.sources)) changed.push("sources");
       if (!changed.length) return { value: current, result: `No changes; ${id} remains at r${previous.number}.` };
       const updated = append(p, { number: previous.number + 1, at, status: "open", fields, sources: sources ?? previous.sources, changes: changed });
-      return { value: replace(current, updated), result: `Updated ${id} · r${latest(updated).number}. Changed: ${changed.join(", ")}.\nUse resume ${id} for a context packet.` };
+      return { value: withinQuota(replace(current, updated)), result: `Updated ${id} · r${latest(updated).number}. Changed: ${changed.join(", ")}.\nUse resume ${id} for a context packet.` };
     });
   }
   if (verb === "close" || verb === "delete") {
@@ -371,7 +403,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const previous = latest(packet);
       if (previous.status === "closed") return { value: current, result: `${id} is already closed at r${previous.number}.` };
       const closed = append(packet, { ...previous, number: previous.number + 1, at, status: "closed", changes: ["status"] });
-      return { value: replace(current, closed), result: `Closed ${id} · r${latest(closed).number}. History remains available with show, revisions, and resume (reference only).` };
+      return { value: withinQuota(replace(current, closed)), result: `Closed ${id} · r${latest(closed).number}. History remains available with show, revisions, and resume (reference only).` };
     });
   }
   if (verb === "show" || verb === "resume" || verb === "revisions") {
