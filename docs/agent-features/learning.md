@@ -41,7 +41,7 @@ All commands below follow `/nobo-help agent learning`.
 | --- | --- |
 | `help` | Syntax, example and spacing rule; works without storage or a model. |
 | `create <title> \| <source label> \| <material>` | Save one immutable source and an empty deck. |
-| `list` | Deck IDs, accepted-card counts, due counts and draft indicators. |
+| `list` | Deck IDs, accepted-card counts, due counts, draft indicators and UTF-8 storage usage including reserved review space. |
 | `show <deck-id>` | Source ID, original material, date and deck status. Long escaped displays may be shortened with an explicit notice. |
 | `card <deck-id> \| <question> \| <answer excerpt>` | Add a manual card, due immediately. Its answer must occur verbatim in the deck's source. |
 | `cards <deck-id> [page]` | Review three accepted cards per page, with answers, provenance and due times. |
@@ -84,7 +84,7 @@ Progress reports completed reviews and self-reported difficulty, not mastery or 
 /nobo-help agent learning accept <deck-id> <draft-id>
 ```
 
-The generator receives only the deck's source and existing questions. Each request makes at most one text-only generation call. Output must be strict JSON with one to three cards (or fewer when close to capacity):
+The generator receives only the deck's source and existing questions. The complete source is retained; the list of existing questions is shortened if necessary to keep the JSON input at or below the runtime's 80,000-character limit. Duplicate validation still checks every saved card. Each request makes at most one text-only generation call. Output must be strict JSON with one to three cards (or fewer when close to capacity):
 
 ```json
 {
@@ -107,8 +107,12 @@ Drafts never become quiz cards until explicit acceptance. Provider failures pres
 ## Bounds and retention
 
 - At most 6 decks, 40 accepted cards per deck, 3 pending suggestions per deck and one active quiz.
+- The entire serialized state must stay **below 480,000 UTF-8 bytes**, including space reserved for future reviews. Every mutation measures `Buffer.byteLength(JSON.stringify(state), "utf8")` and a conservative size envelope for later lifecycle changes. This is below the runtime's 512,000-byte per-value cap. Unicode and JSON escaping can consume several bytes per character, so the byte quota may be reached before the deck/card-count limits.
+- The size envelope reserves fully expanded dates and counters for every accepted card, conversion of all pending suggestions into accepted cards, and a maximum-sized active recall answer (including worst-case JSON escaping). New content cannot use that reserve. An admitted deck can still be quizzed, answered and rated, and admitted drafts can still be accepted without exceeding the byte limit. The existing 40-card-per-deck and duplicate checks still apply to acceptance.
+- `list` shows saved bytes and total allocated bytes including the reserve. An addition that would exceed the quota fails atomically with explicit deletion/discard guidance. Use `delete <deck-id> confirm` to free a deck's space, or `discard <deck-id> <draft-id>` to remove pending suggestions. Smaller source and answer excerpts consume less space. Existing records are never automatically evicted to make room.
 - Titles and source labels: 100 characters each. Source material: 10,000 characters. Questions: 300; answers: 800; temporary recall: 2,000.
 - A command is limited to 12,000 characters; model output to 8,000. Replies are escaped and capped below 28,000 characters. Three-card pages and generated previews fit completely within that bound, even with escaped text.
+- Each invocation makes at most one generation call and zero searches, within the runtime's limits of eight generation calls and six searches. The parent runtime owns the 120-second deadline, prompt cancellation and guards against late writes. Aborted drafts do not save generated cards; no background work continues a learning workflow.
 - Source text is immutable. To change source material or replace incorrect cards, create a replacement deck and delete the old deck. Individual card editing/deletion and deck imports/exports are not implemented.
 - Data stays until explicit deck deletion; there is no automatic expiry. Source and accepted-card content are bounded, and review history uses aggregate counters instead of a growing event log. Each card allows up to 1,000,000 recorded reviews, after which it must be recreated. Temporary recall disappears on rating or deck deletion.
 - Sources are pasted text only: no URL fetching, invented citations, attachment processing, public-web search, owned-context reads, automatic grading or live inference tests.
@@ -118,9 +122,9 @@ Drafts never become quiz cards until explicit acceptance. Provider failures pres
 
 1. Import named `feature` or the default export from `lib/agent-features/learning.ts`; register exact ID `learning` through the parent registry/router and help/Home discovery. No shared files are changed by this feature.
 2. Route `/nobo-help agent learning <command>` to `feature.execute(command, context)` and deliver only to the caller privately. Keep identity/access checks, request deduplication and asynchronous delivery in the runtime.
-3. Supply workspace/user/feature-scoped `AgentFeatureStore` persistence. The sole internal key is `learning:v1`. `update` must atomically apply pure synchronous transforms and may retry them; callback exceptions must not commit a partial value. Initial state is `{version: 1, decks: [], session: null}`. Reads return JSON data, and stored deck/session/card references are validated on every access.
+3. Use the parent runtime's workspace/user/feature-scoped `AgentFeatureStore` persistence. The sole internal key is `learning:v1`. `update` must atomically apply pure synchronous transforms and may retry them; callback exceptions must not commit a partial value. Initial state is `{version: 1, decks: [], session: null}`. Reads return JSON data, and stored deck/session/card references are validated on every access. Feature writes enforce the stricter lifecycle-aware quota below 480,000 UTF-8 bytes; no changes to the runtime's 512,000-byte limit or shared contract are needed.
 4. Supply a valid `now` and saved IANA `timezone`. Invalid time/timezone inputs fail without mutations. The module does not read preferences, channels, Redis or system-local dates itself.
-5. Supply `services.generate` for optional `draft` only. It must remain text-only, without tools. All other commands work if generation is unavailable. `search` and `readContext` are unused. No external credentials or package changes are needed.
+5. Supply `services.generate` for optional `draft` only. It must remain text-only, without tools. All other commands work if generation is unavailable. `search` and `readContext` are unused. Keep the runtime's 120-second deadline, abortable service waiting and signal-guarded storage writes in place; the feature does not create its own timer or bypass these guards. No external credentials or package changes are needed.
 6. No recurring scheduler integration is required. Due checks and practice are explicitly invoked; parent should not advertise notification delivery.
 
 ## Verification
@@ -133,4 +137,4 @@ PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
 git diff --check
 ```
 
-Tests use the shared isolated JSON store and fake generation only. They cover the complete manual and generated flows, exact-source validation, timezones/DST, interval growth/reset/cap, confirmation, limits, corrupted data, failed providers, stale generation, concurrent attempts/ratings, and pure retry behavior. No Slack, production storage or inference API is called.
+Tests use the shared isolated JSON store and fake generation only. They cover the complete manual and generated flows, exact-source validation, timezones/DST, interval growth/reset/cap, confirmation, limits, corrupted data, failed providers, stale generation, concurrent attempts/ratings, and pure retry behavior. Quota tests fill state with multibyte Unicode, reject over-budget additions without changes, accept saved drafts, expand review counters and record a maximally JSON-escaped recall answer while every stored value remains below 480,000 bytes. Tests also check complete source preservation within the generation-input cap and cancellation without saved drafts. No Slack, production storage or inference API is called.

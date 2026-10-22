@@ -433,3 +433,124 @@ test("backdated clocks cannot record a recall or move a review backwards", async
   assert.match(await run(earlier, `rate ${sessionId} easy`), /predates this quiz/);
   assert.deepEqual(await saved(context), revealed);
 });
+
+test("UTF-8 quota is atomic and reserves draft acceptance and worst-case recall/review growth", async () => {
+  const base = createAgentTestStore();
+  let peakBytes = 0;
+  const store: AgentFeatureStore = {
+    read: base.read,
+    async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      return base.update(key, initial, (current) => {
+        const next = transform(current);
+        const bytes = Buffer.byteLength(JSON.stringify(next.value), "utf8");
+        assert.ok(bytes < 480_000, `Feature attempted to persist ${bytes} bytes`);
+        peakBytes = Math.max(peakBytes, bytes);
+        return next;
+      });
+    },
+  };
+  const context = createAgentTestContext({ store });
+  const material = "漢".repeat(10_000);
+  const answer = "漢".repeat(800);
+  for (let i = 0; i < 6; i++) assert.match(await run(context, `create 漢字 ${i} | My notes | ${material}`), /Created deck/);
+  const decks = (await saved(context)).decks;
+  let generateCalls = 0;
+  context.services.generate = async ({ input }) => {
+    generateCalls++;
+    const { source } = JSON.parse(input) as { source: { id: string } };
+    return JSON.stringify({ cards: [0, 1, 2].map((i) => ({ question: `Suggestion ${i}`, answer, sourceId: source.id })) });
+  };
+  assert.match(await run(context, `draft ${decks[0].id}`), /Generated suggestions/);
+  const draftId = (await saved(context)).decks[0].draft!.id;
+  let rejectedDeckId = "";
+  let ordinal = 0;
+  for (const deck of decks.slice(1)) {
+    for (let i = 0; i < 40; i++) {
+      const before = await saved(context);
+      const question = "学".repeat(296) + String(ordinal++).padStart(4, "0");
+      const response = await run(context, `card ${deck.id} | ${question} | ${answer}`);
+      if (response.includes("storage quota reached")) {
+        rejectedDeckId = deck.id;
+        assert.match(response, /UTF-8 bytes.*reserved review space/);
+        assert.match(response, /learning delete.*confirm/);
+        assert.match(response, /learning discard/);
+        assert.deepEqual(await saved(context), before);
+        break;
+      }
+      assert.match(response, /Added and due now/);
+    }
+    if (rejectedDeckId) break;
+  }
+  assert.ok(rejectedDeckId, "Unicode content must hit the byte quota before the card/deck-count caps");
+  const full = await saved(context);
+  const serialized = JSON.stringify(full);
+  assert.ok(serialized.length < 240_000, "A UTF-16 character-count quota would miss this case");
+  assert.ok(Buffer.byteLength(serialized, "utf8") > 460_000);
+  const list = await run(context, "list");
+  assert.ok(list.includes(`Storage: ${Buffer.byteLength(serialized, "utf8")} UTF-8 bytes saved`));
+  const allocation = Number(/(\d+)\/479999 bytes allocated/.exec(list)?.[1]);
+  assert.ok(allocation > 476_000 && allocation < 480_000, list);
+
+  assert.match(await run(context, `draft ${rejectedDeckId}`), /storage quota reached/);
+  assert.equal(generateCalls, 2);
+  assert.deepEqual(await saved(context), full, "An over-budget generated batch must not replace or clear pending state");
+  assert.match(await run(context, `accept ${decks[0].id} ${draftId}`), /Accepted 3/);
+  assert.equal((await saved(context)).decks[0].cards.length, 3);
+
+  // Mature every card's counters to exercise the lifecycle reserve, rather than
+  // replaying a million reviews. All records still satisfy the public schema.
+  const mature = await saved(context);
+  const reviewedAt = context.now.toISOString();
+  context.now = new Date(context.now.getTime() + 600_000);
+  for (const deck of mature.decks) for (const card of deck.cards) {
+    card.reviews = 999_999; card.lapses = 999_999; card.lastRating = "again";
+    card.lastReviewedAt = reviewedAt; card.intervalDays = 0; card.dueAt = context.now.toISOString();
+  }
+  await context.store.update(KEY, mature, () => ({ value: mature, result: undefined }));
+  const { sessionId } = await quiz(context, decks[0].id);
+  assert.match(await run(context, `answer ${sessionId} | ${"\u0000".repeat(2_000)}`), /Your recall/);
+  assert.ok(peakBytes > 474_000 && peakBytes < 480_000, `Peak serialized state: ${peakBytes}`);
+  assert.match(await run(context, `rate ${sessionId} again`), /Recorded your recall/);
+  assert.ok((await saved(context)).decks[0].cards.some((card) => card.reviews === 1_000_000 && card.lapses === 1_000_000));
+  assert.equal((await saved(context)).session, null);
+
+  assert.match(await run(context, `delete ${decks[0].id} confirm`), /Deleted deck/);
+  assert.match(await run(context, `card ${rejectedDeckId} | Space reclaimed | ${answer}`), /Added and due now/);
+});
+
+test("escaped source stays intact while generation input fits the runtime's character budget", async () => {
+  const context = createAgentTestContext();
+  const material = "\u0000".repeat(10_000);
+  assert.match(await run(context, `create Escaped input | Notes | ${material}`), /Created deck/);
+  const deck = (await saved(context)).decks[0];
+  for (let i = 0; i < 39; i++) {
+    assert.match(await run(context, `card ${deck.id} | ${"\u0000".repeat(296)}${String(i).padStart(3, "0")} | \u0000`), /Added and due now/);
+  }
+  let calls = 0;
+  context.services.generate = async ({ input, instructions }) => {
+    calls++;
+    assert.ok(input.length <= 80_000);
+    assert.ok(instructions.length <= 24_000);
+    const prompt = JSON.parse(input) as { source: { id: string; text: string }; existingQuestions: string[] };
+    assert.equal(prompt.source.text, material);
+    assert.ok(prompt.existingQuestions.length > 0 && prompt.existingQuestions.length < 39);
+    return JSON.stringify({ cards: [{ question: "What is the literal character?", answer: "\u0000", sourceId: prompt.source.id }] });
+  };
+  assert.match(await run(context, `draft ${deck.id}`), /Generated suggestions/);
+  assert.equal(calls, 1);
+  const state = await saved(context);
+  assert.ok(Buffer.byteLength(JSON.stringify(state), "utf8") < 480_000);
+});
+
+test("an aborted runtime generation reports cancellation and never saves a draft", async () => {
+  const { context, deckId } = await setup();
+  const controller = new AbortController();
+  context.signal = controller.signal;
+  context.services.generate = async () => {
+    controller.abort();
+    throw new Error("Aborted by the runtime deadline");
+  };
+  const before = await saved(context);
+  assert.match(await run(context, `draft ${deckId}`), /cancelled.*No generated cards were saved/);
+  assert.deepEqual(await saved(context), before);
+});
