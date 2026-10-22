@@ -29,7 +29,7 @@ Context reads are sequential per invocation, with at most 2,000 items, 16 MiB of
 
 ## Validation and measurements
 
-Measurements use Node24.22.1 and seed20261022, synthetic bounded services, production Vite SSR bundling, and an isolated fake Slack API for server startup. No live inference, Slack messages or production records are used. Run `node scripts/bench-agent-features.mjs` with Node24. Full-server and feature-runtime measurements must be interpreted separately. The benchmark report and maximum-context/mixed-load evidence are being completed in a follow-up commit; the selected admission limits were tested against the same three 32-command recall bursts as the baseline.
+Measurements use Node24.22.1 and seed20261022, synthetic bounded services, production Vite SSR bundling, and an isolated fake Slack API for server startup. No live inference, Slack messages or production records are used. Run `node scripts/bench-agent-features.mjs` with Node24. Full-server and feature-runtime measurements must be interpreted separately. The benchmark report and maximum-context/mixed-load evidence are recorded below; the selected admission limits were tested against the same three 32-command recall bursts as the baseline.
 
 Initial baseline: all96 commands accepted, accepted p95 1,254–1,287ms, loop maximum1,348–1,411ms, feature RSS peak278–279MiB. With8 permits:24 accepted/72 rejected, p95 249–266ms, loop253–265ms. With4:12 accepted/84 rejected, p95158–206ms, loop147–190ms. With3:9 accepted/87 rejected, p95117–140ms, loop110–127ms, feature RSS peak141–142MiB. Lower accepted latency is **not a throughput improvement**: overload work is explicitly rejected. The150ms event-loop target is a local regression target, not a production latency guarantee. All samples, including noisy JIT/GC samples, are retained in the report.
 
@@ -102,6 +102,46 @@ PATH=/tmp/joshbot-node24/bin:$PATH node scripts/bench-agent-features.mjs --check
 PATH=/tmp/joshbot-node24/bin:$PATH node scripts/bench-agent-features.mjs --profile /tmp/agent-recall.cpuprofile
 ```
 
-`--check` is an opt-in local performance regression gate: runtime RSS≤256MiB, deterministic p95≤50ms, accepted recall p95≤250ms, event-loop maximum≤150ms, at most3 physical context reads, and exactly9 accepted/87 busy burst requests plus60/60 mixed completions. It currently fails the strict event-loop target as documented. It is not part of the normal correctness suite and must not silently be relaxed for shared-host noise. The script removes its temporary bundles and permits no live inference/search; only the loopback fake Slack API is used by server smoke. Source dependencies are linked without changing their package contents.
+`--check` is an opt-in local performance regression gate: runtime RSS≤256MiB, deterministic p95≤50ms, accepted recall p95≤250ms, event-loop maximum≤150ms, at most3 physical context reads, and exactly9 accepted/87 busy burst requests plus60/60 mixed completions. The foundation run failed the strict event-loop target; the separate recall follow-up below passed without changing that target. It is not part of the normal correctness suite and must not silently be relaxed for shared-host noise. The script removes its temporary bundles and permits no live inference/search; only the loopback fake Slack API is used by server smoke. Source dependencies are linked without changing their package contents.
 
 Correctness validation:658 personal-agent tests passed with zero skips, Node's test concurrency2, and an isolated loopback Redis7.2.10 instance with persistence disabled and removed after the run. The subsequent production-adapter maxima test passes in the15-test performance suite; typecheck passes. Scope covers the existing20 workflows, tenant isolation, receipts, logical store limits/CAS contention, byte budgets, overlapping context rejection, original deadlines, lazy metadata drift, retained cancelled raw promises and real Exa SDK transport cancellation. No live models, Slack messages, deployments, pushes or PRs were used.
+
+## Narrow recall optimization follow-up
+
+After the report commit, recall was changed separately to tokenize each candidate title/body once for frequency and phrase scoring, rank all candidates, and generate excerpts only for the displayed top K. The excerpt algorithm, scores, order/ties, citation identity and source-opening behavior are unchanged. Per-request normalized tokens/phrases are discarded after the invocation; there is no durable or global source cache. No cooperative yielding was added because the one planned post-change benchmark passed the existing strict target.
+
+The same extended workload, admission limits, synthetic seed, Node version and script were run once for three fresh samples. All raw foundation failures remain alongside these new results in the JSON report. The benchmark ran the pending recall change atop `f549a02`; it is included in this follow-up commit.
+
+| Metric | Foundation samples 1 / 2 / 3 | Recall optimization samples 1 / 2 / 3 |
+| --- | --- | --- |
+| Burst accepted / offered | 9/96 each | 9/96 each |
+| Burst rejected / offered | 87/96 each | 87/96 each |
+| Accepted burst p95, ms | 196.61 / 205.62 / 220.80 | 96.04 / 85.60 / 80.72 |
+| Burst CPU, ms | 442.91 / 483.84 / 451.23 | 328.08 / 296.75 / 274.49 |
+| Event-loop maximum, ms | 187.56 / 202.24 / 206.18 | 94.83 / 107.02 / 100.60 |
+| Mixed accepted / offered | 60/60 each | 60/60 each |
+| Mixed deterministic p95, ms | 1.544 / 2.120 / 1.454 | 1.523 / 1.499 / 1.547 |
+| Mixed recall p95, ms | 85.10 / 84.43 / 82.12 | 40.63 / 38.00 / 35.53 |
+| Mixed CPU, ms | 725.02 / 674.01 / 698.45 | 552.05 / 510.24 / 504.86 |
+| Mixed completions / second | 51.62 / 56.05 / 54.70 | 68.72 / 71.33 / 72.16 |
+| Runtime peak RSS, MiB | 207.73 / 207.92 / 208.32 | 196.26 / 196.05 / 197.79 |
+
+**The strict 150 ms check passed all three post-optimization samples.** This is a local observation, not a production guarantee. The before/after denominator is identical here, unlike the original comparison against unbounded admission. The mixed driver remains closed-loop; shared-host and JIT caveats still apply. Full-server post-change idle RSS is 302.40 / 302.51 / 303.21 MiB (peak 318.27 / 319.57 / 319.53 MiB), retained separately and not evidence of cloud savings. Near-16-MiB validation still accepts 3/3 in each sample, with peak RSS 124.99 / 124.79 / 125.27 MiB; recall optimization does not alter that validation path.
+
+105 targeted recall/foundation tests pass, zero skips, plus typecheck. Captured pre-change output fixtures compare exact selected provenance, ordering and excerpts for ties, quoted phrases, late evidence, Unicode and both search/ask widths. Bounded instrumentation observes 3 full-body excerpt scans for a search limit of 3 over 600 matches, 5 for ask limit 5, and zero for source reopening. It observes the actual unchanged excerpt iterator rather than mirroring the ranking implementation.
+
+## Release review item: recovery from a complete-context budget failure
+
+**Open integration/release review item:** the 16 MiB response limit can reject a previously individually valid combination of source records. Several consumers catch the specific error and replace it with a generic retry-later response. A retry with unchanged sources will not recover a deterministic size failure. Correctness tests establish no writes or silent truncation, but reviewers must still verify an understandable recovery path before treating the rollout as fully polished. This follow-up deliberately changes no other feature's flow.
+
+| Consumer / catch boundary | Source selection | Recovery currently available / gap |
+| --- | --- | --- |
+| `handoffs.ts` `contextItems` (around line 209) | Unfiltered `readContext()` | Generic “Owner context is unavailable”; no narrower request option at this boundary. Review how users can reduce relevant sources while preserving saved handoffs. |
+| `meeting-prep.ts` `collect` (around line 167) | Fixed note, goal, follow-up, reminder, memory, event, artifact | Generic unavailable; `show` preserves the saved meeting, but prepare/refresh has no source-kind narrowing command. |
+| `weekly-review.ts` review read (around line 315) | Fixed goal, habit, journal, follow-up, note | Generic retry-later; reducing the review date window happens after the source read and cannot fix an adapter-level byte failure. |
+| `automation-audit.ts` review read (around line 370) | Fixed reminder, monitor, digest | Generic unavailable; saved history survives, but no narrower source-kind request. Particularly relevant for large combined automation purpose text/metadata. |
+| `morning-brief.ts` brief read (around line 371) | Saved `settings.sources` | Generic retry message hides the quota cause; `settings sources ...` can reduce the requested kinds and should be surfaced as recovery. |
+| `project-briefs.ts` `contextItems` (around line 217) | `sources <kind>`; brief derives kinds from linked references | Generic refresh failure; listing one kind and unlinking unnecessary kinds can reduce the read. Existing saved brief can still be shown. Filtering by project relevance happens after reading each selected kind. |
+| `recall.ts` context catch | `--kind`, or kind-qualified `source` | Generic context failure remains, but `search ... --kind note` and complete kind-qualified references provide a narrower read. The performance optimization does not change this failure text. |
+
+Single-kind catches in `day-planner.ts` (events, around line 350), `read-later.ts` (bookmarks, around line 326) and `memory-review.ts` (legacy-memory import, around line 388) also hide provider error details. Their current individual production-source quotas normally keep byte volume below this new combined-response ceiling; do not imply that they were demonstrated to exceed it. Metadata-depth/node guards or future adapters still need clear recovery semantics. Memory-review's legacy import currently has no production candidates. This list identifies catch boundaries for independent review; it is not a claim that every listed consumer necessarily reaches 16 MiB under normal persisted quotas.

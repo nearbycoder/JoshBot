@@ -155,7 +155,7 @@ if(process.argv[2]==='--worker') {
     const runtime=[];for(let i=0;i<3;i++)runtime.push(await run('runtime'));
     const server=[];for(let i=0;i<3;i++)server.push(await run('server'));
     const maximum=[];for(let i=0;i<3;i++)maximum.push(await run('maximum'));
-    const output={recordedAt:new Date().toISOString(),seed,node:process.version,commit:(()=>{try{return execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{return 'archive';}})(),platform:process.platform,arch:process.arch,cpuModel:cpus()[0]?.model,runtime,maximum,server};
+    const output={recordedAt:new Date().toISOString(),seed,node:process.version,commit:(()=>{try{return execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim()+(execFileSync('git',['status','--porcelain'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim()?' (working tree modified)':'');}catch{return 'archive';}})(),platform:process.platform,arch:process.arch,cpuModel:cpus()[0]?.model,runtime,maximum,server};
     const json=JSON.stringify(output,null,2);console.log(json);
     const outputFlag=process.argv.indexOf('--output');if(outputFlag>=0)await writeFile(process.argv[outputFlag+1],json+'\n');
     if(process.argv.includes('--check'))for(const sample of runtime){if(sample.peakRssMiB>256||sample.deterministic.p95Ms>50||sample.overload.p95Ms>250||sample.eventLoopMaxMs>150||sample.overload.peakContextCalls>3||sample.overload.accepted!==9||sample.overload.rejected!==87||sample.mixed.accepted!==60)throw new Error('Runtime performance budget exceeded');}

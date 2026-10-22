@@ -1006,5 +1006,228 @@
       "bytes": 4926491
     },
     "combined12000CharBodies": "visible complete-read budget failure; no writes"
+  },
+  "recallOptimized": {
+    "recordedAt": "2026-10-22T17:56:38.881Z",
+    "seed": 20261022,
+    "node": "v24.22.1",
+    "commit": "f549a02576ef5243a5a2f459787dafed7834036e",
+    "platform": "linux",
+    "arch": "x64",
+    "cpuModel": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "runtime": [
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 76.22,
+        "idleRssMiB": 64.73,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.424,
+          "p95Ms": 0.642
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 64.495,
+          "p95Ms": 96.038,
+          "busyP95Ms": 0.234,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 280.18,
+          "stressCpuMs": 328.08
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.523,
+          "recallP95Ms": 40.632,
+          "wallMs": 873.08,
+          "cpuMs": 552.05,
+          "completedPerSecond": 68.72
+        },
+        "eventLoopP95Ms": 32.063,
+        "eventLoopMaxMs": 94.831,
+        "peakRssMiB": 196.26,
+        "cpuMs": 1093.74,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 86.25,
+        "idleRssMiB": 64.86,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.456,
+          "p95Ms": 0.979
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 55.405,
+          "p95Ms": 85.6,
+          "busyP95Ms": 0.186,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 244.06,
+          "stressCpuMs": 296.75
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.499,
+          "recallP95Ms": 37.997,
+          "wallMs": 841.11,
+          "cpuMs": 510.24,
+          "completedPerSecond": 71.33
+        },
+        "eventLoopP95Ms": 31.474,
+        "eventLoopMaxMs": 107.02,
+        "peakRssMiB": 196.05,
+        "cpuMs": 1047.61,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      },
+      {
+        "mode": "runtime",
+        "seed": 20261022,
+        "node": "v24.22.1",
+        "coldHelpMs": 74.24,
+        "idleRssMiB": 64.55,
+        "idleHeapMiB": 11.07,
+        "deterministic": {
+          "count": 100,
+          "p50Ms": 0.438,
+          "p95Ms": 0.749
+        },
+        "overload": {
+          "offered": 96,
+          "accepted": 9,
+          "rejected": 87,
+          "p50Ms": 56.441,
+          "p95Ms": 80.718,
+          "busyP95Ms": 0.228,
+          "peakContextCalls": 3,
+          "contextCalls": 9,
+          "stressWallMs": 230.92,
+          "stressCpuMs": 274.49
+        },
+        "mixed": {
+          "offered": 60,
+          "accepted": 60,
+          "rejected": 0,
+          "deterministicAccepted": 45,
+          "recallAccepted": 15,
+          "deterministicP95Ms": 1.547,
+          "recallP95Ms": 35.534,
+          "wallMs": 831.48,
+          "cpuMs": 504.86,
+          "completedPerSecond": 72.16
+        },
+        "eventLoopP95Ms": 28.18,
+        "eventLoopMaxMs": 100.598,
+        "peakRssMiB": 197.79,
+        "cpuMs": 1007.03,
+        "backend": {
+          "reads": 185,
+          "writes": 58,
+          "keys": 10
+        }
+      }
+    ],
+    "maximum": [
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 107.599,
+        "eventLoopMaxMs": 107.741,
+        "peakRssMiB": 124.99,
+        "cpuMs": 268.12
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 96.797,
+        "eventLoopMaxMs": 96.928,
+        "peakRssMiB": 124.79,
+        "cpuMs": 252.45
+      },
+      {
+        "mode": "maximum",
+        "offered": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "itemsPerInvocation": 1500,
+        "textBytesPerInvocation": 16356390,
+        "p95Ms": 106.841,
+        "eventLoopMaxMs": 106.955,
+        "peakRssMiB": 125.27,
+        "cpuMs": 266.38
+      }
+    ],
+    "server": [
+      {
+        "mode": "server",
+        "readyMs": 725.43,
+        "idleRssMiB": 302.4,
+        "idleHeapMiB": 82.71,
+        "peakRssMiB": 318.27,
+        "cpuMs": 1119.95
+      },
+      {
+        "mode": "server",
+        "readyMs": 745.83,
+        "idleRssMiB": 302.51,
+        "idleHeapMiB": 82.72,
+        "peakRssMiB": 319.57,
+        "cpuMs": 1130.38
+      },
+      {
+        "mode": "server",
+        "readyMs": 775.21,
+        "idleRssMiB": 303.21,
+        "idleHeapMiB": 82.73,
+        "peakRssMiB": 319.53,
+        "cpuMs": 1160.58
+      }
+    ],
+    "sourceNote": "Measured uncommitted narrow recall optimization atop f549a02; committed together with this report update."
+  },
+  "strictRecallOptimizedCheck": {
+    "passed": true,
+    "targetEventLoopMaxMs": 150,
+    "observedMs": [
+      94.831,
+      107.02,
+      100.598
+    ]
   }
 }
