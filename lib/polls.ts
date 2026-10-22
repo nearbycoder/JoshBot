@@ -1,8 +1,56 @@
 import { randomUUID } from "node:crypto";
-import { addChannelDecision } from "./decisions.js";
+import type { ChannelDecision } from "./decisions.js";
 import { getRedisClient } from "./redis.js";
 
 const DEFAULT_POLL_LOG_MAX_ITEMS = 50;
+const MAX_POLL_MUTATION_ATTEMPTS = 32;
+
+type PollRedis = {
+  get(key: string): Promise<string | null>;
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
+};
+
+let pollRedis: () => Promise<PollRedis | null> = getRedisClient;
+
+// Compare the exact snapshot, then commit the poll and its optional decision together.
+// No decision is appended on a failed comparison, so retries have no side effects.
+const SAVE_POLL_MUTATION = `
+local current = redis.call('GET', KEYS[1])
+if ARGV[1] == 'missing' then
+  if current then return 0 end
+elseif current ~= ARGV[2] then
+  return 0
+end
+
+if #KEYS == 2 then
+  local decision = cjson.decode(ARGV[4])
+  local payload = redis.call('GET', KEYS[2])
+  local decisions = {}
+  if payload then
+    local ok, parsed = pcall(cjson.decode, payload)
+    if ok and type(parsed) == 'table' then
+      local records = parsed.decisions or parsed
+      if type(records) == 'table' then
+        for _, record in ipairs(records) do
+          if type(record) == 'table' and record.channelId == decision.channelId
+            and type(record.id) == 'string' and record.id ~= ''
+            and type(record.text) == 'string' and string.find(record.text, '[^%s.!?]')
+            and type(record.createdAt) == 'string' and record.createdAt ~= '' then
+            table.insert(decisions, record)
+          end
+        end
+      end
+    end
+  end
+  table.insert(decisions, decision)
+  while #decisions > 50 do table.remove(decisions, 1) end
+  local nextDecisions = cjson.encode({ decisions = decisions })
+  redis.call('MSET', KEYS[1], ARGV[3], KEYS[2], nextDecisions)
+else
+  redis.call('SET', KEYS[1], ARGV[3])
+end
+return 1
+`;
 
 export type SlackPoll = {
   id: string;
@@ -222,7 +270,7 @@ export async function createSlackPoll({
   messageTs?: string;
   createdAt?: string;
 }) {
-  const redis = await getRedisClient();
+  const redis = await pollRedis();
 
   if (!redis) {
     return { ok: false as const, reason: "Redis is not configured." };
@@ -251,14 +299,15 @@ export async function createSlackPoll({
     ...(threadTs ? { threadTs } : {}),
     ...(messageTs ? { messageTs } : {})
   };
-  const polls = await getSlackPollRecords(channelId);
-  await saveSlackPollRecords(channelId, [...polls, poll].slice(-DEFAULT_POLL_LOG_MAX_ITEMS));
-
-  return { ok: true as const, poll };
+  return mutateSlackPollRecords(channelId, (polls) => ({
+    ok: true,
+    polls: [...polls, poll].slice(-DEFAULT_POLL_LOG_MAX_ITEMS),
+    value: { poll }
+  }));
 }
 
 export async function listSlackPolls(channelId: string) {
-  const redis = await getRedisClient();
+  const redis = await pollRedis();
 
   if (!redis) {
     return { ok: false as const, reason: "Redis is not configured." };
@@ -284,40 +333,17 @@ export async function recordSlackPollVote({
   source: SlackPollVote["source"];
   createdAt?: string;
 }) {
-  const state = await loadPollState(channelId);
+  let targetPollId = pollId;
+  return mutateSlackPollRecords(channelId, (polls) => {
+    const resolved = resolveOpenPoll(polls, targetPollId, threadTs);
 
-  if (!state.ok) {
-    return state;
-  }
-
-  const resolved = resolveOpenPoll(state.polls, pollId, threadTs);
-
-  if (!resolved.ok) {
-    return resolved;
-  }
-
-  const option = resolvePollOption(resolved.poll, choice);
-
-  if (!option) {
-    return { ok: false as const, reason: `Unknown option. Use ${formatPollOptionChoices(resolved.poll)}.` };
-  }
-
-  const poll = {
-    ...resolved.poll,
-    votes: {
-      ...resolved.poll.votes,
-      [userId]: {
-        userId,
-        optionId: option.id,
-        source,
-        createdAt
-      }
+    if (!resolved.ok) {
+      return resolved;
     }
-  };
 
-  await replacePoll(channelId, state.polls, poll);
-
-  return { ok: true as const, poll, option };
+    targetPollId = resolved.poll.id;
+    return applyPollVote(polls, resolved.poll, choice, { userId, source, createdAt });
+  });
 }
 
 export async function recordSlackPollReactionVote(event: {
@@ -332,40 +358,24 @@ export async function recordSlackPollReactionVote(event: {
     return { ok: false as const, reason: "Reaction is not a poll option." };
   }
 
-  const state = await loadPollState(event.channelId);
+  let targetPollId: string | undefined;
+  const createdAt = new Date().toISOString();
+  return mutateSlackPollRecords(event.channelId, (polls) => {
+    const resolved = targetPollId
+      ? resolveOpenPoll(polls, targetPollId)
+      : resolvePollForReaction(polls, event.threadTs);
 
-  if (!state.ok) {
-    return state;
-  }
-
-  const resolved = resolvePollForReaction(state.polls, event.threadTs);
-
-  if (!resolved.ok) {
-    return resolved;
-  }
-
-  const option = resolvePollOption(resolved.poll, choice);
-
-  if (!option) {
-    return { ok: false as const, reason: `Unknown option. Use ${formatPollOptionChoices(resolved.poll)}.` };
-  }
-
-  const poll = {
-    ...resolved.poll,
-    votes: {
-      ...resolved.poll.votes,
-      [event.userId]: {
-        userId: event.userId,
-        optionId: option.id,
-        source: "reaction" as const,
-        createdAt: new Date().toISOString()
-      }
+    if (!resolved.ok) {
+      return resolved;
     }
-  };
 
-  await replacePoll(event.channelId, state.polls, poll);
-
-  return { ok: true as const, poll, option };
+    targetPollId = resolved.poll.id;
+    return applyPollVote(polls, resolved.poll, choice, {
+      userId: event.userId,
+      source: "reaction",
+      createdAt
+    });
+  });
 }
 
 export async function closeSlackPoll({
@@ -387,51 +397,36 @@ export async function closeSlackPoll({
   source: "slash-command" | "slack-message";
   closedAt?: string;
 }) {
-  const state = await loadPollState(channelId);
+  let targetPollId = pollId;
+  return mutateSlackPollRecords(channelId, (polls) => {
+    const resolved = resolveOpenPoll(polls, targetPollId, threadTs);
 
-  if (!state.ok) {
-    return state;
-  }
-
-  const resolved = resolveOpenPoll(state.polls, pollId, threadTs);
-
-  if (!resolved.ok) {
-    return resolved;
-  }
-
-  const resolvedDecisionText = recordDecision
-    ? normalizePollText(decisionText ?? formatPollDecisionText(resolved.poll))
-    : undefined;
-  let decisionId: string | undefined;
-
-  if (recordDecision && resolvedDecisionText) {
-    const decision = await addChannelDecision({
-      channelId,
-      text: resolvedDecisionText,
-      userId,
-      threadTs: resolved.poll.threadTs,
-      messageTs: resolved.poll.messageTs,
-      source
-    });
-
-    if (!decision.ok) {
-      return { ok: false as const, reason: decision.reason };
+    if (!resolved.ok) {
+      return resolved;
     }
 
-    decisionId = decision.decision.id;
-  }
+    targetPollId = resolved.poll.id;
+    const resolvedDecisionText = recordDecision && !resolved.poll.decisionId
+      ? normalizePollText(decisionText ?? formatPollDecisionText(resolved.poll))
+      : undefined;
+    const decision = resolvedDecisionText
+      ? createPollDecision(resolved.poll, resolvedDecisionText, source, userId)
+      : undefined;
+    const poll: SlackPoll = {
+      ...resolved.poll,
+      status: "closed",
+      closedAt,
+      ...(userId ? { closedBy: userId } : {}),
+      ...(decision ? { decisionId: decision.id } : {})
+    };
 
-  const poll: SlackPoll = {
-    ...resolved.poll,
-    status: "closed",
-    closedAt,
-    ...(userId ? { closedBy: userId } : {}),
-    ...(decisionId ? { decisionId } : {})
-  };
-
-  await replacePoll(channelId, state.polls, poll);
-
-  return { ok: true as const, poll, decisionText: resolvedDecisionText };
+    return {
+      ok: true,
+      polls: replacePoll(polls, poll),
+      decision,
+      value: { poll, decisionText: resolvedDecisionText }
+    };
+  });
 }
 
 export async function recordPollDecision({
@@ -449,45 +444,35 @@ export async function recordPollDecision({
   decisionText?: string;
   source: "slash-command" | "slack-message";
 }) {
-  const state = await loadPollState(channelId);
+  let targetPollId = pollId;
+  return mutateSlackPollRecords(channelId, (polls) => {
+    const resolved = resolvePoll(polls, targetPollId, threadTs);
 
-  if (!state.ok) {
-    return state;
-  }
+    if (!resolved.ok) {
+      return resolved;
+    }
 
-  const resolved = resolvePoll(state.polls, pollId, threadTs);
+    targetPollId = resolved.poll.id;
+    if (resolved.poll.decisionId) {
+      return { ok: false, reason: "A decision has already been recorded for this poll." };
+    }
 
-  if (!resolved.ok) {
-    return resolved;
-  }
+    const resolvedDecisionText = normalizePollText(decisionText ?? formatPollDecisionText(resolved.poll));
 
-  const resolvedDecisionText = normalizePollText(decisionText ?? formatPollDecisionText(resolved.poll));
+    if (!resolvedDecisionText) {
+      return { ok: false, reason: "Decision cannot be empty." };
+    }
 
-  if (!resolvedDecisionText) {
-    return { ok: false as const, reason: "Decision cannot be empty." };
-  }
+    const decision = createPollDecision(resolved.poll, resolvedDecisionText, source, userId);
+    const poll = { ...resolved.poll, decisionId: decision.id };
 
-  const decision = await addChannelDecision({
-    channelId,
-    text: resolvedDecisionText,
-    userId,
-    threadTs: resolved.poll.threadTs,
-    messageTs: resolved.poll.messageTs,
-    source
+    return {
+      ok: true,
+      polls: replacePoll(polls, poll),
+      decision,
+      value: { poll, decisionText: resolvedDecisionText }
+    };
   });
-
-  if (!decision.ok) {
-    return { ok: false as const, reason: decision.reason };
-  }
-
-  const poll = {
-    ...resolved.poll,
-    decisionId: decision.decision.id
-  };
-
-  await replacePoll(channelId, state.polls, poll);
-
-  return { ok: true as const, poll, decisionText: resolvedDecisionText };
 }
 
 export function formatPollHelp() {
@@ -642,7 +627,7 @@ async function resolvePollForCommand(channelId: string, pollId?: string, threadT
 }
 
 async function loadPollState(channelId: string) {
-  const redis = await getRedisClient();
+  const redis = await pollRedis();
 
   if (!redis) {
     return { ok: false as const, reason: "Redis is not configured." };
@@ -651,15 +636,90 @@ async function loadPollState(channelId: string) {
   return { ok: true as const, polls: await getSlackPollRecords(channelId) };
 }
 
-async function replacePoll(channelId: string, polls: SlackPoll[], poll: SlackPoll) {
-  await saveSlackPollRecords(
-    channelId,
-    polls.map((candidate) => (candidate.id === poll.id ? poll : candidate))
-  );
+type PollMutation<T> =
+  | { ok: false; reason: string }
+  | { ok: true; polls: SlackPoll[]; value: T; decision?: ChannelDecision };
+
+async function mutateSlackPollRecords<T>(
+  channelId: string,
+  mutate: (polls: SlackPoll[]) => PollMutation<T>
+) {
+  const redis = await pollRedis();
+
+  if (!redis) {
+    return { ok: false as const, reason: "Redis is not configured." };
+  }
+
+  for (let attempt = 0; attempt < MAX_POLL_MUTATION_ATTEMPTS; attempt++) {
+    const payload = await redis.get(getPollLogKey(channelId));
+    const polls = payload ? parsePollLogPayload(payload).filter((poll) => poll.channelId === channelId) : [];
+    const mutation = mutate(polls);
+
+    if (!mutation.ok) {
+      return mutation;
+    }
+
+    const changed = await redis.eval(SAVE_POLL_MUTATION, {
+      keys: [getPollLogKey(channelId), ...(mutation.decision ? [`slack-channel-decisions:${channelId}`] : [])],
+      arguments: [
+        payload === null ? "missing" : "present",
+        payload ?? "",
+        JSON.stringify({ polls: mutation.polls }),
+        ...(mutation.decision ? [JSON.stringify(mutation.decision)] : [])
+      ]
+    });
+
+    if (changed === 1) {
+      return { ok: true as const, ...mutation.value };
+    }
+  }
+
+  return { ok: false as const, reason: "Polls changed too often. Please try again." };
+}
+
+function replacePoll(polls: SlackPoll[], poll: SlackPoll) {
+  return polls.map((candidate) => candidate.id === poll.id ? poll : candidate);
+}
+
+function applyPollVote(
+  polls: SlackPoll[],
+  previous: SlackPoll,
+  choice: string,
+  vote: Omit<SlackPollVote, "optionId">
+): PollMutation<{ poll: SlackPoll; option: SlackPollOption }> {
+  const option = resolvePollOption(previous, choice);
+
+  if (!option) {
+    return { ok: false, reason: `Unknown option. Use ${formatPollOptionChoices(previous)}.` };
+  }
+
+  const poll = {
+    ...previous,
+    votes: { ...previous.votes, [vote.userId]: { ...vote, optionId: option.id } }
+  };
+  return { ok: true, polls: replacePoll(polls, poll), value: { poll, option } };
+}
+
+function createPollDecision(
+  poll: SlackPoll,
+  text: string,
+  source: ChannelDecision["source"],
+  userId?: string
+): ChannelDecision {
+  return {
+    id: randomUUID(),
+    channelId: poll.channelId,
+    text,
+    createdAt: new Date().toISOString(),
+    source,
+    ...(userId ? { userId } : {}),
+    ...(poll.threadTs ? { threadTs: poll.threadTs } : {}),
+    ...(poll.messageTs ? { messageTs: poll.messageTs } : {})
+  };
 }
 
 async function getSlackPollRecords(channelId: string) {
-  const redis = await getRedisClient();
+  const redis = await pollRedis();
 
   if (!redis) {
     return [];
@@ -672,16 +732,6 @@ async function getSlackPollRecords(channelId: string) {
   }
 
   return parsePollLogPayload(payload).filter((poll) => poll.channelId === channelId);
-}
-
-async function saveSlackPollRecords(channelId: string, polls: SlackPoll[]) {
-  const redis = await getRedisClient();
-
-  if (!redis) {
-    return;
-  }
-
-  await redis.set(getPollLogKey(channelId), JSON.stringify({ polls }));
 }
 
 function resolveOpenPoll(polls: SlackPoll[], pollId?: string, threadTs?: string) {
@@ -955,6 +1005,7 @@ function getPollLogKey(channelId: string) {
 }
 
 export const __testing = {
+  setRedisProvider(provider?: () => Promise<PollRedis | null>) { pollRedis = provider ?? getRedisClient; },
   countPollVotes,
   formatPollDecisionText,
   getPollLogKey,

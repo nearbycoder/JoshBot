@@ -42,19 +42,24 @@ const REMINDER_REACTIONS = new Set([
   "alarm-clock"
 ]);
 
-export async function handleSlackReactionShortcut(event: SlackReactionAddedEvent) {
-  if (shouldIgnoreReactionShortcutEvent(event)) {
+export async function handleSlackReactionShortcut(event: SlackReactionAddedEvent, dependencies: {
+  recordPollVote?: typeof recordSlackPollReactionVote;
+  respond?: typeof respondToSlackMention;
+} = {}) {
+  if (event.user === process.env.SLACK_BOT_USER_ID) {
     return;
   }
 
-  const pollVote = await recordSlackPollReactionVote({
+  // A human may vote on a bot-authored poll anchor. Keep the author filter for
+  // model-backed shortcuts so reactions cannot recursively wake the assistant.
+  const pollVote = await (dependencies.recordPollVote ?? recordSlackPollReactionVote)({
     channelId: event.item.channel,
     threadTs: event.item.ts,
     userId: event.user,
     reaction: event.reaction
   });
 
-  if (pollVote.ok) {
+  if (pollVote.ok || shouldIgnoreReactionShortcutEvent(event)) {
     return;
   }
 
@@ -64,7 +69,7 @@ export async function handleSlackReactionShortcut(event: SlackReactionAddedEvent
     return;
   }
 
-  await respondToSlackMention(createReactionShortcutMessageEvent(event, shortcut));
+  await (dependencies.respond ?? respondToSlackMention)(createReactionShortcutMessageEvent(event, shortcut));
 }
 
 function getSlackReactionShortcut(reaction: string): SlackReactionShortcut | null {

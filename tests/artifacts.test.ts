@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -86,6 +86,27 @@ test("expired artifacts still serve until cleanup deletes them", async () => {
 
     const afterCleanup = await handleArtifactFetchRequest(new Request(artifact.rawUrl));
     assert.equal(afterCleanup?.status, 404);
+  });
+});
+
+test("recent documents includes older documents edited after newer creations", async () => {
+  await withTempArtifactDir(async () => {
+    const older = await createArtifact({ kind: "markdown", title: "Older", content: "old", ownerUserId: "U123" });
+    const newer = await createArtifact({ kind: "markdown", title: "Newer", content: "new", ownerUserId: "U123" });
+    const other = await createArtifact({ kind: "markdown", title: "Other owner", content: "private", ownerUserId: "U456" });
+    for (const [artifact, createdAt, updatedAt] of [
+      [older, "2026-01-01", "2026-10-22"],
+      [newer, "2026-10-01", "2026-10-01"],
+      [other, "2026-10-22", "2026-10-23"]
+    ] as const) {
+      const metadataPath = path.join(process.env.ARTIFACT_DIR!, artifact.id, ".artifact.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+      await writeFile(metadataPath, JSON.stringify({ ...metadata, createdAt, updatedAt }));
+    }
+    assert.equal((await listArtifacts({ limit: 1, ownerUserId: "U123" }))[0]?.id, newer.id);
+    const recent = await listRecentArtifacts(1, { ownerUserId: "U123" });
+    assert.equal(recent.length, 1);
+    assert.equal(recent[0]?.id, older.id);
   });
 });
 

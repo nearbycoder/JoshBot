@@ -224,8 +224,11 @@ export async function listRecentArtifacts(
   limit = 5,
   options: { ownerUserId?: string } = {}
 ): Promise<RecentArtifact[]> {
-  const artifacts = await listArtifacts({ limit, ownerUserId: options.ownerUserId });
-  return artifacts.map((artifact) => ({
+  const artifacts = await listArtifacts({ ownerUserId: options.ownerUserId });
+  const recent = artifacts.sort((left, right) =>
+    Date.parse(right.updatedAt ?? right.createdAt) - Date.parse(left.updatedAt ?? left.createdAt));
+  const selected = limit > 0 ? recent.slice(0, limit) : recent;
+  return selected.map((artifact) => ({
     ...artifact,
     updatedAt: artifact.updatedAt ?? artifact.createdAt
   }));

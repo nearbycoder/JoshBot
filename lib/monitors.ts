@@ -8,6 +8,8 @@ import {
   type UserPreferences
 } from "./preferences.js";
 import { getRedisClient } from "./redis.js";
+import { claimScheduledJob } from "./scheduler-lease.js";
+let monitorRedis = getRedisClient;
 import {
   assertSlackTargetChannelAllowed,
   resolveSlackTargetChannel
@@ -184,7 +186,7 @@ export async function maybeHandleMonitorCommand(event: SlackMessageEvent) {
     return null;
   }
 
-  const redis = await getRedisClient();
+  const redis = await monitorRedis();
   if (!redis) {
     return null;
   }
@@ -313,7 +315,7 @@ export async function getUserMonitorDashboardItems(
   userId: string,
   limit = 5
 ): Promise<MonitorDashboardItem[]> {
-  const redis = await getRedisClient();
+  const redis = await monitorRedis();
 
   if (!redis) {
     return [];
@@ -397,7 +399,7 @@ async function runDueMonitors({
   monitorRunnerRunning = true;
 
   try {
-    const redis = await getRedisClient();
+    const redis = await monitorRedis();
     if (!redis) {
       return;
     }
@@ -410,18 +412,23 @@ async function runDueMonitors({
     });
 
     for (const id of dueIds) {
-      const claimed = await redis.zRem(MONITOR_DUE_KEY, id);
-      if (!claimed) {
-        continue;
-      }
-
-      const monitor = await loadMonitor(id);
-      if (!monitor) {
-        continue;
-      }
+      const lease = await claimScheduledJob(redis, {
+        id, recordKey: getMonitorJobKey(id), dueKey: MONITOR_DUE_KEY
+      });
+      if (!lease) continue;
 
       try {
+        const monitor = JSON.parse(lease.payload) as MonitorRecord;
+        const assertDeliveryAllowed = async () => {
+          await assertSlackTargetChannelAllowed({
+            userId: monitor.ownerUserId, channelId: monitor.channel,
+            action: "deliver_monitor", surface: "scheduler"
+          });
+          await lease.assertCurrent();
+        };
+        await assertDeliveryAllowed();
         const result = await evaluateMonitor(monitor, runMonitorCheck);
+        await assertDeliveryAllowed();
 
         monitor.lastCheckedAt = new Date().toISOString();
         monitor.lastObservation = result.observation ?? monitor.lastObservation;
@@ -439,18 +446,13 @@ async function runDueMonitors({
 
         const nextRunAt = getNextRunAt(monitor);
         monitor.nextRunAt = nextRunAt.toISOString();
-        await redis.set(getMonitorJobKey(monitor.id), JSON.stringify(monitor));
-        await redis.zAdd(MONITOR_DUE_KEY, {
-          score: nextRunAt.getTime(),
-          value: monitor.id
-        });
+        await lease.finish(JSON.stringify(monitor), nextRunAt.getTime());
       } catch (error) {
         recordOpsError("monitor job", error);
-        console.error(`Monitor ${monitor.id} failed: ${summarizeError(error)}`);
-        await redis.zAdd(MONITOR_DUE_KEY, {
-          score: Date.now() + 5 * 60 * 1000,
-          value: monitor.id
-        });
+        console.error(`Monitor ${id} failed: ${summarizeError(error)}`);
+        await lease.finish(lease.payload, Date.now() + 5 * 60 * 1000);
+      } finally {
+        lease.stop();
       }
     }
   } finally {
@@ -1193,7 +1195,7 @@ function getMonitorCreateLockKey(context: SlackScheduleContext) {
 }
 
 async function requireRedis() {
-  const redis = await getRedisClient();
+  const redis = await monitorRedis();
 
   if (!redis) {
     throw new Error("Monitors require REDIS_URL.");
@@ -1211,6 +1213,8 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  setRedisProvider(provider?: typeof getRedisClient) { monitorRedis = provider ?? getRedisClient; },
+  runDueMonitors,
   evaluateChannelHistoryMonitor,
   formatMonitorSummary,
   inferMonitorSource,

@@ -5,29 +5,38 @@ export type OpenCodeGoModel = {
 
 export type OpenCodeGoApi =
   | "anthropic-messages"
+  | "google-generative-ai"
   | "openai-completions"
   | "openai-responses";
 
 export const OPENCODE_GO_PROVIDER = "opencode-go";
-export const OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1";
+export const OPENCODE_GO_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
 export const DEFAULT_SLACK_TEXT_MODEL = "kimi-k3";
 export const DEFAULT_SLACK_VISION_MODEL = "kimi-k3";
 export const FALLBACK_SLACK_TEXT_MODEL = "kimi-k3";
 export const FALLBACK_SLACK_VISION_MODEL = "kimi-k3";
 
-const OPENCODE_GO_MODELS_URL = `${OPENCODE_GO_BASE_URL}/models`;
+const OPENCODE_GO_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
 const MODEL_CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,74}$/;
+// Verified 2026-10-22 against https://opencode.ai/v2/docs/console/go/ and
+// https://github.com/anomalyco/models.dev/tree/dev/providers/opencode-go/models.
+// Discovery is filtered through this catalog so a new ID cannot inherit a guessed
+// wire protocol or capabilities. Retired IDs are not silently mapped to successors.
+// LongCat 2.5 Preview Free still appears in Go's docs, but is deprecated in
+// models.dev and absent from live discovery; do not advertise it as a fallback.
 const IMAGE_INPUT_MODEL_IDS = new Set([
   "grok-4.7",
-  "grok-4.6",
   "glm-5.3-flash",
+  "gpt-6-luna",
   "gpt-5.6-luna",
+  "claude-haiku-5-5",
+  "gemini-4-argon-contributor",
   "deepseek-v4.1-flash",
-  "deepseek-v4-flash-vision-exp",
-  "kimi-k2.6",
   "kimi-k2.7-code",
   "kimi-k3",
+  "step-5-preview",
+  "minimax-m3.1-flash-free",
   "minimax-m3",
   "mimo-v2.5",
   "mimo-v2.6-flash",
@@ -36,10 +45,10 @@ const IMAGE_INPUT_MODEL_IDS = new Set([
   "muse-spark-1.2-contributor",
   "qwen3.8-max",
   "qwen3.8-flash",
-  "qwen3.6-plus",
   "qwen3.7-plus"
 ]);
 const DATA_TRAINING_OPT_IN_MODEL_IDS = new Set([
+  "gemini-4-argon-contributor",
   "muse-spark-1.3-contributor",
   "muse-spark-1.2-contributor"
 ]);
@@ -49,22 +58,30 @@ const MODEL_DEFINITIONS = new Map<
   { name: string; api: OpenCodeGoApi }
 >([
   ["grok-4.7", { name: "Grok 4.7", api: "openai-responses" }],
-  ["grok-4.6", { name: "Grok 4.6", api: "openai-responses" }],
   ["glm-5.3-flash", { name: "GLM-5.3-Flash", api: "openai-completions" }],
   ["glm-5.3", { name: "GLM-5.3", api: "openai-completions" }],
   ["glm-5.2", { name: "GLM-5.2", api: "openai-completions" }],
-  ["glm-5.1", { name: "GLM-5.1", api: "openai-completions" }],
+  ["gpt-6-luna", { name: "GPT 6 Luna", api: "openai-responses" }],
   ["gpt-5.6-luna", { name: "GPT 5.6 Luna", api: "openai-responses" }],
+  ["claude-haiku-5-5", { name: "Claude Haiku 5.5", api: "anthropic-messages" }],
+  [
+    "gemini-4-argon-contributor",
+    { name: "Gemini 4 Argon Contributor", api: "google-generative-ai" }
+  ],
   ["kimi-k3", { name: "Kimi K3", api: "openai-completions" }],
   ["kimi-k2.7-code", { name: "Kimi K2.7 Code", api: "openai-completions" }],
-  ["kimi-k2.6", { name: "Kimi K2.6", api: "openai-completions" }],
   ["longcat-2.0", { name: "LongCat-2.0", api: "openai-completions" }],
+  ["step-5-preview", { name: "Step 5 Preview", api: "openai-completions" }],
+  ["beam-free", { name: "Beam Free", api: "openai-completions" }],
   ["mimo-v2.6-flash", { name: "MiMo-V2.6-Flash", api: "openai-completions" }],
   ["mimo-v2.6-pro", { name: "MiMo-V2.6-Pro", api: "openai-completions" }],
   ["mimo-v2.5", { name: "MiMo-V2.5", api: "openai-completions" }],
   ["mimo-v2.5-pro", { name: "MiMo-V2.5-Pro", api: "openai-completions" }],
   ["minimax-m3", { name: "MiniMax M3", api: "anthropic-messages" }],
-  ["minimax-m2.7", { name: "MiniMax M2.7", api: "anthropic-messages" }],
+  [
+    "minimax-m3.1-flash-free",
+    { name: "MiniMax M3.1 Flash Free", api: "openai-completions" }
+  ],
   [
     "muse-spark-1.3-contributor",
     { name: "Muse Spark 1.3 Contributor", api: "openai-responses" }
@@ -75,16 +92,9 @@ const MODEL_DEFINITIONS = new Map<
   ],
   ["qwen3.8-max", { name: "Qwen3.8 Max", api: "anthropic-messages" }],
   ["qwen3.8-flash", { name: "Qwen3.8 Flash", api: "anthropic-messages" }],
-  ["qwen3.7-max", { name: "Qwen3.7 Max", api: "anthropic-messages" }],
   ["qwen3.7-plus", { name: "Qwen3.7 Plus", api: "anthropic-messages" }],
-  ["qwen3.6-plus", { name: "Qwen3.6 Plus", api: "anthropic-messages" }],
   ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", api: "openai-completions" }],
   ["deepseek-v4.1-flash", { name: "DeepSeek V4.1 Flash", api: "openai-completions" }],
-  ["deepseek-v4-flash", { name: "DeepSeek V4 Flash", api: "openai-completions" }],
-  [
-    "deepseek-v4-flash-vision-exp",
-    { name: "DeepSeek V4 Flash Vision Exp", api: "openai-completions" }
-  ],
   ["hy4-preview", { name: "Hy4 preview", api: "openai-completions" }],
   ["hy3", { name: "Hy3", api: "openai-completions" }]
 ]);
@@ -151,6 +161,21 @@ export function normalizeOpenCodeGoSupportedModelId(input: string | undefined | 
 export function getOpenCodeGoModelApi(modelId: string) {
   const normalized = normalizeOpenCodeGoSupportedModelId(modelId);
   return normalized ? MODEL_DEFINITIONS.get(normalized)?.api ?? null : null;
+}
+
+export function getOpenCodeGoModelBaseUrl(modelId: string) {
+  switch (getOpenCodeGoModelApi(modelId)) {
+    case "anthropic-messages":
+      // The Anthropic SDK appends /v1/messages itself.
+      return "https://opencode.ai/inference/go/anthropic";
+    case "google-generative-ai":
+      return "https://opencode.ai/inference/go/google/v1beta";
+    case "openai-completions":
+    case "openai-responses":
+      return OPENCODE_GO_BASE_URL;
+    default:
+      return null;
+  }
 }
 
 export function supportsOpenCodeGoImageInput(modelId: string | undefined | null) {

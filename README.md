@@ -1,6 +1,8 @@
 # NoBo
 
-NoBo is a small TypeScript process that receives Slack Events API calls and replies in-thread.
+NoBo is a TypeScript Slack assistant that receives Slack Events API calls and replies in-thread.
+
+See [feature status and production readiness](docs/feature-status.md) for entry points, prerequisites, verified behavior, and remaining gaps.
 
 ## Features
 
@@ -43,10 +45,11 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 1. Install dependencies:
 
    ```bash
-   npm install
+   nvm use
+   npm ci
    ```
 
-   Flue v2 requires Node.js 22.19 or newer.
+   Use Node.js 24 LTS. `.nvmrc`, the package engine, and CI target the same major version.
 
 2. Create env vars:
 
@@ -58,7 +61,7 @@ NoBo is a small TypeScript process that receives Slack Events API calls and repl
 
 3. Fill in:
 
-   - `PORT`: production server port, defaults to `3000`; Vite development uses `5173` unless `--port` is passed
+   - `PORT`: server port for both development and production, defaults to `3000`
    - `OPENCODE_GO_API_KEY`: your OpenCode Go API key
    - `OPENCODE_GO_MODEL`: default text model, defaults to `kimi-k3`
    - `OPENCODE_GO_VISION_MODEL`: fallback for image-bearing messages when the selected model is text-only; defaults to `kimi-k3` and must be image-capable
@@ -184,7 +187,7 @@ The Home page uses native Slack Block Kit controls and avoids repeating settings
 For local development, expose the app with a tunnel:
 
 ```bash
-ngrok http 5173
+ngrok http 3000
 ```
 
 Then paste the public HTTPS URL into Slack Event Subscriptions.
@@ -220,7 +223,11 @@ Deny rules win over allow rules. If a user or channel allowlist is non-empty, ma
 
 ## CI and deployments
 
-GitHub Actions runs `npm test` and `npm run build` on pull requests and pushes to `main`.
+GitHub Actions installs the lockfile with `npm ci`, audits production dependencies, runs `npm test`, `npm run typecheck`, and `npm run build` on pull requests and pushes to `main`.
+
+Dependencies were refreshed on October 22, 2026. The Flue-scoped MCP client override keeps `@modelcontextprotocol/client` on patched 2.3.1 or newer while Flue still pins 2.0.0. Remove the override when Flue updates its dependency. `@types/node` intentionally stays on 24.x to match the production LTS runtime.
+
+Railway should check `/healthz` before routing traffic to a new release. Keep one replica for process-local cancellation. Generated documents require a persistent volume mounted at `/app/artifacts` (or an `ARTIFACT_DIR` pointing into a volume); Redis persists memories and schedules, but does not store document files.
 
 For Railway GitHub autodeploys, enable `Wait for CI` on the NoBo service deploy trigger so Railway waits for the GitHub Actions check to pass before deploying `main`.
 
@@ -403,11 +410,11 @@ NoBo also persists per-channel preferences in Redis at `slack-preferences:channe
 - `/nobo-channel-model <model-id>`
 - `/nobo-channel-model reset`
 
-The selector loads the current supported OpenCode Go catalog from `https://opencode.ai/zen/go/v1/models` and falls back to the built-in model list if discovery fails. Models are routed through their documented Chat Completions, Anthropic Messages, or OpenAI Responses endpoint. Image-bearing messages use the selected channel/default model when it supports image input; otherwise they use `OPENCODE_GO_VISION_MODEL`.
+The selector loads the current supported OpenCode Go catalog from `https://opencode.ai/inference/go/v1/models` and falls back to the reviewed built-in list if discovery fails. Each model uses its documented OpenAI, Anthropic, or Google inference route. Image-bearing messages use the selected channel/default model when it supports image input; otherwise they use `OPENCODE_GO_VISION_MODEL`.
 
-The September 22, 2026 catalog refresh adds `grok-4.7`, `mimo-v2.6-flash`, `mimo-v2.6-pro`, and `deepseek-v4.1-flash`, all with image input. Image flags also reflect current support for Grok 4.6, GLM-5.3-Flash, GPT 5.6 Luna, Qwen3.8 Max/Flash, and Muse Spark Contributor 1.2/1.3. The text and image defaults remain `kimi-k3`; existing channel selections are unchanged. NoBo exposes text/image input, not the additional audio/video/PDF modalities some providers advertise. Endpoint mappings come from [OpenCode Go](https://opencode.ai/docs/go/); capabilities and limits are checked against [Models.dev](https://models.dev/). New models need explicit registration and protocol tests before they appear in the selector; discovery does not automatically enable unreviewed models. Provider cost metadata uses baseline rates and is not an authoritative billing estimate for peak or long-context requests.
+The October 22, 2026 refresh adds GPT 6 Luna, Claude Haiku 5.5, Gemini 4 Argon Contributor, Step 5 Preview, Beam Free, and MiniMax M3.1 Flash Free. The text and image defaults remain `kimi-k3`. Retired model IDs are excluded; a stored retired channel selection falls back to the default. NoBo supports text and image input, not every audio/video modality advertised by providers. Models require explicit registration and protocol tests before they appear in the selector. See [OpenCode Go](https://opencode.ai/v2/docs/console/go/) and [Models.dev](https://models.dev/) for availability and current billing. SDK metadata supplies context limits, prices, pricing tiers, and protocol compatibility without stale local overrides. LongCat 2.5 Preview Free is omitted because live discovery no longer lists it and Models.dev marks it deprecated, even though the Go documentation still lists it.
 
-Muse Spark Contributor models require explicit OpenCode workspace opt-in because prompts and completions may be used for model training. The Slack selector and NoBo runtime context label these models with `training opt-in`. If OpenCode rejects a selected model with `DataPolicyError`, NoBo retries that request once with `kimi-k3`; the channel's selected model remains unchanged for use after opt-in is enabled.
+Gemini and Muse Contributor models require explicit OpenCode workspace opt-in because prompts and completions may be used for model training. The Slack selector and NoBo runtime context label these models with `training opt-in`. If OpenCode rejects a selected model with `DataPolicyError`, NoBo retries that request once with `kimi-k3`; the channel's selected model remains unchanged for use after opt-in is enabled.
 
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
@@ -570,4 +577,4 @@ Attachment limits:
 
 NoBo first uses the selected channel/default model for image-bearing messages when that model is marked image-capable. Otherwise it uses `OPENCODE_GO_VISION_MODEL`, which defaults to `kimi-k3`; a text-only value is ignored in favor of `kimi-k3`. If the chosen image model fails, NoBo retries the request once with `kimi-k3` before falling back to text-only attachment context.
 
-OpenCode lists `kimi-k3` as supporting image input. In direct testing here on May 21, 2026, `minimax-m2.7` behaved as if no image was attached, while `kimi-k2.6` successfully described the same image. If your normal text model is not vision-capable, keep it in `OPENCODE_GO_MODEL` and set `OPENCODE_GO_VISION_MODEL` to a model that actually handles image input.
+If the normal text model is not vision-capable, keep it in `OPENCODE_GO_MODEL` and select an image-capable fallback with `OPENCODE_GO_VISION_MODEL`. The model selector labels current image support.

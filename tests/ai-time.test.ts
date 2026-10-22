@@ -207,7 +207,7 @@ test("image-capable channel model handles image messages itself", () => {
 test("new and refreshed vision models keep Slack image requests on the selected model", () => {
   for (const model of [
     "grok-4.7", "mimo-v2.6-flash", "mimo-v2.6-pro", "deepseek-v4.1-flash",
-    "grok-4.6", "glm-5.3-flash", "gpt-5.6-luna", "qwen3.8-max", "qwen3.8-flash"
+    "gpt-6-luna", "claude-haiku-5-5", "gemini-4-argon-contributor", "glm-5.3-flash", "gpt-5.6-luna", "qwen3.8-max", "qwen3.8-flash"
   ]) {
     assert.equal(__testing.selectSlackModel([{
       role: "user",
@@ -222,7 +222,7 @@ test("new and refreshed vision models keep Slack image requests on the selected 
 test("image-capable default model handles image messages itself", () => {
   const originalTextModel = process.env.OPENCODE_GO_MODEL;
   const originalVisionModel = process.env.OPENCODE_GO_VISION_MODEL;
-  process.env.OPENCODE_GO_MODEL = "kimi-k2.6";
+  process.env.OPENCODE_GO_MODEL = "kimi-k2.7-code";
   process.env.OPENCODE_GO_VISION_MODEL = "kimi-k3";
 
   try {
@@ -236,7 +236,7 @@ test("image-capable default model handles image messages itself", () => {
           ]
         }
       ]),
-      "kimi-k2.6"
+      "kimi-k2.7-code"
     );
   } finally {
     if (originalTextModel === undefined) {
@@ -427,9 +427,9 @@ test("channel text model accepts current non-chat OpenCode models", () => {
             content: "Use the channel model"
           }
         ],
-        "qwen3.7-max"
+        "qwen3.8-max"
       ),
-      "qwen3.7-max"
+      "qwen3.8-max"
     );
 
     assert.equal(

@@ -1,8 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { createSlackSkillReply } from "./ai.js";
 import { fetchSlackChannelHistory } from "./channel-history.js";
+import { requireEnv } from "./env.js";
+import { appendChannelMemory } from "./memory.js";
 import { getRedisClient } from "./redis.js";
+import { claimScheduledJob } from "./scheduler-lease.js";
 import { assertSlackTargetChannelAllowed } from "./slack-targets.js";
+
+let digestRedis = getRedisClient;
+let generateScheduledDigest = createChannelDigestSlackMessage;
+let digestMemoryAppender = appendChannelMemory;
 
 type ChannelDigestFrequency = "daily" | "weekly";
 
@@ -35,11 +42,11 @@ type ParsedChannelDigestCommand =
       focus: string;
     };
 
-type SlackGeneratedMessagePoster = (options: {
+type SlackMessagePoster = (options: {
+  token: string;
   channel: string;
-  threadTs?: string;
-  createReply: (onTextDelta: (delta: string) => Promise<void>) => Promise<string | null>;
-}) => Promise<unknown>;
+  text: string;
+}) => Promise<{ ts?: string }>;
 
 const CHANNEL_DIGEST_DUE_KEY = "channel-digests:due";
 const CHANNEL_DIGEST_JOB_PREFIX = "channel-digests:subscription:";
@@ -190,9 +197,9 @@ export async function createChannelDigestSlackMessage({
 }
 
 export function startChannelDigestSubscriptionRunner({
-  postGeneratedSlackMessage
+  postSlackMessage
 }: {
-  postGeneratedSlackMessage: SlackGeneratedMessagePoster;
+  postSlackMessage: SlackMessagePoster;
 }) {
   if (channelDigestRunnerStarted) {
     return;
@@ -200,12 +207,12 @@ export function startChannelDigestSubscriptionRunner({
 
   channelDigestRunnerStarted = true;
 
-  void runDueChannelDigestSubscriptions({ postGeneratedSlackMessage }).catch((error) => {
+  void runDueChannelDigestSubscriptions({ postSlackMessage }).catch((error) => {
     console.error(`Channel digest runner failed: ${summarizeError(error)}`);
   });
 
   setInterval(() => {
-    void runDueChannelDigestSubscriptions({ postGeneratedSlackMessage }).catch((error) => {
+    void runDueChannelDigestSubscriptions({ postSlackMessage }).catch((error) => {
       console.error(`Channel digest runner failed: ${summarizeError(error)}`);
     });
   }, getChannelDigestRunnerIntervalMs()).unref();
@@ -292,9 +299,9 @@ async function cancelChannelDigestSubscriptionByPrefix(channelId: string, idPref
 }
 
 async function runDueChannelDigestSubscriptions({
-  postGeneratedSlackMessage
+  postSlackMessage
 }: {
-  postGeneratedSlackMessage: SlackGeneratedMessagePoster;
+  postSlackMessage: SlackMessagePoster;
 }) {
   if (channelDigestRunnerRunning) {
     return;
@@ -303,7 +310,7 @@ async function runDueChannelDigestSubscriptions({
   channelDigestRunnerRunning = true;
 
   try {
-    const redis = await getRedisClient();
+    const redis = await digestRedis();
     if (!redis) {
       return;
     }
@@ -316,42 +323,54 @@ async function runDueChannelDigestSubscriptions({
     });
 
     for (const id of dueIds) {
-      const claimed = await redis.zRem(CHANNEL_DIGEST_DUE_KEY, id);
-      if (!claimed) {
-        continue;
-      }
-
-      const subscription = await loadChannelDigestSubscription(id);
-      if (!subscription) {
-        continue;
-      }
+      const lease = await claimScheduledJob(redis, {
+        id, recordKey: getChannelDigestJobKey(id), dueKey: CHANNEL_DIGEST_DUE_KEY
+      });
+      if (!lease) continue;
 
       try {
-        await postGeneratedSlackMessage({
+        const subscription = JSON.parse(lease.payload) as ChannelDigestSubscription;
+        const assertDeliveryAllowed = async () => {
+          await assertSlackTargetChannelAllowed({
+            userId: subscription.ownerUserId, channelId: subscription.channel,
+            action: "deliver_channel_digest", surface: "scheduler"
+          });
+          await lease.assertCurrent();
+        };
+        await assertDeliveryAllowed();
+        // Buffer generation before posting to Slack so revocation or
+        // cancellation during a slow model call cannot leak partial output.
+        const text = await generateScheduledDigest({
           channel: subscription.channel,
-          createReply: (onTextDelta) =>
-            createChannelDigestSlackMessage({
-              channel: subscription.channel,
-              frequency: subscription.frequency,
-              focus: subscription.focus,
-              currentUserId: subscription.ownerUserId,
-              onTextDelta
-            })
+          frequency: subscription.frequency,
+          focus: subscription.focus,
+          currentUserId: subscription.ownerUserId
         });
+        if (!text) throw new Error("Channel digest generation returned no content.");
+        await assertDeliveryAllowed();
+        // A direct send propagates transport failure. Streaming finalization is
+        // best-effort and cannot establish that the complete digest was sent.
+        const postedMessage = await postSlackMessage({
+          token: requireEnv("SLACK_BOT_TOKEN"),
+          channel: subscription.channel,
+          text
+        });
+        try {
+          await digestMemoryAppender(subscription.channel, {
+            role: "assistant", content: text, ts: postedMessage.ts
+          });
+        } catch (error) {
+          // Memory failure must not retry an already delivered digest.
+          console.warn(`Unable to append channel digest memory: ${summarizeError(error)}`);
+        }
 
         const nextRunAt = getNextChannelDigestRunAt(subscription);
-        subscription.nextRunAt = nextRunAt.toISOString();
-        await redis.set(getChannelDigestJobKey(subscription.id), JSON.stringify(subscription));
-        await redis.zAdd(CHANNEL_DIGEST_DUE_KEY, {
-          score: nextRunAt.getTime(),
-          value: subscription.id
-        });
+        await lease.finish(JSON.stringify({ ...subscription, nextRunAt: nextRunAt.toISOString() }), nextRunAt.getTime());
       } catch (error) {
-        console.error(`Channel digest subscription ${subscription.id} failed: ${summarizeError(error)}`);
-        await redis.zAdd(CHANNEL_DIGEST_DUE_KEY, {
-          score: Date.now() + RETRY_DELAY_MS,
-          value: subscription.id
-        });
+        console.error(`Channel digest subscription ${id} failed: ${summarizeError(error)}`);
+        await lease.finish(lease.payload, Date.now() + RETRY_DELAY_MS);
+      } finally {
+        lease.stop();
       }
     }
   } finally {
@@ -590,7 +609,7 @@ async function deleteChannelDigestSubscription(subscription: ChannelDigestSubscr
 }
 
 async function requireRedis() {
-  const redis = await getRedisClient();
+  const redis = await digestRedis();
 
   if (!redis) {
     throw new Error("Channel digest subscriptions require REDIS_URL.");
@@ -742,6 +761,12 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  setRedisProvider(provider?: typeof getRedisClient) { digestRedis = provider ?? getRedisClient; },
+  setDigestGenerator(generator?: typeof createChannelDigestSlackMessage) {
+    generateScheduledDigest = generator ?? createChannelDigestSlackMessage;
+  },
+  setMemoryAppender(appender?: typeof appendChannelMemory) { digestMemoryAppender = appender ?? appendChannelMemory; },
+  runDueChannelDigestSubscriptions,
   formatChannelDigestPrompt,
   formatChannelDigestSubscriptionSummary,
   getChannelDigestChannelKey,

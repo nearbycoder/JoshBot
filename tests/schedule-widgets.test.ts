@@ -40,11 +40,10 @@ test("non-owners cannot cancel reminders", async (t) => {
   await assert.rejects(cancelScheduleById("job1", "UOTHER"), /not found/);
   assert.ok(values.has("schedules:job:job1"));
 });
-test("concurrent cancellation and running reminders cannot be resurrected by edits or scheduler retries", async (t) => {
+test("concurrent cancellation and missing due membership cannot be resurrected by edits", async (t) => {
   const state = setup(t);
   state.beforeEval(() => { state.values.delete("schedules:job:job1"); });
   await assert.rejects(editOwnedSchedule("job1", "U123", "New", "2099-01-02T15:00:00.000Z"), /changed or is already running/);
-  assert.equal(await __testing.rescheduleIfUnchanged(original, original, new Date("2099-01-01")), 0);
   assert.equal(state.values.has("schedules:job:job1"), false);
   state.beforeEval(() => {});
   state.values.set("schedules:job:job1", JSON.stringify(original)); state.due.clear();

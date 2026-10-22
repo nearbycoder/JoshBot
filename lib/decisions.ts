@@ -2,6 +2,26 @@ import { randomUUID } from "node:crypto";
 import { getRedisClient } from "./redis.js";
 
 const DEFAULT_DECISION_LOG_MAX_ITEMS = 50;
+const MAX_DECISION_MUTATION_ATTEMPTS = 32;
+
+type DecisionRedis = {
+  get(key: string): Promise<string | null>;
+  eval(script: string, options: { keys: string[]; arguments: string[] }): Promise<unknown>;
+};
+
+let decisionRedis: () => Promise<DecisionRedis | null> = getRedisClient;
+
+// Compare the raw snapshot so concurrent direct or poll-linked appends trigger a retry.
+const SAVE_DECISION_MUTATION = `
+local current = redis.call('GET', KEYS[1])
+if ARGV[1] == 'missing' then
+  if current then return 0 end
+elseif current ~= ARGV[2] then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[3])
+return 1
+`;
 
 export type ChannelDecision = {
   id: string;
@@ -82,7 +102,7 @@ export async function addChannelDecision({
   createdAt?: string;
   source: ChannelDecision["source"];
 }) {
-  const redis = await getRedisClient();
+  const redis = await decisionRedis();
 
   if (!redis) {
     return {
@@ -111,20 +131,40 @@ export async function addChannelDecision({
     ...(messageTs ? { messageTs } : {}),
     ...(threadUrl ? { threadUrl } : {})
   };
-  const decisions = await getChannelDecisionRecords(channelId);
-  const nextDecisions = [...decisions, decision].slice(-DEFAULT_DECISION_LOG_MAX_ITEMS);
+  const key = getDecisionLogKey(channelId);
 
-  await redis.set(getDecisionLogKey(channelId), JSON.stringify({ decisions: nextDecisions }));
+  for (let attempt = 0; attempt < MAX_DECISION_MUTATION_ATTEMPTS; attempt++) {
+    const payload = await redis.get(key);
+    const decisions = payload
+      ? parseDecisionLogPayload(payload).filter((record) => record.channelId === channelId)
+      : [];
+    const nextDecisions = [...decisions, decision].slice(-DEFAULT_DECISION_LOG_MAX_ITEMS);
+    const changed = await redis.eval(SAVE_DECISION_MUTATION, {
+      keys: [key],
+      arguments: [
+        payload === null ? "missing" : "present",
+        payload ?? "",
+        JSON.stringify({ decisions: nextDecisions })
+      ]
+    });
+
+    if (changed === 1) {
+      return {
+        ok: true as const,
+        decision,
+        decisions: nextDecisions
+      };
+    }
+  }
 
   return {
-    ok: true as const,
-    decision,
-    decisions: nextDecisions
+    ok: false as const,
+    reason: "Decisions changed too often. Please try again."
   };
 }
 
 export async function listChannelDecisions(channelId: string) {
-  const redis = await getRedisClient();
+  const redis = await decisionRedis();
 
   if (!redis) {
     return {
@@ -184,7 +224,7 @@ function getDecisionLogKey(channelId: string) {
 }
 
 async function getChannelDecisionRecords(channelId: string) {
-  const redis = await getRedisClient();
+  const redis = await decisionRedis();
 
   if (!redis) {
     return [];
@@ -274,6 +314,9 @@ function collapseWhitespace(input: string) {
 }
 
 export const __testing = {
+  setRedisProvider(provider?: () => Promise<DecisionRedis | null>) {
+    decisionRedis = provider ?? getRedisClient;
+  },
   getDecisionLogKey,
   normalizeDecisionText,
   parseDecisionLogPayload
