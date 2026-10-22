@@ -35,7 +35,7 @@ function assertSame(actual: unknown, expected: unknown) {
   if (stamp(actual) !== stamp(expected)) throw new InputError('Saved content changed; reopen it before retrying.');
 }
 function parts(body: string): DisplayPart[] {
-  return body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|(?:calendar|toolbox):[A-Za-z0-9:_-]+|e1:[0-9a-f]{64})/g)
+  return body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|(?:calendar|toolbox):[A-Za-z0-9:_-]+|e1:[0-9a-f]{64}|[0-9a-f]{64})/g)
     .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function pages(body: string, command: string, value: {revision: number}, page = 1) {
