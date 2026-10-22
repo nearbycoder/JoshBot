@@ -76,8 +76,8 @@ Research uses public search excerpts and the explicit question; it does not read
 Targeted tests use only the supplied in-memory store fixture and fake search/generation services:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-research.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-research.test.ts
+npm run typecheck
 git diff --check
 ```
 

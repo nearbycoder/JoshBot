@@ -138,7 +138,7 @@ Keep your original ICS if you need an export/backup. There is no export command,
 
 Registration, private delivery, source scoping and cancellation are implemented in the shared runtime. Calendar adds no dependencies or external accounts.
 
-The feature uses **zero generation calls, zero searches, and zero owner-context service calls** per invocation. Local parsing and interval work are bounded by the input/event limits. The parent runtime supplies the 120-second deadline, prompt cancellation, and signal-guarded store writes. The feature checks cancellation before starting and propagates cancellation reasons instead of masking them as storage failures; it performs no background work or service retries. Replies remain within the runtime's 28,000-character limit. Shared runtime/store files are references only and are not copied into this feature branch.
+The feature uses **zero generation calls, zero searches, and zero owner-context service calls** per invocation. Local parsing and interval work are bounded by the input/event limits. The parent runtime supplies the 120-second deadline, prompt cancellation, and signal-guarded store writes. The feature checks cancellation before starting and propagates cancellation reasons instead of masking them as storage failures; it performs no background work or service retries. Replies remain within the runtime's 28,000-character limit. The registered feature uses the shared runtime and scoped store.
 
 ## Targeted verification
 
@@ -146,7 +146,7 @@ The actual-runtime regression uses the integrated runtime/store with an in-memor
 
 ```sh
 node --import tsx --test tests/agent-calendar.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+npm run typecheck
 git diff --check
 ```
 

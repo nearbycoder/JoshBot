@@ -118,7 +118,7 @@ Each invocation makes zero generation calls and zero searches, within the shared
 Verification uses only fake stores/services:
 
 ```sh
-PATH=/tmp/joshbot-node24/bin:$PATH node --import tsx --test tests/agent-travel.test.ts
-PATH=/tmp/joshbot-node24/bin:$PATH npm run typecheck
+node --import tsx --test tests/agent-travel.test.ts
+npm run typecheck
 git diff --check
 ```
