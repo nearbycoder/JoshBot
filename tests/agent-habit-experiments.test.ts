@@ -76,3 +76,49 @@ test('reserved source replacements and both 90-day observations fit after satura
  await f.run(`reset-snapshot ${r.id} confirm`);assert.match(await f.run(nextCommand.replace('/nobo-help agent habit-experiments ','')),/changed/);
  for(const r of (await state(f)).records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
 });
+
+test('saved comparisons validate both baseline observations and intervention counts on every read and mutation',async()=>{
+ const {f,h,exp}=await setup();await runFeature(habits,`check ${h} | 2026-10-01`,owner,undefined,f.backend,now);
+ assert.match(await f.run(`opportunities ${exp} | 1 | 1`),/^Saved/);assert.match(await f.run(`compare ${exp}`),/recorded 1/);
+ const good=await state(f);
+ const variants=[
+  (r:any)=>{r.comparison.status='baseline-changed';r.comparison.baselineDays=['2026-10-01','2026-10-02'];},
+  (r:any)=>{r.comparison.status='baseline-changed';r.before.baselineDays=['2026-10-01','2026-10-02'];},
+  (r:any)=>{r.before.baselineDays=r.comparison.baselineDays=['2026-10-01','2026-10-02'];},
+  (r:any)=>r.comparison.interventionDays=['2026-10-08','2026-10-09'],
+  (r:any)=>r.opportunities.baseline=0,
+  (r:any)=>r.opportunities.intervention=8,
+  (r:any)=>r.comparison.baselineDays=['2026-10-02'], // current must match frozen
+  (r:any)=>r.comparison.status='baseline-changed', // changed must differ
+  (r:any)=>{r.comparison.status='source-changed';r.comparison.interventionDays=null;},
+  (r:any)=>{r.comparison.status='source-absent';r.comparison.baselineDays=null;r.comparison.interventionDays=null;},
+  (r:any)=>{r.comparison.status='source-changed';r.comparison.baselineDays=null;r.comparison.interventionDays=null;r.comparison.sourceFingerprint=null;},
+  (r:any)=>{r.comparison.status='source-absent';r.comparison.baselineDays=null;r.comparison.interventionDays=null;r.comparison.sourceFingerprint=null;r.opportunities.baseline=0;},
+  (r:any)=>{r.comparison.status='baseline-changed';r.comparison.baselineDays=['2026-02-30'];},
+  (r:any)=>{r.comparison.status='baseline-changed';r.comparison.baselineDays=['2026-10-01T00:00:00Z'];},
+  (r:any)=>{r.comparison.status='baseline-changed';r.comparison.baselineDays=['2026-10-02','2026-10-01'];},
+  (r:any)=>{r.comparison.status='baseline-changed';r.comparison.baselineDays=['2026-10-01','2026-10-01'];},
+ ];
+ for(const mutate of variants){const bad=structuredClone(good);mutate(bad.records[0]);const raw=' \n'+JSON.stringify(bad)+' \t';f.backend.data.set(f.key('state'),raw);const writes=f.backend.calls.writes,reads=f.calls.readContext;
+  for(const command of ['list',`show ${exp}`,`report ${exp}`,`export ${exp}`,`edit ${exp} title | Valid title`,`opportunities ${exp} | 7 | 7`,`reset-snapshot ${exp} confirm`,`compare ${exp}`,`delete ${exp} confirm`]){
+   assert.doesNotMatch(await f.run(command),/^Saved|^Deleted|^Revision|^Current list/);assert.equal(f.backend.data.get(f.key('state')),raw);assert.equal(f.backend.calls.writes,writes);assert.equal(f.calls.readContext,reads);
+  }
+ }
+});
+
+test('valid changed baseline, absent/changed sources, unknown dates and empty observations retain distinct meanings',async()=>{
+ const {f,h,exp,key}=await setup();await runFeature(habits,`check ${h} | 2026-10-01`,owner,undefined,f.backend,now);
+ assert.match(await f.run(`opportunities ${exp} | 2 | 0`),/^Saved/);assert.match(await f.run(`compare ${exp}`),/status current/);
+ const before=(await state(f)).records[0].before;
+ await runFeature(habits,`check ${h} | 2026-10-02`,owner,undefined,f.backend,now);
+ assert.match(await f.run(`compare ${exp}`),/2\/2 = 100.0%/);assert.equal((await state(f)).records[0].comparison.status,'baseline-changed');assert.deepEqual((await state(f)).records[0].before,before);
+ const saved=f.backend.data.get(f.key('state'));assert.match(await f.run(`opportunities ${exp} | 1 | 0`),/below recorded/);assert.equal(f.backend.data.get(f.key('state')),saved);
+ let source=JSON.parse(f.backend.data.get(key)!);source.entries[0].title='Changed source';f.backend.data.set(key,JSON.stringify(source));assert.match(await f.run(`compare ${exp}`),/status source-changed/);
+ assert.equal((await state(f)).records[0].comparison.baselineDays,null);f.backend.data.set(key,JSON.stringify({entries:[]}));assert.match(await f.run(`compare ${exp}`),/status source-absent/);
+ for(const days of [undefined,[]]){
+  if(days===undefined)delete source.entries[0].data.days;else source.entries[0].data.days=days;
+  f.backend.data.set(key,JSON.stringify(source));assert.match(await f.run(`attach ${exp} | toolbox:habits:${h}`),/^Saved/);
+  assert.match(await f.run(`opportunities ${exp} | 0 | unknown`),/^Saved/);const rawSource=f.backend.data.get(key);
+  const out=await f.run(`compare ${exp}`);assert.match(out,days===undefined?/recorded unknown; opportunities 0; adherence unknown/:/recorded 0; opportunities 0; adherence undefined/);assert.match(out,/opportunities unknown; adherence not shown/);assert.equal(f.backend.data.get(key),rawSource);
+ }
+});
