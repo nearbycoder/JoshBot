@@ -309,6 +309,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     if (context.signal?.aborted) return "Recall cancelled.";
     snapshot = normalizeContext(raw, kinds, formatter);
   } catch {
+    if (context.signal?.aborted) return "Recall cancelled.";
     return "Your personal context could not be read. Try recall again later; no source data was changed.";
   }
   const notes = snapshot.notes.length ? `\n\nCoverage notes: ${snapshot.notes.join(" ")}` : "";

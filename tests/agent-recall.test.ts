@@ -11,11 +11,11 @@ function source(id: string, overrides: Partial<AgentContextItem> = {}): AgentCon
 
 function setup(initial: AgentContextItem[] = [], generate?: AgentFeatureServices["generate"]) {
   let items = initial;
-  const calls = { read: 0, generate: 0, kinds: [] as AgentContextKind[][], inputs: [] as { instructions: string; input: string }[] };
+  const calls = { read: 0, generate: 0, search: 0, storeReads: 0, storeWrites: 0, kinds: [] as AgentContextKind[][], inputs: [] as { instructions: string; input: string }[] };
   const context = createAgentTestContext({
     store: {
-      read: async () => { throw new Error("Recall must not read persisted state"); },
-      update: async () => { throw new Error("Recall must not write persisted state"); },
+      read: async () => { calls.storeReads++; throw new Error("Recall must not read persisted state"); },
+      update: async () => { calls.storeWrites++; throw new Error("Recall must not write persisted state"); },
     },
     services: {
       readContext: async (requested) => { calls.read++; calls.kinds.push(requested ?? []); return items; },
@@ -25,7 +25,7 @@ function setup(initial: AgentContextItem[] = [], generate?: AgentFeatureServices
         if (!generate) throw new Error("No model configured");
         return generate(input);
       },
-      search: async () => { throw new Error("Recall must not search the public web"); },
+      search: async () => { calls.search++; throw new Error("Recall must not search the public web"); },
     },
   });
   return { context, calls, run: (command: string) => feature.execute(command, context), setSources: (next: AgentContextItem[]) => { items = next; } };
@@ -327,6 +327,53 @@ test("Slack output remains bounded even with long markup-heavy text, IDs and URL
   assert.ok(opened.length <= 27_500);
   assert.match(opened, /Display shortened|Reply shortened/);
   assert.doesNotMatch(search, /<!/);
+});
+
+test("Unicode context exceeding the serialized storage quota stays read-only and within invocation budgets", async () => {
+  const items = Array.from({ length: 30 }, (_, i) => source(`unicode-${i}`, {
+    title: `Atlas 漢字 ${i}`, text: `Atlas ${"漢🙂".repeat(3_000)}`,
+  }));
+  const serialized = JSON.stringify(items);
+  assert.ok(serialized.length < 480_000);
+  assert.ok(Buffer.byteLength(serialized, "utf8") > 512_000, "Unicode bytes, not JS string length, exceed the storage limit");
+  const h = setup(items, async ({ input, instructions }) => {
+    assert.ok(input.length <= 80_000);
+    assert.ok(instructions.length <= 24_000);
+    const evidence = JSON.parse(input).sources;
+    assert.ok(evidence.length <= 5);
+    return JSON.stringify({ sources: [evidence[0].reference] });
+  });
+  for (const command of ["help", "search Atlas --limit 10", "source note/unicode-0", "ask Atlas --limit 5"]) {
+    const before = { ...h.calls };
+    const reply = await h.run(command);
+    assert.ok(reply.length <= 27_500);
+    if (command.startsWith("ask")) assert.match(reply, /Model-selected excerpts/);
+    assert.equal(h.calls.read - before.read, command === "help" ? 0 : 1);
+    assert.equal(h.calls.generate - before.generate, command.startsWith("ask") ? 1 : 0);
+    assert.equal(h.calls.search, 0);
+    assert.equal(h.calls.storeReads, 0);
+    assert.equal(h.calls.storeWrites, 0);
+  }
+});
+
+test("runtime-style deadline rejections return cancellation without provider errors or follow-on work", async () => {
+  for (const stage of ["readContext", "generate"] as const) {
+    const h = setup([source("a")]);
+    const controller = new AbortController();
+    h.context.signal = controller.signal;
+    let abortedCalls = 0;
+    h.context.services[stage] = async () => {
+      abortedCalls++;
+      controller.abort(new Error("SECRET deadline detail"));
+      throw controller.signal.reason;
+    };
+    assert.equal(await h.run("ask Atlas"), "Recall cancelled.");
+    assert.equal(abortedCalls, 1);
+    assert.equal(h.calls.generate, 0);
+    assert.equal(h.calls.search, 0);
+    assert.equal(h.calls.storeReads, 0);
+    assert.equal(h.calls.storeWrites, 0);
+  }
 });
 
 test("abort signals stop reads or prevent late generation output from being returned", async () => {
