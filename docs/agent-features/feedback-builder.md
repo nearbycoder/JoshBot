@@ -25,3 +25,5 @@ Catalog budgets generations/searches/contextReads/storeReads/storeUpdates: 1/0/0
 Every loaded state is schema checked; CAS transforms enforce quotas and use IDs/time allocated beforehand. Revision/signal rereads discard optional results after edits/deletion. Bad input, malformed state and optional failures preserve saved bytes. Runtime owner isolation, receipts and original deadline apply; cancellation cannot undo an already dispatched CAS.
 
 `tests/agent-feedback-builder.test.ts` verifies exact catalog workflow and original observation/motive strings, lexical matches, all editing/removal, final interpretation retrieval, Unicode quota recovery, optional output validation and stale work. Tests use the real runtime/scoped store with fake/throwing services. Parent owns registration, independent review and deployment; no production result is claimed.
+
+Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.

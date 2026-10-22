@@ -52,7 +52,44 @@ test("editing a canonical fact or deleting the brief discards an in-flight narra
 });
 test("CAS retry validates requirements against current facts; invalid saved references and foreign owners remain private",async()=>{
  let conflict=false;const backend=createMemoryAgentBackend({beforeCompareSet:(key,previous)=>{if(conflict&&previous&&key.endsWith(":state")){conflict=false;const s=JSON.parse(previous);s.records[0].facts=[];s.records[0].revision++;backend.data.set(key,JSON.stringify(s));}}});const f=createAgentFeatureFixture(feature,{backend}),id=await create(f),a=await addAudience(f,id);await f.run(`fact ${id} add Disposable | optional`);const fid=(await record(f,id)).facts[0].id;conflict=true;
- assert.match(await f.run(`require ${id} ${a} | ${fid}`),/Fact not found/);assert.equal(backend.calls.conflicts,1);assert.deepEqual((await record(f,id)).audiences[0].requiredFactIds,[]);
+ assert.match(await f.run(`require ${id} ${a} | ${fid}`),/changed before.*Inspect/);assert.equal(backend.calls.conflicts,1);assert.deepEqual((await record(f,id)).audiences[0].requiredFactIds,[]);
  assert.match(await f.run(`show ${id}`,{owner:{teamId:"TOTHER",userId:"UOTHER"}}),/not found/);
  const bad=JSON.parse(backend.data.get(f.key("state"))!);bad.records[0].audiences[0].requiredFactIds=[fid];const raw=JSON.stringify(bad);backend.data.set(f.key("state"),raw);assert.match(await f.run(`delete ${id} confirm`),/preserved/);assert.equal(backend.data.get(f.key("state")),raw);
+});
+
+// These races pause the real backend CAS and complete a newer real command first.
+test("mutation intent rejects same-record races, preserves deletions, and retries unrelated records", async () => {
+  for (let scenario = 0; scenario < 7; scenario++) {
+    let compete: (() => Promise<void>) | undefined;
+    const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+      if (key.endsWith(":state") && compete) { const run = compete; compete = undefined; await run(); }
+    } });
+    const f = createAgentFeatureFixture(feature, { backend }), id = await create(f);
+    await f.run(`fact ${id} add Original fact | required`); await f.run(`audience ${id} add Sponsor | Needs | 100`);
+    const initial = await record(f, id);
+    const commands = (() => { const entry = initial.facts[0].id, a = initial.audiences[0].id;
+    return [
+      [`fact ${id} edit ${entry} | OLD fact | required`, `fact ${id} edit ${entry} | LATER fact | required`],
+      [`fact ${id} remove ${entry} confirm`, `require ${id} ${a} | ${entry}`],
+      [`require ${id} ${a} | ${entry}`, `audience ${id} edit ${a} | Reviewer | New needs | 50`],
+      [`clear ${id} lead confirm`, `lead ${id} | New lead`],
+    ]; })();
+    commands.push([`delete ${id} confirm`, `edit ${id} | title | Winning title`]);
+    commands.push([`edit ${id} | title | Stale title`, `delete ${id} confirm`]);
+    const other = await create(f);
+    commands.push([`edit ${id} | title | Requested title`, `edit ${other} | title | Unrelated winner`]);
+    const [older, newer] = commands[scenario]; let winner: string | undefined;
+    compete = async () => { assert.match(await f.run(newer), /^(Saved|Deleted)/); winner = backend.data.get(f.key("state")); };
+    const reply = await f.run(older);
+    assert.equal(backend.calls.conflicts, 1, older);
+    if (scenario < 6) {
+      assert.match(reply, /changed before.*Inspect|not found/, older);
+      assert.equal(backend.data.get(f.key("state")), winner, older);
+    } else {
+      assert.match(reply, /^Saved/);
+      assert.equal((await record(f, id)).title, "Requested title");
+      assert.equal((await record(f, other)).title, "Unrelated winner");
+    }
+    assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  }
 });

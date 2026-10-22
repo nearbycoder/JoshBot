@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import feature from "../lib/agent-features/boundary-script.js";
-import { createAgentFeatureFixture, deferred } from "./helpers/agent-feature-fixture.js";
+import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
 async function create(f: ReturnType<typeof createAgentFeatureFixture>) { return /boundary-[\da-f-]{36}/.exec(await f.run(feature.example.split("boundary-script ")[1]))![0]; }
 async function record(f: ReturnType<typeof createAgentFeatureFixture>,id:string){return JSON.parse(await f.run(`export ${id}`)).record;}
 
@@ -48,4 +48,41 @@ test("pending tone suggestions cannot outlive edits/deletion and owners cannot s
  for(const action of ["edit","delete"]){const gate=deferred<void>(),entered=deferred<void>();const f=createAgentFeatureFixture(feature,{services:{generate:async({input})=>{entered.resolve();await gate.promise;const {sources}=JSON.parse(input);return JSON.stringify({sections:sources.map((s:{ref:string;quote:string})=>({...s,text:s.quote}))});}}});
  const id=await create(f),pending=f.run(`polish ${id} | direct`);await entered.promise;await f.run(action==="edit"?`offer ${id} | Discuss next week`:`delete ${id} confirm`);gate.resolve();assert.match(await pending,/stale result was discarded/);
  assert.match(await f.run(`show ${id}`,{owner:{teamId:"TOTHER",userId:"UOTHER"}}),/not found/);}
+});
+
+// These races pause the real backend CAS and complete a newer real command first.
+test("mutation intent rejects same-record races, preserves deletions, and retries unrelated records", async () => {
+  for (let scenario = 0; scenario < 7; scenario++) {
+    let compete: (() => Promise<void>) | undefined;
+    const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+      if (key.endsWith(":state") && compete) { const run = compete; compete = undefined; await run(); }
+    } });
+    const f = createAgentFeatureFixture(feature, { backend }), id = await create(f);
+    await f.run(`avoid ${id} | No weekend work`);
+    const initial = await record(f, id);
+    const commands = (() => { const entry = initial.avoid[0].id;
+    return [
+      [`offer ${id} | OLD offer`, `offer ${id} | LATER offer`],
+      [`stance ${id} | decline`, `stance ${id} | defer`],
+      [`prohibition ${id} remove ${entry} confirm`, `prohibition ${id} edit ${entry} | No Monday promise`],
+      [`clear ${id} constraint confirm`, `edit ${id} | constraint | New capacity limit`],
+    ]; })();
+    commands.push([`delete ${id} confirm`, `edit ${id} | title | Winning title`]);
+    commands.push([`edit ${id} | title | Stale title`, `delete ${id} confirm`]);
+    const other = await create(f);
+    commands.push([`edit ${id} | title | Requested title`, `edit ${other} | title | Unrelated winner`]);
+    const [older, newer] = commands[scenario]; let winner: string | undefined;
+    compete = async () => { assert.match(await f.run(newer), /^(Saved|Deleted)/); winner = backend.data.get(f.key("state")); };
+    const reply = await f.run(older);
+    assert.equal(backend.calls.conflicts, 1, older);
+    if (scenario < 6) {
+      assert.match(reply, /changed before.*Inspect|not found/, older);
+      assert.equal(backend.data.get(f.key("state")), winner, older);
+    } else {
+      assert.match(reply, /^Saved/);
+      assert.equal((await record(f, id)).title, "Requested title");
+      assert.equal((await record(f, other)).title, "Unrelated winner");
+    }
+    assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  }
 });

@@ -95,3 +95,40 @@ test("CAS retries retain a concurrent child and owner isolation; corrupt schema 
   const bad=JSON.parse(backend.data.get(f.key("state"))!);bad.records[0].entries=[{id:"bad",kind:"secret"}];const raw=JSON.stringify(bad);backend.data.set(f.key("state"),raw);
   assert.match(await f.run(`delete ${id} confirm`),/preserved/);assert.equal(backend.data.get(f.key("state")),raw);
 });
+
+// These races pause the real backend CAS and complete a newer real command first.
+test("mutation intent rejects same-record races, preserves deletions, and retries unrelated records", async () => {
+  for (let scenario = 0; scenario < 7; scenario++) {
+    let compete: (() => Promise<void>) | undefined;
+    const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+      if (key.endsWith(":state") && compete) { const run = compete; compete = undefined; await run(); }
+    } });
+    const f = createAgentFeatureFixture(feature, { backend }), id = await create(f);
+    await f.run(`scope ${id} | in | Original scope`);
+    const initial = await record(f, id);
+    const commands = (() => { const entry = initial.entries[0].id;
+    return [
+      [`accept ${id} confirm`, `edit ${id} | outcome | New unaccepted outcome`],
+      [`unaccept ${id} confirm`, `accept ${id} confirm`],
+      [`entry ${id} remove ${entry} confirm`, `entry ${id} edit ${entry} | in | - | Revised scope`],
+      [`clear ${id} outcome confirm`, `accept ${id} confirm`],
+    ]; })();
+    commands.push([`delete ${id} confirm`, `edit ${id} | title | Winning title`]);
+    commands.push([`edit ${id} | title | Stale title`, `delete ${id} confirm`]);
+    const other = await create(f);
+    commands.push([`edit ${id} | title | Requested title`, `edit ${other} | title | Unrelated winner`]);
+    const [older, newer] = commands[scenario]; let winner: string | undefined;
+    compete = async () => { assert.match(await f.run(newer), /^(Saved|Deleted)/); winner = backend.data.get(f.key("state")); };
+    const reply = await f.run(older);
+    assert.equal(backend.calls.conflicts, 1, older);
+    if (scenario < 6) {
+      assert.match(reply, /changed before.*Inspect|not found/, older);
+      assert.equal(backend.data.get(f.key("state")), winner, older);
+    } else {
+      assert.match(reply, /^Saved/);
+      assert.equal((await record(f, id)).title, "Requested title");
+      assert.equal((await record(f, other)).title, "Unrelated winner");
+    }
+    assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  }
+});

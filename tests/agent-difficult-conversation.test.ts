@@ -52,7 +52,7 @@ test("near-capacity admission reserves every mandatory worst-case escaped attemp
 });
 test("CAS retry refuses a response when the active card changes instead of attaching it to another objection",async()=>{
  let conflict=false,other="";const backend=createMemoryAgentBackend({beforeCompareSet:(key,previous)=>{if(conflict&&previous&&key.endsWith(":state")){conflict=false;const s=JSON.parse(previous);s.records[0].activeCard=other;s.records[0].revision++;backend.data.set(key,JSON.stringify(s));}}});const f=createAgentFeatureFixture(feature,{backend}),id=await create(f),first=await addCard(f,id);other=await addCard(f,id);
- await f.run(`practice ${id} ${first}`);conflict=true;assert.match(await f.run(`respond ${id} | Must belong to first card`),/Practice changed/);const r=await record(f,id);assert.equal(r.activeCard,other);assert.equal(r.cards[0].attempts.length,0);assert.equal(r.cards[1].attempts.length,0);assert.equal(backend.calls.conflicts,1);
+ await f.run(`practice ${id} ${first}`);conflict=true;assert.match(await f.run(`respond ${id} | Must belong to first card`),/changed before.*Inspect/);const r=await record(f,id);assert.equal(r.activeCard,other);assert.equal(r.cards[0].attempts.length,0);assert.equal(r.cards[1].attempts.length,0);assert.equal(backend.calls.conflicts,1);
 });
 test("simulation is one unsaved hypothetical turn with validated references and no automatic practice",async()=>{
  let mode="valid";const f=createAgentFeatureFixture(feature,{services:{generate:async({input})=>{const source=JSON.parse(input).sources.find((s:{ref:string})=>s.ref==="objection");const sections=[{...source,text:"Which part would be useful to discuss first?"}];if(mode==="unknown")sections[0].ref="someone-else";if(mode==="quote")sections[0].quote="Not entered";if(mode==="extra")sections[0].sender="real person";if(mode==="huge")return "x".repeat(4001);return JSON.stringify({sections});}}});
@@ -65,4 +65,41 @@ test("pending simulation is discarded after edit/deletion; abort and foreign own
  if(action==="abort"){const rejected=assert.rejects(pending);controller.abort();gate.resolve();await rejected;}else{await f.run(action==="edit"?`boundary ${id} | No extra work`:`delete ${id} confirm`);gate.resolve();assert.match(await pending,/stale result was discarded/);}
  assert.match(await f.run(`show ${id}`,{owner:{teamId:"TOTHER",userId:"UOTHER"}}),/not found/);
  }
+});
+
+// These races pause the real backend CAS and complete a newer real command first.
+test("mutation intent rejects same-record races, preserves deletions, and retries unrelated records", async () => {
+  for (let scenario = 0; scenario < 7; scenario++) {
+    let compete: (() => Promise<void>) | undefined;
+    const backend = createMemoryAgentBackend({ beforeCompareSet: async key => {
+      if (key.endsWith(":state") && compete) { const run = compete; compete = undefined; await run(); }
+    } });
+    const f = createAgentFeatureFixture(feature, { backend }), id = await create(f);
+    await f.run(`objection ${id} add Question | Answer`); const c = (await record(f,id)).cards[0].id; await f.run(`practice ${id} ${c}`); await f.run(`respond ${id} | Original attempt`);
+    const initial = await record(f, id);
+    const commands = (() => { const c = initial.cards[0].id, a = initial.cards[0].attempts[0].id;
+    return [
+      [`rate ${id} ${c} ${a} | 5`, `attempt ${id} ${c} edit ${a} | NEW unrated attempt`],
+      [`unrate ${id} ${c} ${a} confirm`, `rate ${id} ${c} ${a} | 4`],
+      [`attempt ${id} ${c} remove ${a} confirm`, `rate ${id} ${c} ${a} | 3`],
+      [`cancel ${id} confirm`, `practice ${id} ${c}`],
+    ]; })();
+    commands.push([`delete ${id} confirm`, `edit ${id} | title | Winning title`]);
+    commands.push([`edit ${id} | title | Stale title`, `delete ${id} confirm`]);
+    const other = await create(f);
+    commands.push([`edit ${id} | title | Requested title`, `edit ${other} | title | Unrelated winner`]);
+    const [older, newer] = commands[scenario]; let winner: string | undefined;
+    compete = async () => { assert.match(await f.run(newer), /^(Saved|Deleted)/); winner = backend.data.get(f.key("state")); };
+    const reply = await f.run(older);
+    assert.equal(backend.calls.conflicts, 1, older);
+    if (scenario < 6) {
+      assert.match(reply, /changed before.*Inspect|not found/, older);
+      assert.equal(backend.data.get(f.key("state")), winner, older);
+    } else {
+      assert.match(reply, /^Saved/);
+      assert.equal((await record(f, id)).title, "Requested title");
+      assert.equal((await record(f, other)).title, "Unrelated winner");
+    }
+    assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+  }
 });

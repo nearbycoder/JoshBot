@@ -24,3 +24,5 @@ Catalog budgets are generations/searches/contextReads/storeReads/storeUpdates = 
 CAS validation is synchronous; IDs/time are allocated before it. Malformed state and failed optional output retain saved bytes. Optional results reread revision and signal so edits/deletion win. Original runtime ownership, receipts and deadline apply; an already dispatched write cannot be undone by cancellation. There are no source reads, background tasks or live verification.
 
 Tests in `tests/agent-boundary-script.test.ts` exercise the catalog first example, exact-once alternative, missing date/scope, all edits/removal, lexical heuristics, Unicode quota and full final-child retrieval, optional schema failures, stale output and owner isolation through the real runtime/scoped store. Parent owns registration, independent integration review and release.
+
+Every mutation binds the intended record snapshot before CAS retries. A same-record change rejects the older command with an inspect/retry message, including status, evidence, attempts and confirmed deletion. Unrelated-record conflicts retry safely; a deleted target is never recreated.

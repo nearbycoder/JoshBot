@@ -248,10 +248,14 @@ async function read(context: AgentFeatureContext): Promise<State> {
 }
 async function mutate(context: AgentFeatureContext, id: string | undefined, change: (state: State, record?: RecordData) => string,
   kind: "content" | "lifecycle" | "remove" = "content"): Promise<string> {
+  // Bind intent once, outside the retryable transform. The snapshot also guards
+  // removals at the revision ceiling; unrelated records may still retry.
+  const intended = id === undefined ? undefined : JSON.stringify(find(await read(context), id));
   const timestamp = context.now.toISOString();
   return context.store.update<State, string>("state", EMPTY, current => {
     const state = structuredClone(decode(current));
     const record = id === undefined ? undefined : find(state, id);
+    if (record && JSON.stringify(record) !== intended) fail(`This item changed before the command could be saved. Inspect it, then retry: ${ROUTE} show ${id}`);
     const result = change(state, record);
     if (record && state.records.includes(record)) {
       if (record.revision >= MAX_REVISION && kind !== "remove") fail("Revision limit reached. Export this record and create a new one.");
