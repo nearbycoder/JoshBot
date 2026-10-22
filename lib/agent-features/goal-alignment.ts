@@ -4,6 +4,7 @@ import { boundedText, pipeFields, parseInteger, parsePage, paginateParts, pageAt
 import { assertQuota, assertStateVersion, serializedBytes } from "./feature-kit/bounded-state.js";
 import { civilDate, civilDaysBetween, dateInZone, normalizeInstant } from "./feature-kit/civil-time.js";
 import metadata from "./goal-alignment.metadata.js";
+import { AgentContextCapacityError } from "./budgets.js";
 
 import { captureEvidence } from "./feature-kit/evidence.js";
 import type { AgentContextItem } from "./types.js";
@@ -72,14 +73,23 @@ function verifyOwner(r: RecordData, context: AgentFeatureContext): void {
 function selected(r: RecordData, id: string): Selected { const g = r.goals.find(g => g.id === id); if (!g) fail("Goal is not selected on this board. Use goals/select or local first."); return g; }
 function activity(r: RecordData, id: string): Activity { const a = r.activities.find(a => a.id === id); if (!a) fail("Activity not found on this board."); return a; }
 function selectedBytes(r: RecordData): number { return r.goals.reduce((n, g) => n + (g.kind === "source" ? Buffer.byteLength(g.snapshot.text) : 0), 0); }
-async function sources(context: AgentFeatureContext): Promise<{ all: Source[]; fingerprint: string }> {
-  const incoming = await context.services.readContext(["goal"]); context.signal?.throwIfAborted();
-  // Validate every one of the adapter's <=100 sources independently. Do not impose
-  // a selected-evidence aggregate cap on discovery or silently truncate long sets.
-  return checked(() => {
+async function sources(context: AgentFeatureContext, boardId: string): Promise<{ all: Source[]; fingerprint: string }> {
+  try {
+    const incoming = await context.services.readContext(["goal"]); context.signal?.throwIfAborted();
+    // Validate the complete adapter result; selection limits must not truncate
+    // discovery or turn an incomplete source into an empty permitted snapshot.
     array(incoming, 100); const all = incoming.map(item => source(item)).sort((a, b) => a.item.id.localeCompare(b.item.id)); unique(all.map(s => s.item.id));
     return { all, fingerprint: `s1:${createHash("sha256").update(JSON.stringify(all.map(s => [s.item.id, s.fingerprint]))).digest("hex")}` };
-  });
+  } catch (error) {
+    context.signal?.throwIfAborted();
+    // Only the typed class (possibly wrapped by an adapter) establishes capacity.
+    // Never echo backend messages, even messages carried by a typed error.
+    let capacity = false;
+    for (let cause = error, depth = 0; cause instanceof Error && depth < 8; cause = cause.cause, depth++) {
+      if (cause instanceof AgentContextCapacityError) { capacity = true; break; }
+    }
+    fail(`Owned goal context could not be read completely, so this source operation could not be completed safely.${capacity ? " A complete-read capacity limit was reached." : ""} No board save was dispatched; historical selections and allocations were preserved. Goal source limit: 100 goals; no partial source was used.\nCheck /nobo-help tools goals list and /nobo-help tools goals help. Reduce owned toolbox goals if needed: /nobo-help tools goals export ID, then /nobo-help tools goals delete ID confirm. Use the toolbox entry ID (without toolbox:goals:), then retry this command.\nLocal alternative: ${ROUTE} local ${boardId} | LABEL. Saved show/review/export remain available.`);
+  }
 }
 function coverage(s: AgentContextItem): string { return `text ${s.metadata?.textTruncated === true ? "adapter excerpt (truncated)" : s.metadata?.textTruncated === false ? "complete adapter text" : "coverage unknown"}; title ${s.metadata?.titleTruncated === true ? "truncated by adapter" : s.metadata?.titleTruncated === false ? "complete" : "coverage unknown"}${s.metadata?.coverage ? `; ${s.metadata.coverage}` : ""}`; }
 function minutes(n: number): string { return (n / 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1"); }
@@ -100,7 +110,7 @@ async function sourceView(context: AgentFeatureContext, verb: string, rest: stri
   const args = words(rest, verb === "source" ? 2 : 1, verb === "source" ? 7 : 6), r = find(await read(context), args[0]); verifyOwner(r, context);
   const tail = args.slice(verb === "source" ? 2 : 1); if (![0, 1, 5].includes(tail.length)) fail("Copy the complete PAGE rev TOKEN source FINGERPRINT continuation or restart page 1.");
   const page = checked(() => parsePage(tail[0])); if (tail.length === 5 && (tail[1] !== "rev" || tail[2] !== stamp(r) || tail[3] !== "source")) fail("Saved board changed; restart source page 1.");
-  const current = await sources(context); if (stamp(find(await read(context), r.id)) !== stamp(r)) fail("Board changed while goals loaded; restart discovery.");
+  const current = await sources(context, r.id); if (stamp(find(await read(context), r.id)) !== stamp(r)) fail("Board changed while goals loaded; restart discovery.");
   if (tail.length === 5 && tail[4] !== current.fingerprint) fail("Goal source set changed; stale source continuation rejected. Restart page 1.");
   let body: string, command: string;
   if (verb === "source") { const s = current.all.find(s => s.item.id === args[1]); if (!s) fail("Source absent from this permitted snapshot. Use goals to discover available IDs."); body = JSON.stringify({ source: s.item, fingerprint: s.fingerprint }, null, 2); command = `source ${r.id} ${s.item.id}`; }
@@ -120,13 +130,13 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
     if (verb === "select" && existing) fail("Already selected. Use replace BOARD | SOURCE_ID | confirm for an explicit fresh replacement.");
     if (verb === "replace" && (!existing || existing.kind !== "source")) fail("Only a selected source can be replaced.");
     if (!existing && r.goals.length >= 10) fail("Maximum 10 selected goals/local labels. Remove one explicitly first.");
-    const current = await sources(context), s = current.all.find(s => s.item.id === sid); if (!s) fail("Goal absent from the current permitted snapshot. Historical data preserved; use goals or refresh.");
+    const current = await sources(context, id), s = current.all.find(s => s.item.id === sid); if (!s) fail("Goal absent from the current permitted snapshot. Historical data preserved; use goals or refresh.");
     const capturedAt = context.now.toISOString(), g: Selected = { kind: "source", id: sid, owner: { teamId: context.teamId, userId: context.userId }, snapshot: s.item, fingerprint: s.fingerprint, capturedAt, checkedAt: capturedAt, verification: "captured", latestFingerprint: s.fingerprint };
     return mutate(context, id, (_, next) => { if (existing) next!.goals[next!.goals.findIndex(g => g.id === sid)] = g; else next!.goals.push(g); if (selectedBytes(next!) > 8000) fail("Selected source text exceeds 8000 UTF-8 bytes. Remove a selection or shorten the source; no source was clipped."); return saved(id, `Goal ${sid} ${existing ? "snapshot explicitly replaced; existing shares still express your planned allocation" : "snapshot selected"}. Saved context is historical.`, `review ${id}`); }, "content", r);
   }
   if (verb === "refresh") {
     const [id] = words(rest, 1), r = find(await read(context), id); verifyOwner(r, context); if (!r.goals.some(g => g.kind === "source")) fail("No owned goal snapshots selected. Local labels have no source to refresh.");
-    const current = await sources(context), checkedAt = context.now.toISOString();
+    const current = await sources(context, id), checkedAt = context.now.toISOString();
     return mutate(context, id, (_, next) => { for (const g of next!.goals) if (g.kind === "source") { const s = current.all.find(s => s.item.id === g.id); g.checkedAt = checkedAt; g.latestFingerprint = s?.fingerprint ?? ""; g.verification = !s ? "absent" : s.fingerprint === g.fingerprint ? "unchanged" : "changed"; } return saved(id, "Checked the complete current permitted goal snapshot. Historical text retained; changed/absent sources labeled. Replacement is explicit.", `review ${id}`); }, "lifecycle", r);
   }
   if (verb === "local" || verb === "local-edit") {

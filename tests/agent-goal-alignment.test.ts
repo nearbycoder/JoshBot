@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
 import feature from "../lib/agent-features/goal-alignment.js";
+import metadata from "../lib/agent-features/goal-alignment.metadata.js";
+import { AgentContextCapacityError } from "../lib/agent-features/budgets.js";
 
 import { goals } from "../lib/toolbox/goals.js";
 import { runFeature } from "../lib/toolbox/core.js";
@@ -11,11 +13,11 @@ import type { AgentContextItem } from "../lib/agent-features/types.js";
 const CREATE = "create November effort", PREFIX = "board", TITLE = "November effort";
 const owner = { teamId: "TFIXTURE", userId: "UFIXTURE", channelId: "CFIXTURE" }, now = new Date("2026-10-22T15:00:00.000Z");
 const toolboxKey = `nobo:toolbox:v1:${owner.teamId}:${owner.userId}:goals`;
-function integrated() {
+function integrated(signal = new AbortController().signal) {
   const reads: string[] = [], backend = createMemoryAgentBackend({ beforeGet: key => { reads.push(key); } });
   const adapters = createProductionContextAdapters({ redis: async () => { throw new Error("No legacy Redis allowed"); }, evaluateAccess: async () => { throw new Error("No legacy channel source allowed"); } });
-  const services = createAgentFeatureServices(backend, owner, new AbortController().signal, { now, timezone: "America/Chicago", featureId: feature.id }, { ...adapters, readCalendar: async () => { throw new Error("No calendar"); }, readApprovedMemory: async () => { throw new Error("No memory"); } });
-  const f = createAgentFeatureFixture(feature, { backend, owner, services: { readContext: services.readContext } });
+  const services = createAgentFeatureServices(backend, owner, signal, { now, timezone: "America/Chicago", featureId: feature.id }, { ...adapters, readCalendar: async () => { throw new Error("No calendar"); }, readApprovedMemory: async () => { throw new Error("No memory"); } });
+  const f = createAgentFeatureFixture(feature, { backend, owner, services: { readContext: kinds => { assert.deepEqual(kinds, ["goal"]); return services.readContext(kinds); } } });
   const tool = (command: string) => runFeature(goals, command, owner, undefined, backend, now);
   const entries = () => JSON.parse(backend.data.get(toolboxKey)!).entries as any[];
   const add = async (title: string) => { const reply = await tool(`create ${title} | 10 | tasks | 2026-10-30`); assert.match(reply, /0\/10 tasks/); const e = entries().find(e => e.title === title); return { raw: e.id as string, source: `toolbox:goals:${e.id}` }; };
@@ -275,4 +277,135 @@ test("owned toolbox source IDs retain their non-local legacy contract through se
   assert.equal(record.goals[0].id, sid); assert.equal(record.activities[0].shares[0].goalId, sid);
   assert.equal(x.backend.data.get(toolboxKey), raw);
   assert.match(await x.f.run(`goal-remove ${id} ${sid} confirm`), /Saved privately/);
+});
+
+function assertIncompleteGoalRead(reply: string) {
+  assert.match(reply, /goal context could not be read completely/i);
+  assert.match(reply, /100 goals/); assert.match(reply, /historical.*preserved/i);
+  assert.match(reply, /No board save was dispatched/); assert.doesNotMatch(reply, /Any dispatched save|inspect.*before repeating|FAKE_SECRET|nobo:toolbox/);
+  for (const command of ["/nobo-help tools goals list", "/nobo-help tools goals export ID", "/nobo-help tools goals delete ID confirm", "/nobo-help agent goal-alignment local"]) assert.ok(reply.includes(command), command);
+  assert.match(reply, /retry/i); assert.ok(reply.length <= 3500);
+}
+const sourceCommands = (id: string, selected: string, unselected: string) => [
+  `goals ${id}`, `source ${id} ${selected}`, `select ${id} | ${unselected}`, `replace ${id} | ${selected} | confirm`, `refresh ${id}`,
+];
+
+test("actual 101-goal adapter failure is actionable on every source route and preserves selected history", async () => {
+  const x = integrated(), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f);
+  assert.match(await x.f.run(`select ${id} | ${selected.source}`), /Saved privately/);
+  for (let i = 2; i < 100; i++) await x.add(`Complete ${i}`);
+  const complete = await allSourcePages(x.f, `goals ${id}`); assert.match(complete.combined, /100\/100/);
+  const sourceState = JSON.parse(x.backend.data.get(toolboxKey)!);
+  const extra = { ...structuredClone(sourceState.entries[0]), id: randomUUID() }; sourceState.entries.push(extra);
+  const sourceRaw = ` \n${JSON.stringify(sourceState)}\t `, boardRaw = ` \n${x.backend.data.get(x.f.key("state"))}\t `;
+  x.backend.data.set(toolboxKey, sourceRaw); x.backend.data.set(x.f.key("state"), boardRaw);
+  const writes = x.backend.calls.compareSets;
+  for (const command of sourceCommands(id, selected.source, unselected.source)) {
+    const reads = x.f.calls.readContext; x.reads.length = 0;
+    assertIncompleteGoalRead(await x.f.run(command)); assert.equal(x.f.calls.readContext - reads, 1);
+    assert.equal(x.reads.filter(k => k === toolboxKey).length, 1);
+    assert.equal(x.backend.calls.compareSets, writes);
+    assert.equal(x.backend.data.get(toolboxKey), sourceRaw); assert.equal(x.backend.data.get(x.f.key("state")), boardRaw);
+  }
+  const reads = x.f.calls.readContext;
+  for (const command of ["list", `show ${id}`, `review ${id}`, `export ${id}`]) assert.doesNotMatch(await x.f.run(command), /could not be read/);
+  assert.equal(x.f.calls.readContext, reads);
+  // Recovery commands are verified against the actual toolbox writer/help.
+  const help = await x.tool("help"); for (const grammar of ["list [search]", "export <id>", "delete <id> confirm"]) assert.ok(help.includes(grammar));
+  assert.equal(JSON.parse(await x.tool(`export ${extra.id}`)).id, extra.id);
+  assert.match(await x.tool(`delete ${extra.id} confirm`), /Deleted/);
+  assert.match(await x.f.run(`goals ${id}`), /100\/100/);
+  assert.match(await x.f.run(`local ${id} | Local planning alternative`), /Saved privately/);
+  assert.equal(x.f.calls.generate, 0); assert.equal(x.f.calls.search, 0);
+});
+
+test("actual goal source read sanitizes typed context/index/total capacity and arbitrary backend failures", async () => {
+  const x = integrated(), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f);
+  await x.f.run(`select ${id} | ${selected.source}`);
+  const read = x.backend.get, sourceRaw = x.backend.data.get(toolboxKey)!, boardRaw = x.backend.data.get(x.f.key("state"))!;
+  const failures = [
+    new Error("FAKE_SECRET_backend_key"),
+    new Error("FAKE_SECRET_wrapped", { cause: new AgentContextCapacityError("Personal context is too large to load completely.") }),
+    new AgentContextCapacityError("Personal owner index exceeds the complete-read limit (200)."),
+    new AgentContextCapacityError("This command reached its total context byte budget (32 MiB)."),
+    new AgentContextCapacityError("FAKE_SECRET_even_typed_message"),
+    Object.assign(new Error("FAKE_SECRET_spoof"), { name: "AgentContextCapacityError" }),
+  ];
+  for (const error of failures) {
+    let sourceReads = 0;
+    x.backend.get = async key => { if (key === toolboxKey) { sourceReads++; throw error; } return read(key); };
+    const writes = x.backend.calls.compareSets;
+    for (const command of sourceCommands(id, selected.source, unselected.source)) {
+      const before = sourceReads, reads = x.f.calls.readContext, reply = await x.f.run(command);
+      assertIncompleteGoalRead(reply); assert.equal(sourceReads - before, 1); assert.equal(x.f.calls.readContext - reads, 1);
+      if (error instanceof AgentContextCapacityError || (error as Error).cause instanceof AgentContextCapacityError) assert.match(reply, /complete-read capacity limit/);
+      else assert.doesNotMatch(reply, /capacity limit was reached/);
+      assert.equal(x.backend.calls.compareSets, writes); assert.equal(x.backend.data.get(x.f.key("state")), boardRaw); assert.equal(x.backend.data.get(toolboxKey), sourceRaw);
+    }
+  }
+  x.backend.get = read;
+  // Exercise a genuine typed failure in the actual goal adapter's raw byte guard.
+  const large = JSON.parse(sourceRaw); large.entries[0].body = "x".repeat(2_000_001); x.backend.data.set(toolboxKey, JSON.stringify(large));
+  const reply = await x.f.run(`refresh ${id}`); assertIncompleteGoalRead(reply); assert.match(reply, /complete-read capacity limit/);
+  assert.equal(x.backend.data.get(x.f.key("state")), boardRaw);
+  assert.match(await x.f.run(`local ${id} | Usable without source reads`), /Saved privately/);
+});
+
+test("actual production source reads preserve abort reason and reject stale saves on every route", async () => {
+  for (const operation of ["goals", "source", "select", "replace", "refresh"]) for (const outcome of ["abort", "edit", "delete", "reject"] as const) {
+    const controller = new AbortController(), x = integrated(controller.signal), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f);
+    await x.f.run(`select ${id} | ${selected.source}`);
+    const command = sourceCommands(id, selected.source, unselected.source).find(command => command.startsWith(operation + " "))!;
+    const originalGet = x.backend.get, entered = deferred<void>(), source = deferred<string | null>();
+    x.backend.get = key => { if (key === toolboxKey) { entered.resolve(); return source.promise; } return originalGet(key); };
+    const beforeReads = x.f.calls.readContext, pending = x.f.run(command, { signal: controller.signal });
+    const reason = new Error("Source read explicitly cancelled");
+    const aborted = outcome === "abort" ? assert.rejects(pending, error => error === reason) : undefined;
+    await entered.promise;
+    if (outcome === "edit") assert.match(await x.f.run(`edit ${id} | title | Concurrent winner`), /Saved privately/);
+    if (outcome === "delete") assert.match(await x.f.run(`delete ${id} confirm`), /Deleted privately/);
+    const raw = x.backend.data.get(x.f.key("state")), writes = x.backend.calls.compareSets;
+    if (outcome === "abort") { controller.abort(reason); await aborted; }
+    if (outcome === "reject") source.reject(new Error("FAKE_SECRET_deferred")); else source.resolve(x.backend.data.get(toolboxKey)!);
+    if (outcome !== "abort") {
+      const reply = await pending; if (outcome === "reject") assertIncompleteGoalRead(reply); else assert.match(reply, /changed|not found/i);
+      assert.doesNotMatch(reply, /Saved privately|FAKE_SECRET/);
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(x.f.calls.readContext - beforeReads, 1); assert.equal(x.backend.calls.compareSets, writes); assert.equal(x.backend.data.get(x.f.key("state")), raw);
+    x.backend.get = originalGet;
+  }
+});
+
+test("source recovery help stays literal, bounded and equal to feature/runtime help", async () => {
+  const f = createAgentFeatureFixture(feature);
+  assert.equal(feature.help, metadata.help); assert.equal(await f.run("help"), metadata.help); assert.equal(await feature.execute("help", {} as never), metadata.help);
+  assert.ok(metadata.help.length <= 3500); assert.match(metadata.help, /100 goals/); assert.match(metadata.help, /tools goals delete ID confirm/);
+  assert.equal(f.backend.calls.gets, 0); assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
+
+test("actual source-await writes bind full board through CAS conflicts and keep genuine save uncertainty", async () => {
+  for (const operation of ["select", "replace", "refresh"]) for (const conflict of ["unrelated", "same", "deleted", "after-dispatch"] as const) {
+    const x = integrated(), selected = await x.add("Selected"), unselected = await x.add("Unselected"), id = await setup(x.f), other = await setup(x.f);
+    await x.f.run(`select ${id} | ${selected.source}`);
+    const sourceRaw = x.backend.data.get(toolboxKey), previousCas = x.backend.compareSet;
+    let armed = true, winner = "";
+    x.backend.compareSet = async (...args) => {
+      if (armed && args[0] === x.f.key("state")) {
+        armed = false;
+        if (conflict === "after-dispatch") { await previousCas(...args); throw new Error("FAKE_SECRET_dispatched_save"); }
+        const current = JSON.parse(x.backend.data.get(args[0])!);
+        if (conflict === "deleted") current.records = current.records.filter((record: any) => record.id !== id);
+        else current.records.find((record: any) => record.id === (conflict === "same" ? id : other)).title = "Concurrent winner";
+        winner = JSON.stringify(current); x.backend.data.set(args[0], winner);
+      }
+      return previousCas(...args);
+    };
+    const command = sourceCommands(id, selected.source, unselected.source).find(command => command.startsWith(operation + " "))!;
+    const reads = x.f.calls.readContext, reply = await x.f.run(command);
+    assert.equal(x.f.calls.readContext - reads, 1); assert.equal(x.backend.data.get(toolboxKey), sourceRaw);
+    if (conflict === "unrelated") assert.match(reply, /Saved privately/);
+    else if (conflict === "after-dispatch") { assert.match(reply, /Any dispatched save may have completed/); assert.doesNotMatch(reply, /No board save|FAKE_SECRET/); }
+    else { assert.match(reply, /changed|not found/i); assert.equal(x.backend.data.get(x.f.key("state")), winner); }
+  }
 });
