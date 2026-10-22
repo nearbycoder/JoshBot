@@ -6,6 +6,10 @@ const MAX_PROJECTS = 20;
 const MAX_SOURCES = 8;
 const MAX_CONTEXT = 2_000;
 const MAX_BRIEF = 24_000;
+const MAX_STATE_BYTES = 470_000;
+const MAX_SYNTHESIS_BYTES = 12_000;
+const SNAPSHOT_RESERVE_BYTES = 8_000;
+const DATE_RESERVE = "0".repeat(35);
 const STALE_MS = 30 * 24 * 60 * 60 * 1_000;
 const KINDS: AgentContextKind[] = [
   "note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder",
@@ -42,7 +46,7 @@ delete <project-id> confirm
 Use - to clear constraints, questions or decisions. Updates replace that field.
 Example: create Website launch | Ship the accessible customer portal
 Then: sources note launch; link <project-id> note <source-id>; brief <project-id>
-Only explicitly linked sources enter a brief. Up to 20 packs and 8 links per pack. Archive retains data; delete removes it.`;
+Only explicitly linked sources enter a brief. Up to 20 packs and 8 links per pack, subject to a 470,000-byte quota including refresh reserves. List shows usage. Archive retains data; delete removes it.`;
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -110,6 +114,38 @@ function state(value: unknown): State {
     lastBrief: p.lastBrief === null ? null : { text: p.lastBrief.text, createdAt: p.lastBrief.createdAt, revision: p.lastBrief.revision },
   })) };
 }
+function bytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+function reservedBytes(current: State): number {
+  // Canonical metadata pays for future revision/date/status growth instead of
+  // repeatedly spending a fixed margin on every refresh. JSON escaping matters:
+  // even a lone surrogate can cost six serialized bytes per UTF-16 code unit.
+  const envelope = { version: 1, projects: current.projects.map(p => ({
+    ...p, revision: Number.MAX_SAFE_INTEGER, archived: false, createdAt: DATE_RESERVE, updatedAt: DATE_RESERVE,
+    sources: p.sources.map(ref => ({ ...ref, condition: "available", checkedAt: DATE_RESERVE, seenAt: DATE_RESERVE, snapshot: null })),
+    lastBrief: null,
+  })) };
+  return bytes(envelope) + current.projects.reduce((total, p) => {
+    const fields = bytes({ title: p.title, purpose: p.purpose, constraints: p.constraints, questions: p.questions, decisions: p.decisions });
+    // Per source: 600 excerpt characters + 160 title + 100 status, at up
+    // to six encoded bytes each, plus citation/date/formatting overhead.
+    // The fixed allowance includes bounded synthesis, headings and brief metadata.
+    const futureBrief = fields + MAX_SYNTHESIS_BYTES + 6_000
+      + p.sources.reduce((sum, ref) => sum + 6_500 + bytes(refName(ref)), 0);
+    return total + p.sources.length * (SNAPSHOT_RESERVE_BYTES - bytes(null))
+      + Math.max(futureBrief, bytes(p.lastBrief)) - bytes(null);
+  }, 0);
+}
+function quota(next: State, current: State): State {
+  const reserved = reservedBytes(next);
+  // Permit smaller recovery edits to older state that predates reservations,
+  // provided the actual value already fits our stricter UTF-8 byte ceiling.
+  if (bytes(next) > MAX_STATE_BYTES || (reserved > MAX_STATE_BYTES && reserved >= reservedBytes(current))) {
+    throw new InputError("Project storage quota reached (470,000 UTF-8 bytes including space reserved for future source refreshes and briefs). Nothing was changed. Delete an unneeded pack with delete <project-id> confirm, unlink sources, or shorten fields. Archiving does not free capacity; list shows usage.");
+  }
+  return next;
+}
 async function read(context: AgentFeatureContext): Promise<State> {
   const raw = await context.store.read<unknown>(KEY);
   return raw === null ? { version: 1, projects: [] } : state(raw);
@@ -169,7 +205,7 @@ async function change(
     if (p.revision === Number.MAX_SAFE_INTEGER) throw new InputError("Project revision limit reached. Create a new pack before editing.");
     const updated = { ...next, revision: p.revision + 1, updatedAt: now };
     if (!project(updated)) throw new InputError("Project update exceeded a storage limit. Nothing was changed.");
-    return { value: { ...current, projects: current.projects.map(item => item.id === id ? updated : item) }, result: reply };
+    return { value: quota({ ...current, projects: current.projects.map(item => item.id === id ? updated : item) }, current), result: reply };
   });
 }
 function unchanged(p: Project, expected: Project): void {
@@ -272,7 +308,9 @@ async function synthesize(context: AgentFeatureContext, p: Project, refs: Refere
     rendered.push(`${title}\n${lines.join("\n") || "None suggested."}`);
   }
   if (rendered.length !== 3) throw new InputError("Synthesis returned invalid text or unsupported source citations. Nothing was saved. Try brief <project-id> without --synthesize.");
-  return `Generated interpretation and suggestions — verify against the evidence; citations identify inputs, not proof of accuracy.\n${rendered.join("\n\n")}`;
+  const text = `Generated interpretation and suggestions — verify against the evidence; citations identify inputs, not proof of accuracy.\n${rendered.join("\n\n")}`;
+  if (bytes(text) > MAX_SYNTHESIS_BYTES) throw new InputError("Synthesis exceeded its 12,000-byte serialized UTF-8 allowance. Nothing was saved. Run brief <project-id> without --synthesize, or retry for more concise suggestions.");
+  return text;
 }
 
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
@@ -295,7 +333,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     return context.store.update<unknown, string>(KEY, EMPTY, raw => {
       const current = state(raw);
       if (current.projects.length >= MAX_PROJECTS) throw new InputError("Project limit reached (20 including archives). Delete an unneeded pack with delete <project-id> confirm first.");
-      return { value: { ...current, projects: [...current.projects, p] }, result: `Created ${p.id}: ${p.title}.\nAdd constraints/questions/decisions with update; choose sources with sources <kind>, then link. Run brief ${p.id} when ready.` };
+      return { value: quota({ ...current, projects: [...current.projects, p] }, current), result: `Created ${p.id}: ${p.title}.\nAdd constraints/questions/decisions with update; choose sources with sources <kind>, then link. Run brief ${p.id} when ready.` };
     });
   }
   if (action === "sources") {
@@ -315,9 +353,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
   if (action === "list") {
     requireArgs(args, 0, 1, "list [all|archived]");
     if (args[0] && !["all", "archived"].includes(args[0])) throw new InputError("Usage: list [all|archived]");
-    const projects = (await read(context)).projects.filter(p => args[0] === "all" || (args[0] === "archived" ? p.archived : !p.archived));
-    return projects.length ? projects.map(p => `${p.id} — ${p.title}${p.archived ? " (archived)" : ""}\n${clip(p.purpose, 100)} • ${p.sources.length} linked sources`).join("\n\n")
+    const current = await read(context);
+    const projects = current.projects.filter(p => args[0] === "all" || (args[0] === "archived" ? p.archived : !p.archived));
+    const listing = projects.length ? projects.map(p => `${p.id} — ${p.title}${p.archived ? " (archived)" : ""}\n${clip(p.purpose, 100)} • ${p.sources.length} linked sources`).join("\n\n")
       : `No ${args[0] === "archived" ? "archived" : "matching"} projects. Create one: create Website launch | Ship the accessible customer portal`;
+    return `${listing}\n\nStorage (all packs): ${bytes(current)} UTF-8 bytes saved; ${reservedBytes(current)} / ${MAX_STATE_BYTES} bytes including refresh reserves. Delete unneeded packs to free capacity; archive retains them.`;
   }
   if (action === "show") {
     requireArgs(args, 1, 2, "show <project-id> [brief]");
@@ -390,7 +430,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     return context.store.update<unknown, string>(KEY, EMPTY, raw => {
       const current = state(raw);
       find(current, args[0]);
-      return { value: { ...current, projects: current.projects.filter(p => p.id !== args[0]) }, result: `Deleted ${args[0]} and its saved brief. Source records themselves are unchanged.` };
+      return { value: quota({ ...current, projects: current.projects.filter(p => p.id !== args[0]) }, current), result: `Deleted ${args[0]} and its saved brief. Source records themselves are unchanged.` };
     });
   }
   throw new InputError(`Unknown project-briefs command: ${action}. Use help for commands and examples.`);

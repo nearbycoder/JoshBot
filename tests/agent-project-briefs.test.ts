@@ -245,10 +245,13 @@ test("bounded retention enforces project/source limits, archive retains capacity
   assert.match(await run(context, "create Too many | capacity"), /limit reached/);
   await run(context, `delete ${ids[19]} confirm`);
   await create(context, "Replacement");
-  for (let n = 0; n < 8; n++) assert.match(await run(context, `link ${ids[0]} note note-${n}`), /^Linked/);
-  assert.match(await run(context, `link ${ids[0]} note note-8`), /supports 8 sources/);
-  await run(context, `unlink ${ids[0]} note note-0`);
-  assert.match(await run(context, `link ${ids[0]} note note-8`), /^Linked/);
+  // The aggregate byte reservation can bind before either item-count cap.
+  const sourceContext = fixture(Array.from({ length: 9 }, (_, n) => ({ ...note, id: `note-${n}` })));
+  const sourceProject = await create(sourceContext);
+  for (let n = 0; n < 8; n++) assert.match(await run(sourceContext, `link ${sourceProject} note note-${n}`), /^Linked/);
+  assert.match(await run(sourceContext, `link ${sourceProject} note note-8`), /supports 8 sources/);
+  await run(sourceContext, `unlink ${sourceProject} note note-0`);
+  assert.match(await run(sourceContext, `link ${sourceProject} note note-8`), /^Linked/);
 });
 
 test("source discovery is bounded and restricts kinds even when provider returns extra data", async () => {
@@ -453,4 +456,105 @@ test("each owner-scoped store keeps packs private", async () => {
   assert.match(await run(second, `show ${id}`), /not found/);
   assert.match(await run(second, `link ${id} note launch-spec`), /not found/);
   assert.match(await run(first, `show ${id}`), /Private customer launch/);
+});
+
+test("UTF-8 quota rejects growth atomically and reserves room to process every accepted pack", async () => {
+  const delegate = createAgentTestStore();
+  const store: AgentFeatureStore = {
+    read: key => delegate.read(key),
+    update: (key, initial, transform) => delegate.update(key, initial, current => {
+      const next = transform(current);
+      assert.ok(Buffer.byteLength(JSON.stringify(next.value), "utf8") < 480_000, "every accepted write fits below the parent's safety ceiling");
+      return next;
+    }),
+  };
+  const context = createAgentTestContext({ store });
+  context.services.readContext = async () => Array.from({ length: 8 }, (_, n) => ({ ...note, id: `n-${n}`, text: "Small initial snapshot" }));
+  const ids: string[] = [];
+  let rejected = false;
+  outer: for (let n = 0; n < 20; n++) {
+    const before = await raw(context);
+    const created = await run(context, `create 项目 ${n} | ${"界".repeat(1_000)}`);
+    if (created.includes("storage quota")) {
+      assert.deepEqual(await raw(context), before);
+      rejected = true;
+      break;
+    }
+    const id = created.match(/prj-[a-f0-9-]{36}/)?.[0];
+    assert.ok(id, created);
+    ids.push(id);
+    const commands = [
+      ...["constraints", "questions", "decisions"].map(field => `update ${id} ${field} | ${"界".repeat(1_500)}`),
+      ...Array.from({ length: 8 }, (_, i) => `link ${id} note n-${i}`),
+    ];
+    for (const command of commands) {
+      const saved = await raw(context);
+      const reply = await run(context, command);
+      if (reply.includes("storage quota")) {
+        assert.match(reply, /UTF-8 bytes/);
+        assert.match(reply, /Delete an unneeded pack/);
+        assert.match(reply, /Archiving does not free capacity/);
+        assert.deepEqual(await raw(context), saved, "quota rejection leaves all projects unchanged");
+        rejected = true;
+        break outer;
+      }
+      assert.match(reply, /Updated|Linked/);
+    }
+  }
+  assert.ok(rejected, "aggregate quota binds before accepting unprocessable projects");
+  assert.ok(ids.length > 1);
+  const encoded = JSON.stringify(await raw(context));
+  const byteCount = Buffer.byteLength(encoded, "utf8");
+  assert.ok(byteCount > encoded.length, "multibyte content must not be measured by JS string length");
+  const listing = await run(context, "list all");
+  assert.match(listing, new RegExp(`${byteCount} UTF-8 bytes saved`));
+  const reserved = Number(listing.match(/; (\d+) \/ 470000/)?.[1]);
+  assert.ok(reserved >= byteCount && reserved <= 470_000);
+
+  // Six-byte escaped lone surrogates exercise JSON's worst expansion, beyond
+  // ordinary CJK (three UTF-8 bytes) and astral emoji (four per pair).
+  context.services.readContext = async () => Array.from({ length: 8 }, (_, n) => ({
+    ...note, id: `n-${n}`, title: "\ud800".repeat(160), text: "\ud800".repeat(1_000), status: "\ud800".repeat(100),
+  }));
+  let generations = 0;
+  context.services.generate = async () => {
+    generations++;
+    const row = { text: "界".repeat(350), citations: ["project"] };
+    return JSON.stringify({ summary: [row, row, row], tensions: [row, row, row], nextSteps: [row, row, row] });
+  };
+  for (const id of ids) {
+    const brief = await run(context, `brief ${id} --synthesize`);
+    assert.match(brief, /Generated interpretation/);
+    assert.ok(brief.length < 28_000);
+    assert.ok(Buffer.byteLength(JSON.stringify(await raw(context)), "utf8") < 480_000);
+  }
+  assert.equal(generations, ids.length, "each invocation uses one generation and no searches");
+  assert.equal(Number((await run(context, "list all")).match(/; (\d+) \/ 470000/)?.[1]), reserved, "refreshes consume only already-reserved space");
+  for (let n = 0; n < 6; n++) {
+    assert.match(await run(context, `archive ${ids[0]}`), /^Archived/);
+    assert.match(await run(context, `archive ${ids[0]} undo`), /^Restored/);
+  }
+  assert.equal(Number((await run(context, "list all")).match(/; (\d+) \/ 470000/)?.[1]), reserved, "metadata and revision growth are prepaid");
+  const beforeCreate = await raw(context);
+  assert.match(await run(context, "create Over quota | Do not lose existing packs"), /storage quota/);
+  assert.deepEqual(await raw(context), beforeCreate);
+  assert.match(await run(context, `delete ${ids[0]} confirm`), /^Deleted/);
+  await create(context, "New pack after deletion");
+});
+
+test("oversized Unicode synthesis is rejected by serialized bytes, preserving saved source state", async () => {
+  const items = Array.from({ length: 8 }, (_, n) => ({ ...note, id: `${"界".repeat(40)}${n}` }));
+  const context = fixture(items);
+  const id = await create(context);
+  for (const item of items) assert.match(await run(context, `link ${id} note ${item.id}`), /^Linked/);
+  await run(context, `brief ${id}`);
+  const before = await raw(context);
+  const row = { text: "思".repeat(350), citations: items.map(item => `note:${item.id}`) };
+  const output = JSON.stringify({ summary: [row, row, row], tensions: [row, row, row], nextSteps: [row, row, row] });
+  assert.ok(output.length < 14_000, "the existing character budget alone would allow this response");
+  assert.ok(Buffer.byteLength(output, "utf8") > 12_000);
+  context.services.generate = async () => output;
+  assert.match(await run(context, `brief ${id} --synthesize`), /12,000-byte serialized UTF-8 allowance/);
+  assert.deepEqual(await raw(context), before);
+  assert.match(await run(context, `brief ${id}`), /Project brief:/);
 });
