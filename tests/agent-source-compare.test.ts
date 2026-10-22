@@ -41,7 +41,7 @@ test("deferred synthesis refuses edit/deletion, consumes cancellation and leaves
 });
 test("input/output bounds reject complete oversized digests without regeneration pages",async()=>{
  let output="";const f=createAgentFeatureFixture(feature,{services:{generate:async()=>output}});await f.run("create Big digest");const id=(await state(f)).records[0].id;for(let i=0;i<3;i++)await f.run(`source ${id} add S${i} | ${"x".repeat(600)}`);for(let i=0;i<8;i++)await f.run(`topic ${id} add T${i}`);let r=(await state(f)).records[0];for(const t of r.topics)for(const s of r.sources)await f.run(`quote ${id} ${t.id} | ${s.id} | ${"x".repeat(600)}`);assert.match(await f.run(`synthesize ${id}`),/16000-byte/);assert.equal(f.calls.generate,0);
- await f.run(`delete ${id} confirm`);await f.run("create Too long reply");const id2=(await state(f)).records[0].id;for(let i=0;i<2;i++)await f.run(`source ${id2} add S${i} | ${"x".repeat(490)}`);for(let i=0;i<3;i++)await f.run(`topic ${id2} add T${i}`);r=(await state(f)).records[0];for(const t of r.topics)for(const s of r.sources)await f.run(`quote ${id2} ${t.id} | ${s.id} | ${s.text}`);r=(await state(f)).records[0];output=JSON.stringify({items:r.topics.map((t:any)=>({topicId:t.id,cells:r.sources.map((s:any)=>({sourceId:s.id,excerpt:s.text}))}))});assert.ok(output.length<=4000);assert.match(await f.run(`synthesize ${id2}`),/invalid\/oversized/);assert.equal(f.calls.generate,1);
+ await f.run(`delete ${id} confirm`);await f.run("create Too long reply");const id2=(await state(f)).records[0].id;for(let i=0;i<2;i++)await f.run(`source ${id2} add S${i} | ${"x".repeat(490)}`);for(let i=0;i<3;i++)await f.run(`topic ${id2} add T${i}`);r=(await state(f)).records[0];for(const t of r.topics)for(const s of r.sources)await f.run(`quote ${id2} ${t.id} | ${s.id} | ${s.text}`);r=(await state(f)).records[0];output=JSON.stringify({items:r.topics.map((t:any)=>({topicId:t.id,cells:r.sources.map((s:any)=>({sourceId:s.id,excerpt:s.text}))}))});assert.ok(output.length<=4000);assert.match(await f.run(`synthesize ${id2}`),/No model call was made/);assert.equal(f.calls.generate,0);
 });
 test("strict enum/span validation preserves corrupt bytes; all mutation CAS retries protect target revision",async()=>{
  let conflict:((s:any)=>void)|undefined;const backend=createMemoryAgentBackend({beforeCompareSet(key,previous){if(conflict&&key.endsWith(":state")){const s=JSON.parse(previous!);const fn=conflict;conflict=undefined;fn(s);backend.data.set(key,JSON.stringify(s));}}});const f=createAgentFeatureFixture(feature,{backend}),r=await setup(f),good=await state(f);
@@ -58,4 +58,14 @@ test("exact content-byte boundary reserves all label growth and allows removal a
  // Remaining untouched rows still have two valid cells; their labels can grow.
  let changed=0;for(const r of(await state(f)).records)for(const t of r.topics)if(r.cells.filter((c:any)=>c.topicId===t.id).length>=2){assert.match(await f.run(`label ${r.id} ${t.id} | disagreement`),/Saved user label/);changed++;}assert.ok(changed>0);assert.ok(Buffer.byteLength(f.backend.data.get(f.key("state"))!)>49152);
  for(const r of(await state(f)).records){assert.ok(Buffer.byteLength(await f.run(`export ${r.id}`))<=24576);await f.run(`delete ${r.id} confirm`);}assert.equal((await state(f)).records.length,0);
+});
+
+test("synthesis content stamp rejects same-revision changes including ceiling-state removal",async()=>{
+ const gate=deferred<string>(),started=deferred<void>();const f=createAgentFeatureFixture(feature,{services:{generate:async()=>{started.resolve();return gate.promise;}}}),r=await setup(f);
+ const seeded=await state(f);seeded.records[0].revision=999999999;f.backend.data.set(f.key("state"),JSON.stringify(seeded));
+ const pending=f.run(`synthesize ${r.id}`);await started.promise;
+ // Simulate a supported external same-revision removal at a revision ceiling.
+ await f.store().update<any,void>("state",seeded,s=>{s.records[0].cells.pop();return{value:s,result:undefined};});
+ gate.resolve(draft(r));assert.match(await pending,/stale draft discarded/);
+ assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
 });
