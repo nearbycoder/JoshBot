@@ -110,6 +110,46 @@ test("model and search budgets bound feature work", async () => {
   assert.equal(searches, 6);
 });
 
+for (const cancellation of ["explicit abort", "internal deadline"] as const) {
+  test(`${cancellation} stops pending request receipt acquisition before feature work`, { timeout: 2_000 }, async (t) => {
+    const settings = options();
+    const controller = new AbortController();
+    let started!: () => void;
+    const active = new Promise<void>((resolve) => { started = resolve; });
+    let finish!: (received: boolean) => void;
+    const deferred = new Promise<boolean>((resolve) => { finish = resolve; });
+    let calls = 0;
+    let featureCalls = 0;
+    settings.backend.compareSet = async () => { calls++; started(); return deferred; };
+    if (cancellation === "internal deadline") {
+      const timeout = AbortSignal.timeout.bind(AbortSignal);
+      t.mock.method(AbortSignal, "timeout", (milliseconds: number) => {
+        assert.equal(milliseconds, 120_000);
+        return timeout(25);
+      });
+    }
+    // AbortSignal timeout timers are unref'd; keep this test alive to observe it.
+    const alive = setTimeout(() => {}, 1_000);
+    try {
+      const pending = runAgentFeature({ ...counter, execute: async (...args) => {
+        featureCalls++;
+        return counter.execute(...args);
+      } }, "run", { ...owner, requestId: "pending-receipt" }, {
+        ...settings, signal: cancellation === "explicit abort" ? controller.signal : undefined,
+      });
+      await active;
+      if (cancellation === "explicit abort") controller.abort();
+      await assert.rejects(pending, cancellation === "explicit abort" ? /abort/i : /timeout/i);
+      assert.equal(featureCalls, 0);
+      finish(true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(featureCalls, 0, "late receipt acceptance must not start the feature");
+      assert.equal(calls, 1, "cancelled commands must not finalize a late receipt");
+      assert.equal(settings.backend.data.size, 0);
+    } finally { clearTimeout(alive); finish(true); }
+  });
+}
+
 test("cancellation after generation prevents a subsequent state write", async () => {
   const settings = options();
   const abort = new AbortController();

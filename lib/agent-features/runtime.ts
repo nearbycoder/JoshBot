@@ -37,7 +37,8 @@ export async function runAgentFeature(
   const timeout = AbortSignal.timeout(120_000);
   const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
   signal.throwIfAborted();
-  const backend = options.backend ?? await createAgentStateBackend();
+  const backend = options.backend ?? await abortable(createAgentStateBackend, signal);
+  signal.throwIfAborted();
   if (!backend) return "Personal agents need the existing Redis connection. Please try again when it is available.";
   const store = createAgentFeatureStore(backend, owner, feature.id, signal);
 
@@ -49,7 +50,9 @@ export async function runAgentFeature(
     const fingerprint = createHash("sha256").update(owner.requestId).digest("hex");
     requestKey = `nobo:agent-requests:v1:${owner.teamId}:${owner.userId}:${feature.id}:${fingerprint}`;
     running = JSON.stringify({ state: "started", commandHash: createHash("sha256").update(command).digest("hex") });
-    if (!await backend.compareSet(requestKey, null, running, 86_400)) {
+    const received = await abortable(() => backend.compareSet(requestKey!, null, running!, 86_400), signal);
+    signal.throwIfAborted();
+    if (!received) {
       return "This request was already received. Use this agent's list, show, or status command to check its result.";
     }
   }
