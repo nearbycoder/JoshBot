@@ -1,6 +1,6 @@
 # Capture inbox and action triage
 
-Feature ID: `inbox`. Implementation is ready for parent integration; the commands below require registration in the private agent router.
+Feature ID: `inbox`. Registered in the private agent router on the integration branch; release status is tracked in the personal-agent expansion roadmap.
 
 Use the inbox for a thought, pasted message, task, link, or a mixture of these. A capture starts **unprocessed**. Triage proposes a category, a short summary, up to three concrete next actions, and urgency with reasoning. The proposal stays a preview until you explicitly accept it. Acceptance marks the item **processed / accepted** and saves its private classification. Dismissal marks it **processed / dismissed** without approving the proposal.
 
@@ -44,7 +44,7 @@ Substitute the IDs from your own responses. To discard a capture during review, 
 
 ## Limits and failure behavior
 
-- Maximum 100 retained captures, including accepted and dismissed ones. Records remain until explicitly deleted; there is no automatic expiry or silent eviction. A full inbox rejects further captures with deletion guidance. There is no bulk export command; `show` returns the original capture and classification for copying.
+- Maximum 100 retained captures within a 480,000-byte JSON budget, including accepted and dismissed ones. Capture reserves 4,096 bytes per unprocessed item for its largest valid preview and processing metadata; large or Unicode-heavy captures can fill the budget before 100 items. This reservation lets retained captures finish triage and review even when new captures are refused. Records remain until explicitly deleted; there is no automatic expiry or silent eviction. A full inbox rejects further captures with deletion guidance. There is no bulk export command; `show` returns the original capture and classification for copying.
 - Categories: `task`, `message`, `idea`, `reference`, `mixed`. Urgency: `high`, `normal`, `low`. Reference material can have no proposed next actions. Urgency is a suggestion and never creates a deadline.
 - Only `triage` uses the model, with one text-only generation call per request. All other commands are deterministic. Triage uses only the selected capture, its capture time, the supplied current time, and timezone. It does not read other personal context, fetch URLs, search the web, or access Slack history.
 - Captured text and model responses are untrusted data. They are never executed. Slack mention/link entities are escaped when displayed. Model output must be a bare JSON object with exactly the documented fields; Markdown fences, unknown fields, unsupported enum values, oversized responses, control characters, and invalid action arrays are rejected. Summary, urgency reason, and each action are limited to 240 characters; at most three actions are accepted.

@@ -1,4 +1,5 @@
 import { handleToolbox } from "./toolbox/index.js";
+import { handleAgentCommand } from "./agent-features/index.js";
 import { parseXPostId, X_MEDIA_HELP, XMediaError, type XMediaRequest } from "./x-media.js";
 import { buildXMediaModal } from "./x-media-modal.js";
 import {
@@ -172,6 +173,7 @@ export type SlackSlashCommandResult = {
 };
 
 export type SlackSlashCommandOptions = {
+  handleAgentCommand?: typeof handleAgentCommand;
   formatOpsStatus?: () => Promise<string>;
   semanticSearchDependencies?: SemanticSearchCommandDependencies;
   evaluateAccess?: (subject: NoboAccessSubject) => Promise<{ allowed: boolean; reason?: string }>;
@@ -374,6 +376,14 @@ export async function handleSlackSlashCommandPayload(
     );
   }
 
+  if (/^agent(?:\s|$)/i.test(payload.text.trim())) {
+    const output = await (options.handleAgentCommand ?? handleAgentCommand)(
+      payload.text.trim().replace(/^agent\s*/i, ""),
+      { userId: payload.user_id, teamId: payload.team_id, channelId: payload.channel_id, requestId: payload.trigger_id },
+    );
+    return immediate({ response_type: "ephemeral", text: output, mrkdwn: false });
+  }
+
   if (/^tools(?:\s|$)/i.test(payload.text.trim())) {
     const output = await handleToolbox(payload.text.trim().replace(/^tools\s*/i, ""), { userId: payload.user_id, teamId: payload.team_id }, payload.trigger_id);
     return immediate({ response_type: "ephemeral", text: output, mrkdwn: false });
@@ -395,6 +405,7 @@ export function formatNoboSlashCommandHelp() {
     `*NoBo slash commands*`,
     "`/nobo-help`: show this help",
     "`/nobo-help tools`: private productivity toolbox (also in NoBo Home)",
+    "`/nobo-help agent`: personal agent features and command examples",
     "`/nobo-status`: show ops health",
     "`/nobo-search <query>`: search recent channel history and your artifacts",
     "`/nobo-x [X post link]`: upload images/videos with a short post summary when available; leave the link out to open a form (also `/nobo-help x [link]`)",

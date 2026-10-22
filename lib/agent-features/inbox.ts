@@ -4,6 +4,10 @@ import type { AgentFeature, AgentFeatureContext } from "./types.js";
 const KEY = "state";
 const MAX_ITEMS = 100;
 const MAX_CAPTURE = 4_000;
+const MAX_STATE_BYTES = 480_000;
+// Five 240-character fields, Unicode at up to 3 UTF-8 bytes per UTF-16
+// code unit, IDs, timestamps, JSON keys, and eventual processed metadata.
+const REVIEW_RESERVE_BYTES = 4_096;
 const PAGE_SIZE = 10;
 const CATEGORIES = ["task", "message", "idea", "reference", "mixed"] as const;
 const URGENCIES = ["high", "normal", "low"] as const;
@@ -34,6 +38,7 @@ type Item = {
 type State = { version: 1; items: Item[] };
 
 class InvalidState extends Error {}
+class InboxCapacityError extends Error {}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -45,7 +50,7 @@ function hasKeys(value: Record<string, unknown>, keys: string[]): boolean {
 
 function validText(value: unknown, limit: number): value is string {
   return typeof value === "string" && value.length <= limit && value.trim().length > 0
-    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value);
+    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\p{Surrogate}]/u.test(value);
 }
 
 function isoDate(value: unknown): value is string {
@@ -97,6 +102,17 @@ function state(value: unknown): State {
 
 function emptyState(): State {
   return { version: 1, items: [] };
+}
+
+function boundedState(value: State, reserveReviewRoom = false): State {
+  const base = reserveReviewRoom ? {
+    ...value, items: value.items.map((item) => item.status === "unprocessed" ? { ...item, preview: null } : item),
+  } : value;
+  const reserve = reserveReviewRoom ? value.items.filter((item) => item.status === "unprocessed").length * REVIEW_RESERVE_BYTES : 0;
+  if (Buffer.byteLength(JSON.stringify(base), "utf8") + reserve > MAX_STATE_BYTES) {
+    throw new InboxCapacityError("Inbox storage is full. Captures reserve space for later triage and review. Use list all, then delete <item-id> confirm to free space; this change was not saved.");
+  }
+  return value;
 }
 
 async function read(context: AgentFeatureContext): Promise<State> {
@@ -170,7 +186,7 @@ const help = [
   "Example: /nobo-help agent inbox capture Sam asked for feedback on the draft by Friday; also an idea for a launch checklist.",
   "Then: /nobo-help agent inbox triage next — review and use the printed accept command.",
   "Generated suggestions may be wrong. Accept never schedules, sends, or creates issues. Links are stored as text, not fetched.",
-  "Up to 100 items, including processed items; delete to free space. Captures remain until explicitly deleted.",
+  "Up to 100 items within 480 KB, including reserved triage space; large captures reduce capacity. Delete to free space. Captures remain until explicitly deleted.",
 ].join("\n");
 
 function notFound(): string {
@@ -240,7 +256,7 @@ async function triage(argument: string, context: AgentFeatureContext, now: strin
     }
     const updated: Item = { ...target, preview, revision, updatedAt: now };
     return {
-      value: { ...latest, items: latest.items.map((candidate) => candidate.id === target.id ? updated : candidate) },
+      value: boundedState({ ...latest, items: latest.items.map((candidate) => candidate.id === target.id ? updated : candidate) }),
       result: previewText(updated, preview),
     };
   });
@@ -285,7 +301,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         if (latest.items.length >= MAX_ITEMS) return { value: latest, result: "Inbox is full (100 items, including processed captures). Use list all, then delete <item-id> confirm to free space. Nothing was captured." };
         if (latest.items.some((candidate) => candidate.id === item.id)) throw new InvalidState("Duplicate ID");
         return {
-          value: { ...latest, items: [item, ...latest.items] },
+          value: boundedState({ ...latest, items: [item, ...latest.items] }, true),
           result: `Captured ${item.id} — unprocessed.\n${snippet(item.text)}\nNext: /nobo-help agent inbox triage ${item.id}`,
         };
       });
@@ -334,13 +350,14 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         classification: action === "accept" ? item.preview : null, preview: null,
       };
       return {
-        value: { ...latest, items: latest.items.map((candidate) => candidate.id === item.id ? updated : candidate) },
+        value: boundedState({ ...latest, items: latest.items.map((candidate) => candidate.id === item.id ? updated : candidate) }),
         result: action === "accept"
           ? `Accepted classification for ${item.id} — processed (${updated.classification!.category}/${updated.classification!.urgency}).\nSuggested next actions remain for you to review and carry out. No messages, schedules, or issues were created.`
           : `Dismissed ${item.id} — processed without accepting any classification. Original capture retained; use delete ${item.id} confirm to remove it.`,
       };
     });
   } catch (error) {
+    if (error instanceof InboxCapacityError) return error.message;
     if (error instanceof InvalidState) return "Saved inbox data is invalid or from an unsupported version. It was not overwritten. Ask the runtime maintainer to inspect this user's scoped inbox storage.";
     return "Inbox storage is unavailable or the operation could not be confirmed. Use list or show before retrying; your previous captures were not intentionally cleared.";
   }

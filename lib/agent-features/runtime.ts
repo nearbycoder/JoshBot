@@ -11,6 +11,19 @@ export type AgentRuntimeOptions = {
   signal?: AbortSignal;
 };
 
+/** Stop waiting promptly; consume late rejections and keep signal-based write guards. */
+function abortable<T>(work: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve().then(() => { signal.throwIfAborted(); return work(); }).then(
+      (value) => { signal.removeEventListener("abort", abort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", abort); reject(error); },
+    );
+  });
+}
+
 /** Private slash-command execution; this layer never posts Slack messages. */
 export async function runAgentFeature(
   feature: AgentFeature,
@@ -48,7 +61,7 @@ export async function runAgentFeature(
       signal.throwIfAborted();
       if (++generations > 8) throw new Error("This command reached its limit of eight generation steps.");
       if (input.instructions.length > 24_000 || input.input.length > 80_000) throw new Error("Too much source material for one generation step.");
-      const output = await options.services.generate(input);
+      const output = await abortable(() => options.services.generate(input), signal);
       signal.throwIfAborted();
       if (!output.trim() || output.length > 28_000) throw new Error("The model returned an empty or oversized result. Try a smaller request.");
       return output;
@@ -58,7 +71,7 @@ export async function runAgentFeature(
       if (++searches > 6) throw new Error("This command reached its limit of six web searches.");
       if (!query.trim() || query.length > 2_000) throw new Error("Search queries must contain 1–2,000 characters.");
       const count = Number.isFinite(limit) ? Math.max(1, Math.min(8, Math.floor(limit))) : 5;
-      const results = await options.services.search(query, count);
+      const results = await abortable(() => options.services.search(query, count), signal);
       signal.throwIfAborted();
       return results.slice(0, count).filter((result) => {
         try { const url = new URL(result.url); return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password; }
@@ -67,13 +80,13 @@ export async function runAgentFeature(
     },
     readContext: async (kinds) => {
       signal.throwIfAborted();
-      const items = await options.services.readContext(kinds);
+      const items = await abortable(() => options.services.readContext(kinds), signal);
       signal.throwIfAborted();
       return items;
     },
   };
   try {
-    const result = await feature.execute(command.trim(), {
+    const result = await abortable(() => feature.execute(command.trim(), {
       ...owner,
       teamId: owner.teamId,
       userId: owner.userId,
@@ -82,7 +95,7 @@ export async function runAgentFeature(
       signal,
       store,
       services,
-    });
+    }), signal);
     signal.throwIfAborted();
     if (typeof result !== "string" || !result.trim()) throw new Error("The personal agent did not return a result.");
     if (result.length > 28_000) return result.slice(0, 27_850) + "\n\nOutput shortened. Use show or export for a specific item.";
@@ -91,7 +104,7 @@ export async function runAgentFeature(
     if (requestKey && running) {
       // Failure to finalize is not a reason to repeat feature mutations. The
       // original 'started' receipt still suppresses duplicate delivery.
-      await backend.compareSet(requestKey, running, JSON.stringify({ state: "finished" }), 86_400).catch(() => {});
+      if (!signal.aborted) await abortable(() => backend.compareSet(requestKey!, running!, JSON.stringify({ state: "finished" }), 86_400), signal).catch(() => {});
     }
   }
 }

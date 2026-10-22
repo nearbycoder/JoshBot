@@ -185,6 +185,7 @@ export function buildSlackAppHomeView(data: SlackHomeDashboardData) {
           placeholder: plain("More…"),
           options: [
             ["Personal toolbox", "toolbox"],
+            ["Personal agents", "agents"],
             ["My reminders", "reminders"],
             ["Saved documents", "artifacts"],
             ["My monitors", "monitors"],

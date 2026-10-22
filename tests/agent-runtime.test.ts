@@ -121,6 +121,48 @@ test("cancellation after generation prevents a subsequent state write", async ()
   assert.equal(settings.backend.data.size, 0);
 });
 
+for (const service of ["generate", "search", "readContext"] as const) {
+  test(`cancellation stops waiting for pending ${service} and discards late work`, { timeout: 2_000 }, async () => {
+    const settings = options();
+    const abort = new AbortController();
+    let started!: () => void;
+    const active = new Promise<void>((resolve) => { started = resolve; });
+    let finish!: () => void;
+    const deferred = new Promise<void>((resolve) => { finish = resolve; });
+    if (service === "generate") settings.services.generate = async () => { started(); await deferred; return "late response"; };
+    if (service === "search") settings.services.search = async () => { started(); await deferred; return []; };
+    if (service === "readContext") settings.services.readContext = async () => { started(); await deferred; return []; };
+    const pending = runAgentFeature({ ...counter, execute: async (_command, context) => {
+      if (service === "generate") await context.services.generate({ instructions: "Summarize", input: "Source" });
+      if (service === "search") await context.services.search("query");
+      if (service === "readContext") await context.services.readContext();
+      return context.store.update("state", 0, () => ({ value: 1, result: "saved" }));
+    } }, "run", owner, { ...settings, signal: abort.signal });
+    await active;
+    abort.abort();
+    await assert.rejects(pending, /abort/i);
+    assert.equal(settings.backend.data.size, 0);
+    finish();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(settings.backend.data.size, 0);
+  });
+}
+
+test("a timeout signal rejects without waiting for generation to settle", { timeout: 2_000 }, async () => {
+  const settings = options();
+  let finish!: () => void;
+  const deferred = new Promise<string>((resolve) => { finish = () => resolve("late"); });
+  settings.services.generate = () => deferred;
+  // Keep the event loop alive while the unref'd AbortSignal timer fires.
+  const alive = setTimeout(() => {}, 1_000);
+  try {
+    await assert.rejects(() => runAgentFeature({ ...counter, execute: async (_command, context) =>
+      context.services.generate({ instructions: "Summarize", input: "Source" }),
+    }, "run", owner, { ...settings, signal: AbortSignal.timeout(25) }), /timeout/i);
+    assert.equal(settings.backend.data.size, 0);
+  } finally { clearTimeout(alive); finish(); }
+});
+
 test("search results discard credential-bearing and non-web URLs", async () => {
   const settings = options();
   settings.services.search = async () => [

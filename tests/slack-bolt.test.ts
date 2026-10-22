@@ -9,6 +9,8 @@ import type { SlackInteractionResult } from "../lib/slack-commands.js";
 import { handleSlackSlashCommandPayload } from "../lib/slack-commands.js";
 import { buildXMediaModal, X_MEDIA_MODAL } from "../lib/x-media-modal.js";
 import { XMediaError } from "../lib/x-media.js";
+import { handleAgentCommand } from "../lib/agent-features/index.js";
+import { createAgentTestContext } from "./agent-feature-test-utils.js";
 
 const secret = "test-signing-secret";
 async function fixture(
@@ -92,6 +94,57 @@ test("Bolt slash commands acknowledge immediately and deliver response_url messa
   } finally {
     release(); await f.close();
     responseServer.close(); responseServer.closeAllConnections();
+  }
+});
+
+test("signed inbox commands acknowledge before work and deliver only an ephemeral result", async () => {
+  let delivered!: (body: string) => void;
+  const result = new Promise<string>((resolve) => { delivered = resolve; });
+  const responseServer = createServer(async (request, response) => {
+    let raw = ""; for await (const chunk of request) raw += chunk;
+    delivered(raw); response.end("ok");
+  }).listen(0, "127.0.0.1");
+  await once(responseServer, "listening");
+  const { port } = responseServer.address() as { port: number };
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let channelWrites = 0;
+  const data = new Map<string, string>();
+  const f = await fixture({
+    command: (payload) => handleSlackSlashCommandPayload(payload, {
+      evaluateAccess: async () => ({ allowed: true }),
+      handleAgentCommand: async (text, owner) => {
+        await blocked;
+        return handleAgentCommand(text, owner, {
+          timezone: "UTC", services: createAgentTestContext().services,
+          backend: {
+            get: async (key) => data.get(key) ?? null,
+            compareSet: async (key, previous, next) => {
+              if ((data.get(key) ?? null) !== previous) return false;
+              data.set(key, next); return true;
+            },
+          },
+        });
+      },
+    }),
+    memory: async () => { channelWrites++; },
+    task: async () => { channelWrites++; },
+  });
+  try {
+    const response = await f.send("/api/slack/commands", new URLSearchParams({
+      command: "/nobo-help", text: "agent inbox capture Private capture", user_id: "UTEST", channel_id: "CTEST", team_id: "TTEST",
+      trigger_id: "private-trigger", response_url: `http://127.0.0.1:${port}/reply`,
+    }).toString());
+    assert.equal(response.status, 200);
+    assert.equal(data.size, 0);
+    release();
+    const reply = JSON.parse(await result);
+    assert.equal(reply.response_type, "ephemeral");
+    assert.equal(reply.mrkdwn, false);
+    assert.match(reply.text, /Captured/);
+    assert.equal(channelWrites, 0);
+  } finally {
+    release(); await f.close(); responseServer.close(); responseServer.closeAllConnections();
   }
 });
 

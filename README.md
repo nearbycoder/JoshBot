@@ -4,6 +4,8 @@ NoBo is a TypeScript Slack assistant that receives Slack Events API calls and re
 
 See [feature status and production readiness](docs/feature-status.md) for entry points, prerequisites, verified behavior, and remaining gaps.
 
+The [personal-agent expansion](docs/personal-agent-expansion.md) tracks 20 additional features under implementation. Registered features use `/nobo-help agent <name> help`; Home → More → Personal agents lists the available commands. This expansion is not yet deployed.
+
 ## Features
 
 - Slack assistant surfaces: `@NoBo` mentions, thread replies, DMs, slash commands, Block Kit modals, reaction shortcuts, active channel listening, and Slack App Home.

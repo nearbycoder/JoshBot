@@ -1,6 +1,6 @@
 # Personal-agent expansion — 2026-10-22
 
-Status: scoped for implementation; not released. This initiative adds 20 features to NoBo's existing 20-tool toolbox. Each feature has an isolated implementation worktree. Parent integration and combined validation follow implementation.
+Status: implementation and integration underway; not released. Twenty implementation assignments were launched in isolated worktrees. The inbox has been integrated with private Slack routing, Home discovery and scoped persistence. Meeting preparation is next. Parent review and combined validation continue as other implementations return.
 
 ## Research basis
 
@@ -42,6 +42,7 @@ These are product design choices inspired by current first-party descriptions, n
 - Each child owns `lib/agent-features/<id>.ts` (and optional `lib/agent-features/<id>/` helpers), `tests/agent-<id>.test.ts`, and `docs/agent-features/<id>.md` only.
 - Export a named `feature: AgentFeature` and default export it. Use `lib/agent-features/types.ts`. Do not modify the contract or registry in child branches.
 - The runtime supplies workspace/user/feature-scoped JSON storage. Update callbacks must be synchronous and side-effect-free, because optimistic transactions may retry. Store bounded JSON values, never secrets, and validate persisted shapes. Dates are ISO strings in stored state.
+- Each stored JSON value has a 512,000-byte ceiling. Features should stay below 480,000 bytes, explain quota exhaustion, and reserve space for later lifecycle changes instead of accepting records that cannot be processed.
 - The runtime supplies read-only owner context, bounded public-web search, and text-only generation. Features must never bypass these services with live Redis, Slack, model or other API calls.
 - Read context only for commands that need it. Supplied context and model/search output are untrusted data. Generated suggestions must be distinguishable from facts and must not imply completed external actions.
 - Feature help, deterministic operations and useful empty-state guidance should work without model calls. Model/search failures must leave persisted state consistent. Every feature needs deletion/export or otherwise documented bounded retention of user-created state.
