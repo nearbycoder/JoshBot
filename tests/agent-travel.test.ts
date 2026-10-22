@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
 import feature, { feature as namedFeature } from "../lib/agent-features/travel.js";
 import type { AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
@@ -312,4 +313,115 @@ test("untrusted text is inert, replies stay bounded, and storage failures are ha
   const output = await execute(ctx, `show ${tripId}`);
   assert.ok(output.length < 28000);
   assert.match(output, /Output shortened/);
+});
+
+const encodedBytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
+function largestLifecycleBytes(s: Snapshot): number {
+  const reopened = structuredClone(s);
+  for (const trip of reopened.trips) {
+    trip.archived = false;
+    for (const item of trip.packing) item.packed = false;
+  }
+  return encodedBytes(reopened);
+}
+
+function unicodeStateAtBudget(template: Snapshot, target: number): Snapshot {
+  let sequence = 1;
+  const nextId = () => `00000000-0000-4000-8000-${String(sequence++).padStart(12, "0")}`;
+  const s: Snapshot = {
+    version: 1,
+    trips: Array.from({ length: 10 }, (_, i) => ({
+      ...structuredClone(template.trips[0]), id: nextId(), title: `Unicode trip ${i}`,
+      archived: i === 1, constraints: "", entries: [],
+      packing: [{ id: nextId(), label: `Packing item ${i}`, packed: true }],
+    })),
+  };
+  // Ten packed flags plus one archived flag each need one byte when undone.
+  const reserve = 11;
+  let entryCount = 0;
+  while (encodedBytes(s) + reserve < target - 8000) {
+    const trip = s.trips[entryCount % 10];
+    trip.entries.push({
+      ...structuredClone(template.trips[0].entries[0]), id: nextId(),
+      title: "界".repeat(97) + String(entryCount).padStart(3, "0"),
+      from: "都".repeat(100), to: "都".repeat(100), note: "旅".repeat(300),
+    });
+    assert.ok(trip.entries.length <= 40);
+    entryCount++;
+  }
+  let remaining = target - encodedBytes(s) - reserve;
+  for (const trip of s.trips) {
+    const length = Math.min(800, remaining);
+    trip.constraints = "x".repeat(length);
+    remaining -= length;
+  }
+  assert.equal(remaining, 0);
+  assert.equal(largestLifecycleBytes(s), target);
+  return s;
+}
+
+test("UTF-8 quota is atomic under contention and reserves space for every lifecycle change", async () => {
+  const ctx = createAgentTestContext(), initialId = await create(ctx);
+  await execute(ctx, activity(initialId));
+  // Include both an emoji and JSON-escaped characters in the final accepted item.
+  const labels = ['🧳"\\', '👟"\\'];
+  const itemBytes = encodedBytes({ id: "00000000-0000-4000-8000-000000009999", label: labels[0], packed: false }) + 1;
+  const nearFull = unicodeStateAtBudget(await saved(ctx), 470_000 - itemBytes);
+  await ctx.store.update<Snapshot, void>("itineraries", nearFull, () => ({ value: nearFull, result: undefined }));
+  const tripId = nearFull.trips[0].id;
+  assert.ok(JSON.stringify(nearFull).length < 250_000, "character count would underestimate the Unicode state");
+  const results = await Promise.all(labels.map((label) => execute(ctx, `packing ${tripId} add | ${label}`)));
+  assert.equal(results.filter((result) => /1\/2 packed/.test(result)).length, 1);
+  assert.equal(results.filter((result) => /storage quota reached/.test(result)).length, 1);
+  const quotaError = results.find((result) => /storage quota reached/.test(result))!;
+  assert.match(quotaError, /470,000 UTF-8 bytes/);
+  assert.match(quotaError, /trip delete <trip-id> confirm/);
+  assert.match(quotaError, /Archiving retains data/);
+  const full = await saved(ctx);
+  assert.equal(full.trips[0].packing.length, 2);
+  assert.equal(largestLifecycleBytes(full), 470_000);
+  assert.equal(encodedBytes(full), 470_000 - 11);
+  assert.match(await execute(ctx, "trip"), /470,000\/470,000 UTF-8 bytes/);
+  assert.match(await execute(ctx, `packing ${tripId} add | ${"界".repeat(100)}`), /Nothing changed/);
+  assert.deepEqual(await saved(ctx), full);
+
+  const originalItem = full.trips[0].packing[0].id, addedItem = full.trips[0].packing[1].id;
+  const commands: [string, RegExp][] = [
+    [`packing ${tripId} undo ${originalItem}`, /0\/2 packed/],
+    [`packing ${tripId} done ${addedItem}`, /1\/2 packed/],
+    [`packing ${tripId} undo ${addedItem}`, /0\/2 packed/],
+    [`archive ${tripId}`, /Archived/],
+    [`archive ${tripId} undo`, /Reopened/],
+    [`archive ${full.trips[1].id} undo`, /Reopened/],
+  ];
+  for (const [command, expected] of commands) {
+    assert.match(await execute(ctx, command), expected);
+    assert.equal(largestLifecycleBytes(await saved(ctx)), 470_000);
+    assert.ok(encodedBytes(await saved(ctx)) < 480_000);
+  }
+  assert.match(await execute(ctx, `show ${tripId} brief`), /Preparation brief/);
+  assert.match(await execute(ctx, `trip constraints ${tripId} | 60 | -`), /Updated constraints/);
+  assert.match(await execute(ctx, `packing ${tripId} remove ${addedItem}`), /0\/1 packed/);
+  assert.match(await execute(ctx, `trip remove-entry ${tripId} | ${full.trips[0].entries[0].id}`), /Removed entry/);
+  assert.match(await execute(ctx, `packing ${tripId} add | Replacement`), /0\/2 packed/);
+  assert.match(await execute(ctx, `trip delete ${full.trips[9].id} confirm`), /Deleted trip/);
+  assert.ok(encodedBytes(await saved(ctx)) < 470_000);
+});
+
+test("valid pre-quota data can be reduced progressively without permitting more growth", async () => {
+  const ctx = createAgentTestContext(), initialId = await create(ctx);
+  await execute(ctx, activity(initialId));
+  const legacy = unicodeStateAtBudget(await saved(ctx), 475_000);
+  await ctx.store.update<Snapshot, void>("itineraries", legacy, () => ({ value: legacy, result: undefined }));
+  const tripId = legacy.trips[0].id;
+  assert.match(await execute(ctx, "trip"), /475,000\/470,000 UTF-8 bytes/);
+  assert.match(await execute(ctx, `packing ${tripId} add | More`), /storage quota reached/);
+  assert.deepEqual(await saved(ctx), legacy);
+  assert.match(await execute(ctx, `packing ${tripId} undo ${legacy.trips[0].packing[0].id}`), /0\/1 packed/);
+  assert.match(await execute(ctx, `trip remove-entry ${tripId} | ${legacy.trips[0].entries[0].id}`), /Removed entry/);
+  const smaller = await saved(ctx);
+  assert.ok(largestLifecycleBytes(smaller) > 470_000, "one deletion can succeed even if more cleanup is needed");
+  assert.ok(largestLifecycleBytes(smaller) < 475_000);
+  assert.match(await execute(ctx, `trip delete ${tripId} confirm`), /Deleted trip/);
+  assert.ok(largestLifecycleBytes(await saved(ctx)) < 470_000);
 });

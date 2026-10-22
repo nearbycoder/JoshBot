@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 
 const KEY = "itineraries";
+const STATE_BYTE_BUDGET = 470_000;
 const LIMIT = { trips: 10, entries: 40, packing: 40, title: 100, note: 300, constraints: 800 };
 type Moment = { at: string; zone: string };
 type Entry = {
@@ -46,7 +48,7 @@ packing <trip-id> done|undo|remove <packing-id>
 archive <trip-id> [undo]
 Example: trip Japan visit | America/Chicago | 90 | Carry-on only
 Example date: 2026-11-02T09:00-06:00 with America/Chicago. Dates require an explicit offset (or Z) matching the named zone; repeated DST times are disambiguated by the offset.
-Use consistent location labels (e.g. HND). Confirmation notes are reminders only: no passwords, access codes, passport/payment details, or booking reference secrets. No bookings or verification. Limits: 10 trips, 40 entries and 40 packing items per trip.`;
+Use consistent location labels (e.g. HND). Confirmation notes are reminders only: no passwords, access codes, passport/payment details, or booking reference secrets. No bookings or verification. Limits: 10 trips, 40 entries and 40 packing items per trip; 470,000 UTF-8 bytes total, including reserved packing/archive space. If full, remove entries/items or use trip delete <trip-id> confirm. Archiving retains data.`;
 
 function clean(value: unknown, max: number, label: string, empty = false): string {
   if (typeof value !== "string" || value.length > max || (!empty && !value.trim()) || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) {
@@ -228,8 +230,22 @@ async function mutate(ctx: AgentFeatureContext, change: (s: State) => string): P
   return ctx.store.update<unknown, string>(KEY, empty(), (current) => {
     // Decode into fresh objects. A retry never mutates the store input or captured command data.
     const next = state(current);
-    return { value: next, result: change(next) };
+    const beforeBytes = budgetedBytes(next);
+    const result = change(next), afterBytes = budgetedBytes(next);
+    // Oversized older records remain readable and can shrink without being reset.
+    if (afterBytes > STATE_BYTE_BUDGET && afterBytes > beforeBytes) {
+      throw new InputError(`Travel storage quota reached: 470,000 UTF-8 bytes including reserved lifecycle space (${afterBytes.toLocaleString("en-US")} requested). Nothing changed. Use trip remove-entry <trip-id> | <entry-id>, packing <trip-id> remove <packing-id>, or trip delete <trip-id> confirm. Archiving retains data and does not free this quota.`);
+    }
+    return { value: next, result };
   });
+}
+
+function budgetedBytes(s: State): number {
+  // JSON false is one byte longer than true. Reserve for every possible undo or
+  // reopen, so a full record can still change lifecycle flags. Timestamps have
+  // fixed ISO width; content edits are checked against the budget separately.
+  const reserve = s.trips.reduce((sum, trip) => sum + Number(trip.archived) + trip.packing.filter((p) => p.packed).length, 0);
+  return Buffer.byteLength(JSON.stringify(s), "utf8") + reserve;
 }
 
 // Escape Slack control syntax in user text: saved text remains data, even in private replies.
@@ -338,7 +354,7 @@ async function run(command: string, ctx: AgentFeatureContext): Promise<string> {
   const verb = match[1].toLowerCase(), args = match[2]?.trim() ?? "";
   if ((verb === "trip" || verb === "show") && !args) {
     const s = await read(ctx);
-    return s.trips.length ? s.trips.map((t) => `${display(t.title)} [${t.id}] — ${t.archived ? "archived" : "active"}, ${t.entries.length} entries, ${t.zone}`).join("\n") : "No trips yet. Try: trip Japan visit | America/Chicago | 90 | Carry-on only";
+    return s.trips.length ? s.trips.map((t) => `${display(t.title)} [${t.id}] — ${t.archived ? "archived" : "active"}, ${t.entries.length} entries, ${t.zone}`).join("\n") + `\nTravel storage: ${budgetedBytes(s).toLocaleString("en-US")}/470,000 UTF-8 bytes budgeted (includes packing/archive reserve). Archive retains data; use trip delete <trip-id> confirm to free space.` : "No trips yet. Try: trip Japan visit | America/Chicago | 90 | Carry-on only";
   }
   if (["show", "timeline", "check"].includes(verb)) {
     const tokens = args.split(/\s+/);

@@ -88,6 +88,10 @@ The brief shows the next or ongoing saved entry relative to the supplied current
 
 State is bounded to 10 trips total, including archived trips, with 40 dated entries and 40 packing items per trip. Titles/locations/packing labels allow 100 characters, confirmation notes 300, and constraints 800. Commands allow 8,000 characters. Replies are capped below 28,000 characters and explicitly indicate truncation; use focused `timeline`, `check`, or `packing` views for large records. No records are silently evicted.
 
+The shared `itineraries` value also has a **470,000-byte UTF-8 budget**, measured from serialized JSON on every atomic update. Unicode and JSON escaping count at their actual encoded size, so this budget can be reached before the record-count limits. The budget reserves one byte per `true` packing/archive flag for its possible change to `false`; accepted records can still be marked packed/unpacked and archived/reopened at capacity. This keeps new state below the 480,000-byte feature safety threshold and the runtime's 512,000-byte hard limit. Content growth, including longer constraint notes, must fit the budget.
+
+Bare `trip` or `show` displays current budget usage. Quota rejection leaves the entire command unapplied and explains how to free space: `trip remove-entry <trip-id> | <entry-id>`, `packing <trip-id> remove <packing-id>`, or `trip delete <trip-id> confirm`. Clearing constraints with `trip constraints <trip-id> | <minimum> | -` also frees space. Archiving retains data and does not free quota. Valid older records above this feature budget remain readable; lifecycle changes and progressive reductions are permitted, but further growth is rejected until they fit.
+
 `archive` keeps a read-only trip and all of its entries; `archive <id> undo` reopens it. `trip delete <id> confirm` permanently removes the trip, entries, and packing list from this feature's state. There is no background expiration, automatic export, or cross-feature retention behavior. Invalid persisted shapes are refused without overwriting them; runtime maintainers must repair such records.
 
 Exact parent requirements:
@@ -96,6 +100,8 @@ Exact parent requirements:
 2. Supply an owner/workspace/feature-scoped `AgentFeatureStore` and atomic compare-and-swap `update`. The sole local key is `itineraries`; its JSON schema version is `1`. Updates decode and validate existing state, use synchronous pure transforms, and create IDs/timestamps outside transforms. A concurrent archive/deletion must win when a mutation retries against it.
 3. Supply a valid `context.now` and IANA `context.timezone`. Authentication, private response delivery, and request deduplication remain runtime responsibilities. Explicit duplicate itinerary additions are rejected, but transport/request-level retries still require parent deduplication.
 4. Keep Slack rendering private and treat response strings as text. User text is escaped for Slack `<`, `>`, and `&` control syntax. No service adapters, dependencies, package changes, context exports, jobs, OAuth grants, or external API access are required. `services.generate`, `search`, and `readContext` are intentionally unused.
+
+Each invocation makes zero generation calls and zero searches, within the shared limits of eight generations and six bounded searches. Work is bounded by the trip/entry limits and uses the runtime's 120-second deadline, prompt cancellation, and late-write guards; it starts no background work. The feature needs no changes to the shared runtime/store.
 
 Verification uses only fake stores/services:
 
