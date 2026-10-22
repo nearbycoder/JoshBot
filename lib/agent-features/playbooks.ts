@@ -2,8 +2,12 @@ import { randomUUID } from "node:crypto";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 
 const KEY = "playbooks-state";
-const LIMIT = { books: 10, versions: 8, runs: 10, inputs: 8, steps: 4, output: 3000 };
-const MAX_STATE_BYTES = 1_000_000;
+const LIMIT = { books: 10, versions: 8, runs: 10, inputs: 8, steps: 4, output: 3000, outputBytes: 6000 };
+// Separate budgets keep accepted definitions runnable even when history is full.
+// A maximum-size run fits the reserved budget; only successful runs evict history.
+const MAX_DEFINITION_BYTES = 300_000;
+const MAX_RUN_BYTES = 170_000;
+const MAX_STATE_BYTES = 470_000;
 type InputType = "text" | "number" | "boolean" | "date";
 type Values = Record<string, string | number | boolean>;
 type Definition = { title: string; goal: string; inputs: Record<string, InputType>; steps: string[] };
@@ -22,6 +26,23 @@ const empty = (): State => ({ schema: 1, playbooks: [], runs: [] });
 const latest = (book: Playbook): Version => book.versions[book.versions.length - 1];
 const clip = (text: string, max: number): string => text.length <= max ? text : `${text.slice(0, max - 26)}\n[Truncated for length.]`;
 const reply = (text: string): string => clip(text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"), 27_000);
+const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value), "utf8");
+
+function boundedOutput(value: string): string {
+  const output = value.trim();
+  if (output.length <= LIMIT.output && bytes(output) <= LIMIT.outputBytes) return output;
+  const characters = Array.from(output);
+  const marker = "\n[Truncated for length.]";
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = characters.slice(0, middle).join("") + marker;
+    if (candidate.length <= LIMIT.output && bytes(candidate) <= LIMIT.outputBytes) low = middle;
+    else high = middle - 1;
+  }
+  return characters.slice(0, low).join("") + marker;
+}
 
 function object(value: unknown, label: string, keys?: string[]): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${label} must be a JSON object.`);
@@ -150,7 +171,11 @@ function state(value: unknown): State {
     const runs = array(raw.runs, "Runs", 0, LIMIT.runs).map(item => {
       const raw = object(item, "Saved run", ["id", "playbookId", "version", "inputs", "context", "outputs", "createdAt", "timezone"]);
       const snapshot = version(raw.version);
-      const outputs = array(raw.outputs, "Outputs", snapshot.steps.length, snapshot.steps.length).map(item => string(item, "Output", LIMIT.output));
+      const outputs = array(raw.outputs, "Outputs", snapshot.steps.length, snapshot.steps.length).map(item => {
+        const output = string(item, "Output", LIMIT.output);
+        if (bytes(output) > LIMIT.outputBytes) fail("Oversized saved step output.");
+        return output;
+      });
       const run: Run = { id: id(raw.id, "run"), playbookId: id(raw.playbookId, "pb"), version: snapshot, inputs: bindings(raw.inputs, snapshot.inputs), context: string(raw.context, "Context", 3000, true), outputs, createdAt: iso(raw.createdAt), timezone: timezone(raw.timezone) };
       const book = playbooks.find(book => book.id === run.playbookId) ?? fail("Orphaned run.");
       if (snapshot.number > latest(book).number) fail("Orphaned run.");
@@ -181,7 +206,14 @@ async function update<R>(context: AgentFeatureContext, transform: (value: State)
 }
 
 function checkSize(value: State): void {
-  if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_STATE_BYTES) fail("Playbook storage would exceed 1000000 bytes. Nothing was saved; delete a playbook or forget saved runs before retrying.");
+  if (bytes({ ...value, runs: [] }) > MAX_DEFINITION_BYTES) fail("Definitions and version history would exceed 300000 UTF-8 JSON bytes. Nothing was saved. Use storage to check quotas; delete <id> confirm frees a playbook and its versions. Run storage is reserved separately.");
+  if (bytes(value.runs) > MAX_RUN_BYTES || bytes(value) > MAX_STATE_BYTES) fail("Saved run storage would exceed 170000 UTF-8 JSON bytes. Nothing was saved. Use storage and runs; forget-run <run-id> confirm or delete <id> confirm frees space.");
+}
+
+function retainRuns(runs: Run[]): Run[] {
+  let retained = runs.slice(-LIMIT.runs);
+  while (retained.length > 1 && bytes(retained) > MAX_RUN_BYTES) retained = retained.slice(1);
+  return retained;
 }
 
 function find(value: State, bookId: string): Playbook {
@@ -205,7 +237,7 @@ function assertActive(context: AgentFeatureContext): void {
   if (context.signal?.aborted) fail("Run cancelled. No run was saved.");
 }
 
-const HELP = `Playbooks — private, reusable text procedures\nCommands after /nobo-help agent playbooks:\ncreate {"title":"Launch brief","goal":"Explain {{topic}} to {{audience}}","inputs":{"topic":"text","audience":"text","bullets":"number"},"steps":["Extract key facts about {{topic}} from the supplied context.","Use the previous step to draft {{bullets}} bullets for {{audience}}."]}\nlist | show <id> [version] | history <id>\npreview <id> {"inputs":{"topic":"Search beta","audience":"customers","bullets":3},"context":"Beta starts Friday; opt-in only."}\nrun <id> <same JSON as preview>\nrevise <id> <current-version> {"goal":"A revised goal","steps":["A replacement step using {{topic}}."]}\nrollback <id> <retained-version>\nruns [id] | run-show <run-id> | forget-run <run-id> confirm\ndelete <id> confirm\nInput types: text, number, boolean, date (YYYY-MM-DD); all required. Use {{input_name}} in goals/steps. Each run makes 1–4 text-only calls; previous drafts feed later steps. No tools or external actions. Preview uses no model. Keep secrets out of saved inputs/context. Retention: 10 playbooks, latest 8 versions each, latest 10 successful runs total. Rollback creates a new version; delete removes a playbook and its runs.`;
+const HELP = `Playbooks — private, reusable text procedures\nCommands after /nobo-help agent playbooks:\ncreate {"title":"Launch brief","goal":"Explain {{topic}} to {{audience}}","inputs":{"topic":"text","audience":"text","bullets":"number"},"steps":["Extract key facts about {{topic}} from the supplied context.","Use the previous step to draft {{bullets}} bullets for {{audience}}."]}\nlist | storage | show <id> [version] | history <id>\npreview <id> {"inputs":{"topic":"Search beta","audience":"customers","bullets":3},"context":"Beta starts Friday; opt-in only."}\nrun <id> <same JSON as preview>\nrevise <id> <current-version> {"goal":"A revised goal","steps":["A replacement step using {{topic}}."]}\nrollback <id> <retained-version>\nruns [id] | run-show <run-id> | forget-run <run-id> confirm\ndelete <id> confirm\nInput types: text, number, boolean, date (YYYY-MM-DD); all required. Use {{input_name}} in goals/steps. Each run makes 1–4 text-only calls; previous drafts feed later steps. No tools or external actions. Preview uses no model. Keep secrets out of saved inputs/context. Retention: 10 playbooks, latest 8 versions each, up to 10 successful runs total. Definitions/history: 300000 UTF-8 JSON bytes; a separate 170000-byte budget is reserved for runs. Successful runs evict oldest results to fit; failures preserve history. Use storage for usage and deletion guidance. Rollback creates a new version; delete removes a playbook and its runs. The runtime enforces a 120-second invocation deadline.`;
 
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
   if (typeof command !== "string" || command.length > 20_000) fail("Commands are limited to 20000 characters.");
@@ -228,6 +260,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     if (rest) fail("Usage: list");
     const current = await read(context);
     return current.playbooks.length ? current.playbooks.map(book => `${book.id} · v${latest(book).number} · ${latest(book).title} (${latest(book).steps.length} steps)`).join("\n") : "No playbooks yet. Use create with a title, goal, typed inputs and steps; see playbooks help for a complete example.";
+  }
+  if (action === "storage") {
+    if (rest) fail("Usage: storage");
+    const current = await read(context);
+    return `Storage — serialized UTF-8 JSON bytes\nDefinitions and versions: ${bytes({ ...current, runs: [] })}/${MAX_DEFINITION_BYTES}\nReserved run history: ${bytes(current.runs)}/${MAX_RUN_BYTES}\nTotal state: ${bytes(current)}/${MAX_STATE_BYTES} (below the runtime's 512000-byte limit)\n${current.playbooks.length}/${LIMIT.books} playbooks; ${current.runs.length}/${LIMIT.runs} saved runs. Successful runs evict oldest results to fit their separate budget.\nUse delete <id> confirm to free definitions/versions and their runs; forget-run <run-id> confirm deletes one saved result. Deleting runs does not expand the definitions quota.`;
   }
   if (["show", "history", "rollback", "delete"].includes(action)) {
     const args = rest.split(/\s+/);
@@ -281,7 +318,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
   }
   if (action === "run-show") {
     const runId = id(rest, "run");
-    const run = (await read(context)).runs.find(run => run.id === runId) ?? fail("Run not found. Use runs; only the latest 10 successful runs are retained.");
+    const run = (await read(context)).runs.find(run => run.id === runId) ?? fail("Run not found. Use runs; up to 10 successful runs are retained within the 170000-byte run budget.");
     return `${showRun(run)}\n\nProcedure preserved with this run:\n${showVersion(run.playbookId, run.version)}`;
   }
   if (action === "forget-run") {
@@ -321,13 +358,15 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         fail(`Generation failed at step ${index + 1} of ${steps.length}. No run was saved; your playbook and existing runs are unchanged. Try run again later.`);
       }
       assertActive(context);
-      outputs.push(clip(generated!.trim(), LIMIT.output));
+      outputs.push(boundedOutput(generated!));
     }
     const saved: Run = { id: runId, playbookId: bookId, version: snapshot, ...supplied, outputs, createdAt, timezone: tz };
     assertActive(context);
     return update(context, current => {
       assertCurrent(current, bookId, snapshot.number);
-      return { value: { ...current, runs: [...current.runs, saved].slice(-LIMIT.runs) }, result: showRun(saved) };
+      const runs = retainRuns([...current.runs, saved]);
+      const evicted = current.runs.length + 1 - runs.length;
+      return { value: { ...current, runs }, result: `${showRun(saved)}${evicted ? `\nRetention removed ${evicted} oldest saved run(s) to stay within 10 runs / 170000 UTF-8 JSON bytes. Use storage to inspect quotas.` : ""}` };
     });
   }
   return fail(`Unknown playbooks command: ${action}. Use playbooks help.`);

@@ -312,9 +312,14 @@ test("persisted data is validated and corruption is never silently overwritten",
   }
 });
 
-test("total persisted JSON has a hard byte cap even for multibyte definitions", async () => {
-  const { exec, context, calls } = setup();
+test("Unicode definition quotas reserve capacity for runs, revisions, rollback and deletion", async () => {
+  let unavailable = false;
+  const { exec, context, calls } = setup(async () => {
+    if (unavailable) throw new Error("Fake provider unavailable");
+    return "\u0001".repeat(3000);
+  });
   const large = { title: "語".repeat(100), goal: "語".repeat(600), inputs: { topic: "text" }, steps: Array(4).fill("語".repeat(1200)) };
+  const ids: string[] = [];
   let reachedLimit = false;
   for (let book = 0; book < 10 && !reachedLimit; book++) {
     const beforeCreate = await context.store.read(KEY);
@@ -326,10 +331,13 @@ test("total persisted JSON has a hard byte cap even for multibyte definitions", 
     }
     const bookId = /pb_[a-f0-9-]{36}/.exec(response)?.[0];
     assert.ok(bookId, response);
+    ids.push(bookId);
     for (let v = 1; v < 8; v++) {
       const beforeRevision = await context.store.read(KEY);
       const revision = await exec(`revise ${bookId} ${v} {"title":"${large.title}"}`);
       if (revision.includes("would exceed")) {
+        assert.match(revision, /300000 UTF-8 JSON bytes/);
+        assert.match(revision, /delete .* confirm/);
         assert.deepEqual(await context.store.read(KEY), beforeRevision);
         reachedLimit = true;
         break;
@@ -338,8 +346,63 @@ test("total persisted JSON has a hard byte cap even for multibyte definitions", 
     }
   }
   assert.ok(reachedLimit);
-  assert.ok(Buffer.byteLength(JSON.stringify(await context.store.read(KEY)), "utf8") <= 1_000_000);
+  const definitionBytes = Buffer.byteLength(JSON.stringify(await context.store.read(KEY)), "utf8");
+  assert.ok(definitionBytes <= 300_000);
+  assert.ok(definitionBytes > 280_000, "exercise a nearly full definitions budget");
   assert.equal(calls.length, 0);
+  assert.match(await exec("storage"), /Definitions and versions: \d+\/300000/);
+  assert.match(await exec("storage"), /Reserved run history: 2\/170000/);
+  assert.match(await exec("storage extra"), /Usage: storage/);
+
+  const runInputs = { inputs: { topic: "😀".repeat(500) }, context: "語".repeat(3000) };
+  let oldestRunId = "";
+  for (let run = 0; run < 6; run++) {
+    const result = await exec(`run ${ids[0]} ${JSON.stringify(runInputs)}`);
+    assert.match(result, /Generated draft/);
+    if (run === 0) oldestRunId = /run_[a-f0-9-]{36}/.exec(result)![0];
+    if (run === 5) assert.match(result, /Retention removed/);
+    const current = (await context.store.read<{ runs: { id: string }[] }>(KEY))!;
+    assert.ok(Buffer.byteLength(JSON.stringify(current), "utf8") < 480_000);
+    assert.ok(Buffer.byteLength(JSON.stringify(current.runs), "utf8") <= 170_000);
+    assert.ok(current.runs.length >= 1 && current.runs.length < 4);
+  }
+  assert.equal(calls.length, 24);
+  assert.match(await exec(`run-show ${oldestRunId}`), /Run not found/);
+  const beforeFailure = await context.store.read(KEY);
+  unavailable = true;
+  assert.match(await exec(`run ${ids[0]} ${JSON.stringify(runInputs)}`), /Generation failed/);
+  assert.deepEqual(await context.store.read(KEY), beforeFailure, "failure must not evict existing runs");
+  const keptRuns = (await context.store.read<{ runs: { id: string }[] }>(KEY))!.runs;
+  assert.match(await exec(`revise ${ids[0]} 8 {"title":"Updated"}`), /v9/);
+  assert.match(await exec(`rollback ${ids[0]} 8`), /as v10/);
+  assert.deepEqual((await context.store.read<{ runs: unknown[] }>(KEY))!.runs, keptRuns);
+  assert.match(await exec(`forget-run ${keptRuns[0].id} confirm`), /Deleted the saved run/);
+  assert.match(await exec(`delete ${ids[0]} confirm`), /Deleted the playbook/);
+  await create(exec, large);
+});
+
+test("escaped source text and Unicode outputs fit the runtime request and response limits", async () => {
+  for (const generated of ["\u0001".repeat(3000), "😀".repeat(1500), "語".repeat(3000)]) {
+    const { exec, context, calls } = setup(async input => {
+      assert.ok(input.instructions.length <= 24_000);
+      assert.ok(input.input.length <= 80_000);
+      return generated;
+    });
+    const bookId = await create(exec, { title: "\u0001".repeat(100), goal: "{{text}}".repeat(3), inputs: { text: "text" }, steps: Array(4).fill("{{text}}".repeat(7)) });
+    const input = { inputs: { text: "\u0001".repeat(500) }, context: "\u0001".repeat(2000) };
+    const response = await exec(`run ${bookId} ${JSON.stringify(input)}`);
+    assert.match(response, /Generated draft/);
+    assert.ok(response.length <= 28_000);
+    assert.equal(calls.length, 4);
+    assert.equal(JSON.parse(calls[0].input).instruction, "\u0001".repeat(3500));
+    const run = (await context.store.read<{ runs: { outputs: string[] }[] }>(KEY))!.runs[0];
+    for (const output of run.outputs) {
+      assert.ok(output.length <= 3000);
+      assert.ok(output.isWellFormed(), "truncation must not split surrogate pairs");
+      assert.ok(Buffer.byteLength(JSON.stringify(output), "utf8") <= 6000);
+      assert.match(output, /Truncated for length/);
+    }
+  }
 });
 
 test("stored runs validate their version snapshots, output count, inputs and timezone", async () => {
