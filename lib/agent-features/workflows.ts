@@ -7,14 +7,16 @@ const MAX_STEPS = 6;
 const MAX_INPUT = 4_000;
 const MAX_INSTRUCTION = 500;
 const MAX_OUTPUT = 2_000;
+const MAX_STATE_BYTES = 480_000;
 const STEPS_PER_INVOCATION = 2;
 const LEASE_MS = 5 * 60_000;
-const GENERATION_TIMEOUT_MS = 90_000;
+const GENERATION_TIMEOUT_MS = 45_000;
+const INVOCATION_WORK_MS = 100_000;
 const ID = /^wf_[a-f0-9-]{36}$/;
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 
 type Status = "ready" | "running" | "paused" | "failed" | "interrupted" | "completed" | "cancelled";
-type Issue = "provider" | "empty" | "oversize" | "aborted" | "timeout" | "lease_expired";
+type Issue = "provider" | "empty" | "oversize" | "aborted" | "timeout" | "deadline" | "lease_expired";
 type Workflow = {
   id: string;
   title: string;
@@ -44,7 +46,7 @@ delete <id> confirm
 Example: create Launch update | Beta is ready; testing takes two days. | Extract facts and open questions | Draft a short status update | Make the update more concise
 Then run <returned id>; inspect <id>; resume <id>.
 Each run/resume/retry advances at most 2 steps. Retry only failed/interrupted work. Edit pauses work and discards in-flight output; completed checkpoints stay intact. Cancel is final. Paused in-flight steps rerun on resume.
-Limits: 10 workflows, 1–6 steps, title 120 characters, input 4,000, each instruction 500, each output 2,000. Literal | is a field separator in create/edit. No scheduling, tools, or external actions. Generated text is a draft.`;
+Limits: up to 10 workflows subject to a 480,000-byte quota including reserved future checkpoints; list shows usage, and delete <id> confirm frees space. 1–6 steps, title 120 characters, input 4,000, each instruction 500, each output 2,000. Generation waits at most 45 seconds per step within a 100-second work budget. Literal | is a field separator in create/edit. No scheduling, tools, or external actions. Generated text is a draft.`;
 
 function object(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -78,7 +80,7 @@ function validWorkflow(value: unknown): value is Workflow {
     if (!object(value.lease) || !keys(value.lease, ["token", "expiresAt"]) || typeof value.lease.token !== "string" || !UUID.test(value.lease.token) || !iso(value.lease.expiresAt)) return false;
   } else if (value.lease !== null) return false;
   if (value.status === "failed") return ["provider", "empty", "oversize"].includes(value.issue as string);
-  if (value.status === "interrupted") return ["aborted", "timeout", "lease_expired"].includes(value.issue as string);
+  if (value.status === "interrupted") return ["aborted", "timeout", "deadline", "lease_expired"].includes(value.issue as string);
   return value.issue === null;
 }
 
@@ -90,7 +92,43 @@ function parseState(value: unknown): State {
 }
 
 function change<R>(context: AgentFeatureContext, transform: (state: State) => Change<R>): Promise<R> {
-  return context.store.update<unknown, R>(KEY, { version: 1, workflows: [] }, (current) => transform(parseState(current)));
+  return context.store.update<unknown, R>(KEY, { version: 1, workflows: [] }, (current) => {
+    const state = parseState(current);
+    const next = transform(state);
+    const bytes = serializedBytes(next.value);
+    // Older records may predate quotas: allow inspection and deletion to recover,
+    // but never grow an oversized value or accept new work without reservations.
+    if (bytes >= MAX_STATE_BYTES && bytes > serializedBytes(state)) throw new WorkflowError(quotaMessage());
+    return next;
+  });
+}
+
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function reservedBytes(state: State): number {
+  // Use each field's largest lifecycle representation, independent of its current
+  // status. Six JSON bytes per UTF-16 code unit covers controls/lone surrogates;
+  // another three bytes per future output covers quotes and its array separator.
+  const projected = state.workflows.map((workflow) => ({
+    ...workflow,
+    status: "interrupted",
+    issue: "lease_expired",
+    revision: Number.MAX_SAFE_INTEGER,
+    lease: { token: "00000000-0000-0000-0000-000000000000", expiresAt: "9999-12-31T23:59:59.999Z" },
+  }));
+  return serializedBytes({ ...state, workflows: projected }) + state.workflows.reduce((bytes, workflow) =>
+    bytes + (["completed", "cancelled"].includes(workflow.status) ? 0 : workflow.steps.length - workflow.outputs.length) * (MAX_OUTPUT * 6 + 3), 0);
+}
+
+function quotaMessage(): string {
+  return "Workflow storage quota reached (480,000 UTF-8 bytes including reserved future checkpoints). Use list, then delete <id> confirm to free space, or use shorter input/instructions or fewer steps. Existing data is unchanged.";
+}
+
+function reserve(state: State): State {
+  if (reservedBytes(state) >= MAX_STATE_BYTES) throw new WorkflowError(quotaMessage());
+  return state;
 }
 
 function replace(state: State, workflow: Workflow): State {
@@ -153,7 +191,8 @@ function issueText(issue: Issue): string {
     empty: "Generation returned no usable text; earlier checkpoints are unchanged.",
     oversize: "Generation exceeded 2,000 characters; shorten the instruction or retry.",
     aborted: "The request was stopped. Any late model result is discarded.",
-    timeout: "Generation exceeded the 90-second wait limit. Any late result is discarded.",
+    timeout: "Generation exceeded the 45-second wait limit. Any late result is discarded.",
+    deadline: "The invocation reached its 100-second work budget. The unsaved step was interrupted; any late result is discarded.",
     lease_expired: "The execution claim expired without a checkpoint. Its outcome is unknown; any late result is discarded.",
   }[issue];
 }
@@ -183,8 +222,9 @@ function inspect(workflow: Workflow, timezone: string): string {
   return `${summary(workflow)}\nUpdated: ${formatted} (${timezone}).\nInput preview: ${display(workflow.input, 600)}\n${steps.join("\n")}\nUse input ${workflow.id} or output ${workflow.id} <step> for full text. Generated outputs are drafts, not verified facts or completed external actions.`;
 }
 
-function generate(context: AgentFeatureContext, workflow: Workflow, now: string): Promise<Generation> {
+function generate(context: AgentFeatureContext, workflow: Workflow, now: string, remainingMs: number): Promise<Generation> {
   if (context.signal?.aborted) return Promise.resolve({ issue: "aborted" });
+  if (remainingMs <= 0) return Promise.resolve({ issue: "deadline" });
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result: Generation) => {
@@ -195,7 +235,7 @@ function generate(context: AgentFeatureContext, workflow: Workflow, now: string)
       resolve(result);
     };
     const abort = () => finish({ issue: "aborted" });
-    const timer = setTimeout(() => finish({ issue: "timeout" }), GENERATION_TIMEOUT_MS);
+    const timer = setTimeout(() => finish({ issue: remainingMs < GENERATION_TIMEOUT_MS ? "deadline" : "timeout" }), Math.min(GENERATION_TIMEOUT_MS, remainingMs));
     context.signal?.addEventListener("abort", abort, { once: true });
     if (context.signal?.aborted) { abort(); return; }
     try {
@@ -220,7 +260,7 @@ function generate(context: AgentFeatureContext, workflow: Workflow, now: string)
   });
 }
 
-async function advance(context: AgentFeatureContext, id: string, mode: "run" | "resume" | "retry", clock: () => string): Promise<string> {
+async function advance(context: AgentFeatureContext, id: string, mode: "run" | "resume" | "retry", clock: () => string, remainingMs: () => number): Promise<string> {
   if (context.signal?.aborted) return "The request was stopped before work began. No step was started.";
   const token = randomUUID();
   const now = clock();
@@ -231,7 +271,7 @@ async function advance(context: AgentFeatureContext, id: string, mode: "run" | "
     const allowed = mode === "run" ? workflow.status === "ready" : mode === "resume" ? workflow.status === "paused" : ["failed", "interrupted"].includes(workflow.status);
     if (!allowed) return { value: state, result: `Cannot ${mode} a ${workflow.status} workflow.\n${summary(workflow)}` };
     const next = revise(workflow, now, { status: "running", issue: null, lease: { token, expiresAt } });
-    return { value: replace(state, next), result: next };
+    return { value: reserve(replace(state, next)), result: next };
   });
   if (typeof claimed === "string") return claimed;
   let owned = claimed;
@@ -239,8 +279,9 @@ async function advance(context: AgentFeatureContext, id: string, mode: "run" | "
     // Recheck before starting another provider call; commits still use atomic CAS.
     const before = (await load(context, clock())).workflows.find((item) => item.id === id);
     if (!before || before.revision !== owned.revision || before.lease?.token !== token) return discarded(before);
-    let generated = await generate(context, owned, clock());
+    let generated = await generate(context, owned, clock(), remainingMs());
     if (context.signal?.aborted) generated = { issue: "aborted" };
+    else if (remainingMs() <= 0) generated = { issue: "deadline" };
     const finishedAt = clock();
     const result = await change<{ accepted: boolean; workflow?: Workflow }>(context, (current) => {
       const state = expire(current, finishedAt);
@@ -248,7 +289,7 @@ async function advance(context: AgentFeatureContext, id: string, mode: "run" | "
       if (!workflow || workflow.revision !== owned.revision || workflow.lease?.token !== token) return { value: state, result: { accepted: false, workflow } };
       let next: Workflow;
       if (generated.issue) {
-        next = revise(workflow, finishedAt, { status: ["aborted", "timeout", "lease_expired"].includes(generated.issue) ? "interrupted" : "failed", issue: generated.issue, lease: null });
+        next = revise(workflow, finishedAt, { status: ["aborted", "timeout", "deadline", "lease_expired"].includes(generated.issue) ? "interrupted" : "failed", issue: generated.issue, lease: null });
       } else {
         const outputs = [...workflow.outputs, generated.output];
         const status = outputs.length === workflow.steps.length ? "completed" : count + 1 === STEPS_PER_INVOCATION ? "paused" : "running";
@@ -279,6 +320,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     if (!context.timezone) throw new WorkflowError("The runtime must supply a valid timezone for workflows.");
     const started = performance.now();
     const clock = () => new Date(context.now.getTime() + Math.max(0, Math.floor(performance.now() - started))).toISOString();
+    const remainingMs = () => Math.max(0, Math.floor(INVOCATION_WORK_MS - (performance.now() - started)));
     const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(trimmed)!;
     const verb = match[1].toLowerCase();
     const rest = match[2]?.trim() ?? "";
@@ -292,13 +334,14 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       const workflow: Workflow = { id: `wf_${randomUUID()}`, title, input, steps, outputs: [], status: "ready", issue: null, revision: 1, lease: null, createdAt: now, updatedAt: now };
       return await change(context, (state) => {
         if (state.workflows.length >= MAX_WORKFLOWS) throw new WorkflowError("All 10 workflow slots are full. Use delete <id> confirm to free a slot; nothing is automatically evicted.");
-        return { value: { ...state, workflows: [...state.workflows, workflow] }, result: `Created workflow.\n${summary(workflow)}` };
+        return { value: reserve({ ...state, workflows: [...state.workflows, workflow] }), result: `Created workflow.\n${summary(workflow)}` };
       });
     }
     if (verb === "list") {
       if (rest) throw new WorkflowError("Usage: list");
       const state = await load(context, clock());
-      return state.workflows.length ? state.workflows.map((workflow) => `${workflow.id} — ${display(workflow.title, 600)}: ${workflow.status}, ${workflow.outputs.length}/${workflow.steps.length} checkpoints`).join("\n") : "No workflows yet. Try: create Weekly update | Finished the prototype; review is Friday. | Extract progress and risks | Draft a short update";
+      const usage = `Storage: ${serializedBytes(state).toLocaleString("en-US")} UTF-8 bytes saved; ${reservedBytes(state).toLocaleString("en-US")} / 480,000 bytes including reserved checkpoints. Use delete <id> confirm to free space.`;
+      return state.workflows.length ? `${state.workflows.map((workflow) => `${workflow.id} — ${display(workflow.title, 600)}: ${workflow.status}, ${workflow.outputs.length}/${workflow.steps.length} checkpoints`).join("\n")}\n${usage}` : "No workflows yet. Try: create Weekly update | Finished the prototype; review is Friday. | Extract progress and risks | Draft a short update";
     }
     if (verb === "edit") {
       const fields = rest.split("|");
@@ -315,7 +358,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         if (number <= workflow.outputs.length || number > workflow.steps.length) throw new WorkflowError("Only unfinished, existing steps can be edited. Saved checkpoints cannot be rewritten.");
         const steps = workflow.steps.map((step, index) => index + 1 === number ? instruction : step);
         const next = revise(workflow, now, { steps, status: workflow.status === "ready" ? "ready" : "paused", issue: null, lease: null });
-        return { value: replace(state, next), result: `Step ${number} updated; any in-flight output is discarded.\n${summary(next)}` };
+        return { value: reserve(replace(state, next)), result: `Step ${number} updated; any in-flight output is discarded.\n${summary(next)}` };
       });
     }
     if (!["inspect", "input", "output", "run", "resume", "retry", "pause", "cancel", "delete"].includes(verb)) throw new WorkflowError("Unknown workflow command. Use help for commands and examples.");
@@ -325,7 +368,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     const id = workflowId(args[0]);
     if (verb === "delete" && args[1] !== "confirm") throw new WorkflowError("To delete the input, instructions and all checkpoints, use delete <id> confirm.");
     const number = verb === "output" ? stepNumber(args[1]) : 0;
-    if (verb === "run" || verb === "resume" || verb === "retry") return await advance(context, id, verb, clock);
+    if (verb === "run" || verb === "resume" || verb === "retry") return await advance(context, id, verb, clock, remainingMs);
     const now = clock();
     if (verb === "inspect" || verb === "input" || verb === "output") {
       const workflow = get(await load(context, now), id);
@@ -345,6 +388,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     });
   } catch (error) {
     if (error instanceof WorkflowError) return error.message;
+    if (context.signal?.aborted) return "Workflow execution was stopped; late results will not be saved. The runtime may have blocked the interruption checkpoint. Inspect in a new request; any remaining execution claim expires after five minutes, then use retry <id>.";
     return "Workflow storage could not be read or confirmed. Inspect the workflow before retrying; an unfinished execution claim expires after five minutes. Saved state has not been deliberately reset.";
   }
 }

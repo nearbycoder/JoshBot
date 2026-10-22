@@ -301,8 +301,8 @@ test("a generation timeout frees ownership as interrupted without waiting for a 
   const id = await create(ctx, 1);
   const run = feature.execute(`run ${id}`, ctx);
   await started.promise;
-  t.mock.timers.tick(90_000);
-  assert.match(await run, /Status: interrupted[\s\S]*90-second/);
+  t.mock.timers.tick(45_000);
+  assert.match(await run, /Status: interrupted[\s\S]*45-second/);
   const interrupted = await stored(ctx, id);
   assert.equal(interrupted.issue, "timeout");
   assert.equal(interrupted.lease, null);
@@ -499,4 +499,191 @@ test("a checkpoint CAS retry rechecks ownership against an edit made after its f
   assert.equal(edited.steps[0], "New instruction");
   assert.equal(proposals, 1);
   assert.equal(calls, 1);
+});
+
+test("UTF-8 quotas reserve every future checkpoint and lifecycle change, including worst-case JSON escaping", async () => {
+  for (const character of ["漢", "\u0000", "\ud800"]) {
+    const base = createAgentTestStore();
+    let peakBytes = 0;
+    const store: AgentFeatureStore = {
+      read: (key) => base.read(key),
+      update: (key, initial, transform) => base.update(key, initial, (current) => {
+        const next = transform(current);
+        const bytes = Buffer.byteLength(JSON.stringify(next.value), "utf8");
+        assert.ok(bytes < 480_000, `Accepted state must retain the parent store margin: ${bytes}`);
+        peakBytes = Math.max(peakBytes, bytes);
+        return next;
+      }),
+    };
+    const ctx = context(async () => "\u0000".repeat(2_000), { store });
+    const command = `create ${character.repeat(120)} | ${character.repeat(4_000)} | ${Array(6).fill(character.repeat(500)).join(" | ")}`;
+    const ids: string[] = [];
+    for (let index = 0; index < 10; index++) {
+      const previous = await base.read("state");
+      const response = await feature.execute(command, ctx);
+      if (response.includes("quota reached")) {
+        assert.match(response, /480,000 UTF-8 bytes[\s\S]*delete <id> confirm/);
+        assert.deepEqual(await base.read("state"), previous, "Quota rejection must preserve existing records");
+        break;
+      }
+      const id = response.match(/wf_[a-f0-9-]{36}/)?.[0];
+      assert.ok(id, response);
+      ids.push(id);
+    }
+    assert.equal(ids.length, character === "漢" ? 5 : 4, "Admission must include all reserved output bytes");
+    const encoded = JSON.stringify(await base.read("state"));
+    if (character === "漢") assert.ok(Buffer.byteLength(encoded, "utf8") > encoded.length * 2);
+    assert.match(await feature.execute("list", ctx), /UTF-8 bytes saved; .*reserved checkpoints/);
+    // Even after accepting all available records, pause/resume and maximal outputs
+    // must fit. The generator's control characters cost six JSON bytes each.
+    for (const id of ids) {
+      assert.match(await feature.execute(`pause ${id}`, ctx), /Status: paused/);
+      assert.match(await feature.execute(`resume ${id}`, ctx), /checkpoints 2\/6/);
+      assert.match(await feature.execute(`resume ${id}`, ctx), /checkpoints 4\/6/);
+      assert.match(await feature.execute(`resume ${id}`, ctx), /completed; checkpoints 6\/6/);
+      assert.equal((await stored(ctx, id)).outputs.length, 6);
+    }
+    assert.ok(peakBytes > 450_000, `Exercise near-full state, measured ${peakBytes} bytes`);
+    await feature.execute(`delete ${ids[0]} confirm`, ctx);
+    assert.match(await feature.execute(command, ctx), /Created workflow/);
+  }
+});
+
+test("Unicode instruction edits check reserved bytes atomically and preserve the old instruction on quota rejection", async () => {
+  const ctx = context();
+  const ids: string[] = [];
+  const command = `create ${"漢".repeat(120)} | ${"漢".repeat(4_000)} | ${Array(6).fill("漢".repeat(500)).join(" | ")}`;
+  for (let index = 0; index < 5; index++) {
+    const response = await feature.execute(command, ctx);
+    const id = response.match(/wf_[a-f0-9-]{36}/)?.[0];
+    assert.ok(id, response);
+    ids.push(id);
+  }
+  let rejected = false;
+  for (const id of ids) {
+    for (let step = 1; step <= 6; step++) {
+      const original = await ctx.store.read("state");
+      const response = await feature.execute(`edit ${id} ${step} | ${"\ud800".repeat(500)}`, ctx);
+      if (response.includes("quota reached")) {
+        assert.deepEqual(await ctx.store.read("state"), original);
+        assert.match(response, /delete <id> confirm/);
+        rejected = true;
+        break;
+      }
+      assert.match(response, /updated/);
+    }
+    if (rejected) break;
+  }
+  assert.equal(rejected, true, "Equal character counts can require different serialized byte quotas");
+});
+
+test("legacy records that exceed the new quota remain inspectable and deletable", async () => {
+  const ctx = context();
+  const ids = await Promise.all(Array.from({ length: 5 }, () => create(ctx, 6)));
+  await ctx.store.update<StoredState, void>("state", { version: 1, workflows: [] }, (state) => ({
+    value: {
+      ...state,
+      workflows: state.workflows.map((workflow) => ({ ...workflow, input: "漢".repeat(4_000), steps: Array(6).fill("\u0000".repeat(450)), outputs: Array(6).fill("\u0000".repeat(2_000)), status: "completed" })),
+    },
+    result: undefined,
+  }));
+  const before = await ctx.store.read("state");
+  const bytes = Buffer.byteLength(JSON.stringify(before), "utf8");
+  assert.ok(bytes >= 480_000 && bytes < 512_000, String(bytes));
+  assert.match(await feature.execute("list", ctx), /UTF-8 bytes saved/);
+  assert.deepEqual(await ctx.store.read("state"), before);
+  assert.match(await feature.execute("create Short | Input | Step", ctx), /quota reached/);
+  assert.deepEqual(await ctx.store.read("state"), before);
+  assert.match(await feature.execute(`delete ${ids[0]} confirm`, ctx), /Deleted/);
+  assert.ok(Buffer.byteLength(JSON.stringify(await ctx.store.read("state")), "utf8") < 480_000);
+});
+
+test("the remaining invocation budget shortens the next generation timeout below 45 seconds", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let elapsed = 0;
+  t.mock.method(performance, "now", () => elapsed);
+  const base = createAgentTestStore();
+  const store: AgentFeatureStore = {
+    read: (key) => base.read(key),
+    async update(key, initial, transform) {
+      const result = await base.update(key, initial, transform);
+      const state = await base.read<StoredState>(key);
+      if (state?.workflows.some((workflow) => workflow.status === "running" && workflow.outputs.length === 1)) elapsed = 85_000;
+      return result;
+    },
+  };
+  let calls = 0;
+  const started = deferred<void>();
+  const pending = deferred<string>();
+  const ctx = context(async () => {
+    if (++calls === 1) return "Saved checkpoint";
+    started.resolve();
+    return pending.promise;
+  }, { store });
+  const id = await create(ctx);
+  const run = feature.execute(`run ${id}`, ctx);
+  await started.promise;
+  elapsed = 99_999;
+  t.mock.timers.tick(14_999);
+  assert.equal((await stored(ctx, id)).status, "running");
+  elapsed = 100_000;
+  t.mock.timers.tick(1);
+  assert.match(await run, /Status: interrupted; checkpoints 1\/3[\s\S]*100-second/);
+  assert.equal((await stored(ctx, id)).issue, "deadline");
+  assert.deepEqual((await stored(ctx, id)).outputs, ["Saved checkpoint"]);
+  assert.equal(calls, 2);
+  pending.resolve("Late output");
+});
+
+test("no additional provider call starts when storage latency exhausts the invocation work budget", async (t) => {
+  let elapsed = 0;
+  t.mock.method(performance, "now", () => elapsed);
+  const base = createAgentTestStore();
+  const store: AgentFeatureStore = {
+    read: (key) => base.read(key),
+    async update(key, initial, transform) {
+      const result = await base.update(key, initial, transform);
+      const state = await base.read<StoredState>(key);
+      if (state?.workflows.some((workflow) => workflow.outputs.length === 1)) elapsed = 100_000;
+      return result;
+    },
+  };
+  let calls = 0;
+  const ctx = context(async () => { calls++; return "Saved checkpoint"; }, { store });
+  const id = await create(ctx);
+  assert.match(await feature.execute(`run ${id}`, ctx), /Status: interrupted[\s\S]*100-second/);
+  assert.equal(calls, 1);
+  assert.deepEqual((await stored(ctx, id)).outputs, ["Saved checkpoint"]);
+});
+
+test("runtime abort write guards leave a recoverable claim without writing late interruption or model results", async () => {
+  const controller = new AbortController();
+  const base = createAgentTestStore();
+  const store: AgentFeatureStore = {
+    async read(key) { controller.signal.throwIfAborted(); return base.read(key); },
+    async update(key, initial, transform) {
+      controller.signal.throwIfAborted();
+      return base.update(key, initial, (current) => {
+        controller.signal.throwIfAborted();
+        const next = transform(current);
+        controller.signal.throwIfAborted();
+        return next;
+      });
+    },
+  };
+  const pending = deferred<string>();
+  const started = deferred<void>();
+  const ctx = context(async () => { started.resolve(); return pending.promise; }, { store, signal: controller.signal });
+  const id = await create(ctx, 1);
+  const run = feature.execute(`run ${id}`, ctx);
+  await started.promise;
+  const beforeAbort = await base.read("state");
+  controller.abort();
+  assert.match(await run, /execution was stopped[\s\S]*five minutes/);
+  pending.resolve("Late draft");
+  await Promise.resolve();
+  assert.deepEqual(await base.read("state"), beforeAbort);
+  const recovered = context(async () => "Recovered draft", { ...later(ctx), store: base, signal: undefined });
+  assert.match(await feature.execute(`inspect ${id}`, recovered), /Status: interrupted/);
+  assert.match(await feature.execute(`retry ${id}`, recovered), /Status: completed/);
 });
