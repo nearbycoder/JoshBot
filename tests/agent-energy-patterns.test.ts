@@ -67,3 +67,19 @@ test('capacity is visible; max escaped/Unicode report continuations and complete
  for(const r of s.records){const exported=await f.run('export '+r.id);assert.deepEqual(JSON.parse(exported).record,r);assert.ok(Buffer.byteLength(exported)<=24576);assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);}
  assert.equal((await state(f)).records.length,0);
 });
+test('all ten selected excerpt slots reserve later replacements after content saturation',async()=>{
+ const {f,key}=production();const entries=Array.from({length:11},(_,i)=>({id:'reserve'+i,title:'Journal '+i,body:'\\'.repeat(400),data:{day:`2026-10-${String(i+1).padStart(2,'0')}`,mood:3},createdAt:now.toISOString(),updatedAt:now.toISOString()}));f.backend.data.set(key,JSON.stringify({entries}));
+ const selected:{checkin:string;source:string;fingerprint:string}[]=[];
+ for(let i=0;i<10;i++){
+  const checkin=i%2===0?id(await f.run('checkin 2026-10-22 | morning | 3 | writing | Context')):selected[i-1].checkin;
+  const fingerprint=(await f.run('journals '+entries[i].data.day)).match(/e1:[0-9a-f]{64}/)![0],source='toolbox:journal:'+entries[i].id;
+  assert.match(await f.run(`attach ${checkin} | ${source} | ${fingerprint} | ${esc('\\')}`),/Saved privately/);selected.push({checkin,source,fingerprint});
+ }
+ const fp=(await f.run('journals '+entries[10].data.day)).match(/e1:[0-9a-f]{64}/)![0],before=await state(f);
+ assert.match(await f.run(`attach ${selected[0].checkin} | toolbox:journal:reserve10 | ${fp} | ${esc('\\')}`),/limit/);assert.deepEqual(await state(f),before);
+ for(let i=0;i<90;i++){if(!(await f.run(`checkin 2026-10-22 | evening | 2 | reading | ${esc('\\'.repeat(240))}`)).includes('Saved privately'))break;}
+ for(const a of selected)assert.match(await f.run(`attach ${a.checkin} | ${a.source} | ${a.fingerprint} | ${esc('\\'.repeat(400))}`),/Saved privately/);
+ const filled=await state(f);assert.equal(filled.records.flatMap((r:any)=>r.sources).length,10);assert.ok(Buffer.byteLength(JSON.stringify(filled))<=49152);
+ const record=filled.records[0];let out=await f.run('show '+record.id),body='';for(let i=0;i<20;i++){assert.ok(out.length<=3500);body+=out.split('\n').slice(2).join('\n').replace(/\nNext: .+$/,'');const next=out.match(/\nNext: (.+)$/)?.[1];if(!next)break;out=await f.run(next.replace('/nobo-help agent energy-patterns ',''));}
+ assert.deepEqual(JSON.parse(body).record,record);for(const r of filled.records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
+});
