@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import feature from '../lib/agent-features/energy-patterns.js';
@@ -137,5 +138,62 @@ test('known target or collection revision exhaustion rejects attachment before r
  const key=id(await f.run('checkin 2026-10-22 | morning | 3 | work | note')),good=await state(f);
  for(const ceiling of ['record','collection']){const s=structuredClone(good);if(ceiling==='record')s.records[0].revision=Number.MAX_SAFE_INTEGER;else s.revision=Number.MAX_SAFE_INTEGER;const raw=JSON.stringify(s);f.backend.data.set(f.key('state'),raw);const calls={...f.calls},cas=f.backend.calls.compareSets;
   assert.match(await f.run(`attach ${key} | ${source.id} | ${fp} | Win`),/Revision limit/);assert.deepEqual(f.calls,calls);assert.equal(f.backend.calls.compareSets,cas);assert.equal(f.backend.data.get(f.key('state')),raw);
+ }
+});
+
+
+async function legacyAggregate(){
+ const {f}=production();await runFeature(journal,'write 2026-10-22 | 3 | Keep this excerpt | Lesson',owner,undefined,f.backend,now);
+ const key=id(await f.run('checkin 2026-10-22 | morning | 3 | work | note')),listing=await f.run('journals 2026-10-22');
+ const source=listing.match(/toolbox:journal:[A-Za-z0-9:_-]+/)![0],fp=listing.match(/e1:[0-9a-f]{64}/)![0];assert.match(await f.run(`attach ${key} | ${source} | ${fp} | Keep this excerpt`),/^Saved/);
+ const template=(await state(f)).records[0];template.activity='\\'.repeat(80);template.note='\\'.repeat(240);
+ const records=Array.from({length:90},(_,i)=>({...structuredClone(template),id:randomUUID(),sources:i===89?structuredClone(template.sources):[]}));
+ const saved={version:1,revision:1,records};f.backend.data.set(f.key('state'),JSON.stringify(saved));
+ assert.ok(Buffer.byteLength(JSON.stringify(saved))<512000);assert.ok(Buffer.byteLength(JSON.stringify({...saved,records:records.slice(1)}))>49152);
+ return {f,saved};
+}
+test('confirmed root deletion recovers readable legacy aggregates to empty with exact surviving snapshots',async()=>{
+ const {f,saved}=await legacyAggregate(),target=saved.records.find((r:any)=>r.sources.length)!;const savedSource=target.sources[0].evidence.sources[0],savedFingerprint=target.sources[0].sourceFingerprint;
+ const before=f.backend.data.get(f.key('state')),sources=[...f.backend.data].filter(([k])=>k!==f.key('state')),writes=f.backend.calls.writes;
+ assert.match(await f.run('list'),/Current list/);
+ for(const r of saved.records)assert.deepEqual(JSON.parse(await f.run(`export ${r.id}`)).record,r);
+ for(const command of [`checkin 2026-10-22 | morning | 3 | work | note`,`note ${target.id} | Edit`,`attach ${target.id} | ${savedSource.id} | ${savedFingerprint} | Keep this excerpt`,`clear ${target.id} note confirm`]){
+  assert.doesNotMatch(await f.run(command),/^Saved/);assert.equal(f.backend.data.get(f.key('state')),before);assert.equal(f.backend.calls.writes,writes);
+ }
+ for(const scope of [{teamId:'TOTHER',userId:f.owner.userId},{teamId:f.owner.teamId,userId:'UOTHER'}]){
+  assert.match(await f.run(`delete ${target.id} confirm`,{owner:scope}),/not found/);assert.equal(f.backend.data.get(f.key('state')),before);
+ }
+ // The recovery path must also remain usable when both counters are saturated.
+ saved.revision=Number.MAX_SAFE_INTEGER;for(const r of saved.records)r.revision=Number.MAX_SAFE_INTEGER;f.backend.data.set(f.key('state'),JSON.stringify(saved));
+ let expected=structuredClone(saved.records);
+ for(const target of saved.records){const previous=f.backend.data.get(f.key('state'))!,count=f.backend.calls.writes,reads=f.calls.readContext;
+  assert.match(await f.run(`delete ${target.id} confirm`),/^Deleted/);expected=expected.filter((r:any)=>r.id!==target.id);const current=await state(f);
+  assert.deepEqual(current,{version:1,revision:Number.MAX_SAFE_INTEGER,records:expected});assert.ok(Buffer.byteLength(f.backend.data.get(f.key('state'))!)<Buffer.byteLength(previous));assert.equal(f.backend.calls.writes,count+1);assert.equal(f.calls.readContext,reads);
+  assert.deepEqual([...f.backend.data].filter(([k])=>k!==f.key('state')),sources);
+ }
+});
+
+test('legacy root recovery binds its intended record across mutation/deletion races and preserves malformed raw data',async()=>{
+ const {f,saved}=await legacyAggregate(),target=saved.records[0],other=saved.records[1],original=f.backend.compareSet;
+ for(const mode of ['target-mutation','target-delete','unrelated-mutation','unrelated-delete']){
+  f.backend.data.set(f.key('state'),JSON.stringify(saved));let once=true,winning:any;const conflicts=f.backend.calls.conflicts;
+  f.backend.compareSet=async(k,p,n,ttl)=>{
+   if(once){once=false;const key=mode.startsWith('target')?target.id:other.id;
+    if(mode.endsWith('delete'))assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);
+    else await f.store().update('state',saved,(raw:any)=>{
+     // Simulate a schema-valid legacy writer using the real scoped CAS store;
+     // ordinary feature edits correctly remain blocked above the feature quota.
+     const next=structuredClone(raw),r=next.records.find((r:any)=>r.id===key);r.note='Legacy concurrent edit';r.revision++;next.revision++;return {value:next,result:null};
+    });winning=await state(f);
+   }return original(k,p,n,ttl);
+  };
+  const out=await f.run(`delete ${target.id} confirm`);assert.equal(f.backend.calls.conflicts,conflicts+1);
+  if(mode.startsWith('target')){assert.match(out,/changed|not found/);assert.deepEqual(await state(f),winning);}
+  else{assert.match(out,/^Deleted/);assert.deepEqual(await state(f),{...winning,revision:winning.revision+1,records:winning.records.filter((r:any)=>r.id!==target.id)});}
+ }
+ f.backend.compareSet=original;
+ for(const mutate of [(s:any)=>s.unrecognized=true,(s:any)=>s.records[0].unrecognized=true,(s:any)=>s.records[0].revision=0]){
+  const bad=structuredClone(saved);mutate(bad);const raw=' \n'+JSON.stringify(bad)+' \t';f.backend.data.set(f.key('state'),raw);const writes=f.backend.calls.writes;
+  for(const command of ['list',`delete ${target.id} confirm`]){assert.doesNotMatch(await f.run(command),/^Deleted|^Current list/);assert.equal(f.backend.data.get(f.key('state')),raw);assert.equal(f.backend.calls.writes,writes);}
  }
 });

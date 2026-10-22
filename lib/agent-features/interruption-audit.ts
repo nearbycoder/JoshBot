@@ -121,6 +121,20 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   checked(() => boundedText(command, {label: 'Command', maxBytes: 16000}));
   if (command === 'help') return metadata.help;
   const s = validate(await ctx.store.read('state') ?? initial), newId = randomUUID();
+ // Confirmed whole-record deletion has its own recovery path. Retained records
+ // are exact copies, so their independent lifecycle projections cannot grow.
+ // A removed interruption range may leave the already-reserved replacement slot.
+ const deleteRoot=(key:string)=>{
+  const expected=get(s,key);
+  return ctx.store.update('state',initial,raw=>{
+   const before=validate(raw);assertSame(get(before,key),expected);
+   const next={...before,revision:bump(before.revision,true),records:before.records.filter(r=>r.id!==key)};
+   validate(next);
+   if(serializedBytes(next)>=serializedBytes(before)||serializedBytes(future(next))>serializedBytes(future(before)))
+    throw new InputError('Deletion must reduce saved bytes without growing reserved lifecycle capacity; data preserved.');
+   return {value:next,result:`Deleted privately: ${key}\nNext: ${route} list`};
+  });
+ };
   const save = (change: (next: State) => Record | null, mode: 'content' | 'lifecycle' | 'remove' = 'content') => {
     if (mode !== 'remove') writable(s);
     return ctx.store.update('state', initial, raw => {
@@ -154,7 +168,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) {
     const r = get(s,m[1]); if (!m[2]) return `Remove this ${r.kind}: ${route} delete ${r.id} confirm`;
-    return save(next => {assertSame(get(next,r.id),r); next.records = next.records.filter(x=>x.id!==r.id); return null;},'remove');
+    return deleteRoot(r.id);
   }
   if (command.startsWith('log ')) {
     const input = inputLog(command.slice(4));

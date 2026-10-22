@@ -108,13 +108,26 @@ function input(input:string) {const [d,b,e,activity,note]=fields(input,[10,9,1,8
 async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  checked(()=>boundedText(command,{label:'Command',maxBytes:16000}));if(command==='help')return metadata.help;
  const s=validate(await ctx.store.read('state')??initial),newId=randomUUID(),capturedAt=ctx.now.toISOString();
+ // Confirmed whole-record deletion has its own recovery path. Retained records
+ // are exact copies, so their independent lifecycle projections cannot grow.
+ const deleteRoot=(key:string)=>{
+  const expected=get(s,key);
+  return ctx.store.update('state',initial,raw=>{
+   const before=validate(raw);assertSame(get(before,key),expected);
+   const next={...before,revision:bump(before.revision,true),records:before.records.filter(r=>r.id!==key)};
+   validate(next);
+   if(serializedBytes(next)>=serializedBytes(before)||serializedBytes(future(next))>serializedBytes(future(before)))
+    throw new InputError('Deletion must reduce saved bytes without growing reserved lifecycle capacity; data preserved.');
+   return {value:next,result:`Deleted privately: ${key}\nNext: ${route} list`};
+  });
+ };
  const save=(change:(next:State)=>Checkin|null,mode:'content'|'lifecycle'|'remove'='content')=>{if(mode!=='remove')writable(s);return ctx.store.update('state',initial,raw=>{const next=validate(raw);if(mode!=='remove')writable(next);const r=change(next);next.revision=bump(next.revision,mode==='remove');validate(next);admit(next,mode);return {value:next,result:r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} show ${r.id}`:'Deleted privately. Use list to inspect remaining check-ins.'};});};
  const edit=(key:string,change:(r:Checkin)=>void,mode:'content'|'lifecycle'|'remove'='content')=>{const expected=get(s,key);if(mode!=='remove')writable(s,expected);return save(next=>{const r=get(next,key);assertSame(r,expected);if(mode!=='remove')writable(next,r);change(r);r.revision=bump(r.revision,mode==='remove');return r;},mode);};
  let m:RegExpMatchArray|null;
  if((m=command.match(/^list(?: (?:page )?(\d+))?$/))){const n=checked(()=>parsePage(m![1])),all=[...s.records].sort((a,b)=>(a.date??'~').localeCompare(b.date??'~')||a.id.localeCompare(b.id));if(n>Math.max(1,Math.ceil(all.length/10)))throw new InputError('Page out of range; restart list.');return `Current list ${n}/${Math.max(1,Math.ceil(all.length/10))}; ${serializedBytes(s)}/49152 bytes\n`+(all.slice((n-1)*10,n*10).map(r=>`${r.id} · ${r.date??'undated'} · ${r.band??'no band'} · ${r.energy??'unknown'} · ${r.activity}`).join('\n')||`No check-ins. Start: ${metadata.example}`)+(n*10<all.length?`\nNext: ${route} list ${n+1}`:'');}
  if((m=command.match(/^show (\S+)(?: (?:page )?(\d+))?(?: rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[1]);guard(r,m[3],m[4]);return pages(JSON.stringify(envelope(r),null,2),`show ${r.id}`,r,checked(()=>parsePage(m![2])));}
  if((m=command.match(/^export (\S+)$/))){const out=envelope(get(s,m[1]));if(serializedBytes(out)>24576)throw new InputError('Export too large; use show pages.');return JSON.stringify(out);}
- if((m=command.match(/^delete (\S+)(?: (confirm))?$/))){const r=get(s,m[1]);if(!m[2])return `Remove check-in and its selected excerpts: ${route} delete ${r.id} confirm`;return save(next=>{assertSame(get(next,r.id),r);next.records=next.records.filter(x=>x.id!==r.id);return null;},'remove');}
+ if((m=command.match(/^delete (\S+)(?: (confirm))?$/))){const r=get(s,m[1]);if(!m[2])return `Remove check-in and its selected excerpts: ${route} delete ${r.id} confirm`;return deleteRoot(r.id);}
  if(command.startsWith('checkin ')){const value=input(command.slice(8));return save(next=>{const r:Checkin={id:newId,revision:1,...value,sources:[]};next.records.push(r);return r;});}
  if((m=command.match(/^edit (\S+)\s*\|([\s\S]*)$/))){const value=input(m[2]);return edit(m[1],r=>Object.assign(r,value));}
  if((m=command.match(/^note (\S+)\s*\|([\s\S]*)$/))){const [note]=fields(m[2],[240]);return edit(m[1],r=>{r.note=note;});}

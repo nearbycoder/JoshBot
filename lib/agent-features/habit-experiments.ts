@@ -120,13 +120,26 @@ function report(r:Experiment){let out=`Habit experiment: ${r.title}\nInterventio
  return out+'Dates are original UTC calendar labels, never caller-local midnight instants. Unlogged days are not failures. Frozen before capture may be retrospective; no causal claim or habit-store change.\n';}
 async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  checked(()=>boundedText(command,{label:'Command',maxBytes:16000}));if(command==='help')return metadata.help;const s=validate(await ctx.store.read('state')??initial),newId=randomUUID(),capturedAt=ctx.now.toISOString();
+ // Confirmed whole-record deletion has its own recovery path. Retained records
+ // are exact copies, so their independent lifecycle projections cannot grow.
+ const deleteRoot=(key:string)=>{
+  const expected=get(s,key);
+  return ctx.store.update('state',initial,raw=>{
+   const before=validate(raw);assertSame(get(before,key),expected);
+   const next={...before,revision:bump(before.revision,true),records:before.records.filter(r=>r.id!==key)};
+   validate(next);
+   if(serializedBytes(next)>=serializedBytes(before)||serializedBytes(future(next))>serializedBytes(future(before)))
+    throw new InputError('Deletion must reduce saved bytes without growing reserved lifecycle capacity; data preserved.');
+   return {value:next,result:`Deleted privately: ${key}\nNext: ${route} list`};
+  });
+ };
  const save=(change:(next:State)=>Experiment|null,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{if(mode!=='remove')writable(s);return ctx.store.update('state',initial,raw=>{const next=validate(raw);if(mode!=='remove')writable(next);const r=change(next);next.revision=bump(next.revision,mode==='remove');validate(next);admit(next,mode);return {value:next,result:r&&render?pages(report(r),`report ${r.id}`,r):r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} report ${r.id}`:'Deleted privately. Use list to inspect remaining experiments.'};});};
  const edit=(key:string,change:(r:Experiment)=>void,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{const expected=get(s,key);if(mode!=='remove')writable(s,expected);return save(next=>{const r=get(next,key);assertSame(r,expected);if(mode!=='remove')writable(next,r);change(r);r.revision=bump(r.revision,mode==='remove');return r;},mode,render);};
  const invalidate=(r:Experiment)=>{r.before=null;r.comparison=null;};let m:RegExpMatchArray|null;
  if((m=command.match(/^list(?: (?:page )?(\d+))?$/))){const n=checked(()=>parsePage(m![1])),all=[...s.records].sort((a,b)=>a.id.localeCompare(b.id));if(n>Math.max(1,Math.ceil(all.length/10)))throw new InputError('Page out of range; restart list.');return `Current list ${n}/${Math.max(1,Math.ceil(all.length/10))}; ${serializedBytes(s)}/49152 bytes\n`+(all.slice((n-1)*10,n*10).map(r=>`${r.id} · ${r.title||'untitled'} · ${r.comparison?.status??'not compared'}`).join('\n')||`No experiments. Start: ${metadata.example}`)+(n*10<all.length?`\nNext: ${route} list ${n+1}`:'');}
  if((m=command.match(/^(show|report) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[2]);guard(r,m[4],m[5]);return pages(m[1]==='show'?JSON.stringify(envelope(r),null,2):report(r),`${m[1]} ${r.id}`,r,checked(()=>parsePage(m![3])));}
  if((m=command.match(/^export (\S+)$/))){const out=envelope(get(s,m[1]));if(serializedBytes(out)>24576)throw new InputError('Export too large; use show pages.');return JSON.stringify(out);}
- if((m=command.match(/^delete (\S+)(?: (confirm))?$/))){const r=get(s,m[1]);if(!m[2])return `Remove experiment and snapshots only: ${route} delete ${r.id} confirm`;return save(next=>{assertSame(get(next,r.id),r);next.records=next.records.filter(x=>x.id!==r.id);return null;},'remove');}
+ if((m=command.match(/^delete (\S+)(?: (confirm))?$/))){const r=get(s,m[1]);if(!m[2])return `Remove experiment and snapshots only: ${route} delete ${r.id} confirm`;return deleteRoot(r.id);}
  if(command.startsWith('create ')){const [title,intervention]=fields(command.slice(7),[120,300]);return save(next=>{const r:Experiment={id:newId,revision:1,title,intervention,windows:null,opportunities:null,source:null,before:null,comparison:null};next.records.push(r);return r;});}
  if((m=command.match(/^edit (\S+) (title|intervention)\s*\|([\s\S]*)$/))){const field=m[2] as 'title'|'intervention',[value]=fields(m[3],[field==='title'?120:300]);return edit(m[1],r=>{r[field]=value;invalidate(r);});}
  if((m=command.match(/^windows (\S+)\s*\|([\s\S]*)$/))){const [baselineStart,baselineEnd,interventionStart,interventionEnd]=fields(m[2],[10,10,10,10]).map(date),w={baselineStart,baselineEnd,interventionStart,interventionEnd};range(w);return edit(m[1],r=>{r.windows=w;r.opportunities=null;invalidate(r);},'lifecycle');}

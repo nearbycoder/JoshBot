@@ -143,6 +143,19 @@ function report(r:Review,currentZone:string,recovery?:number){if(!r.snapshot)thr
 function reportPage(r:Review,zone:string,verb:string,n=1,expected?:string,digest?:string,recovery?:number){const view={revision:r.revision,record:r,currentZone:zone};guard(view,expected,digest);return pages(report(r,zone,recovery),verb,view,n);}
 async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  checked(()=>boundedText(command,{label:'Command',maxBytes:16000}));if(command==='help')return metadata.help;const s=validate(await ctx.store.read('state')??initial),newId=randomUUID();
+ // Confirmed whole-record deletion has its own recovery path. Retained records
+ // are exact copies, so their independent lifecycle projections cannot grow.
+ const deleteRoot=(key:string)=>{
+  const expected=get(s,key);
+  return ctx.store.update('state',initial,raw=>{
+   const before=validate(raw);assertSame(get(before,key),expected);
+   const next={...before,revision:bump(before.revision,true),records:before.records.filter(r=>r.id!==key)};
+   validate(next);
+   if(serializedBytes(next)>=serializedBytes(before)||serializedBytes(future(next))>serializedBytes(future(before)))
+    throw new InputError('Deletion must reduce saved bytes without growing reserved lifecycle capacity; data preserved.');
+   return {value:next,result:`Deleted privately: ${key}\nNext: ${route} list`};
+  });
+ };
  const save=(change:(next:State)=>Review|null,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{if(mode!=='remove')writable(s);return ctx.store.update('state',initial,raw=>{const next=validate(raw);if(mode!=='remove')writable(next);const r=change(next);next.revision=bump(next.revision,mode==='remove');validate(next);admit(next,mode);return {value:next,result:r&&render?reportPage(r,ctx.timezone,`report ${r.id}`):r?`Saved privately: ${r.id} · revision ${r.revision}\nNext: ${route} ${r.snapshot?'report':'show'} ${r.id}`:'Deleted privately. Use list to inspect remaining configurations.'};});};
  const edit=(key:string,change:(r:Review)=>void,mode:'content'|'lifecycle'|'remove'='content',render=false)=>{const expected=get(s,key);if(mode!=='remove')writable(s,expected);return save(next=>{const r=get(next,key);assertSame(r,expected);if(mode!=='remove')writable(next,r);change(r);r.revision=bump(r.revision,mode==='remove');return r;},mode,render);};let m:RegExpMatchArray|null;
  if((m=command.match(/^list(?: (?:page )?(\d+))?$/))){const n=checked(()=>parsePage(m![1]));if(n!==1)throw new InputError('Only one list page; at most eight configurations.');return `Current list; ${s.records.length}/8 configurations; ${serializedBytes(s)}/49152 bytes\n`+([...s.records].sort((a,b)=>a.id.localeCompare(b.id)).map(r=>`${r.id} · ${r.title||'untitled'} · ${r.snapshot?'captured '+r.snapshot.captureDay:'not analyzed'}`).join('\n')||`No configurations. Start: ${metadata.example}`);}
@@ -150,7 +163,7 @@ async function execute(command:string,ctx:AgentFeatureContext):Promise<string>{
  if((m=command.match(/^report (\S+)(?: (?:page )?(\d+))?(?: rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[1]);return reportPage(r,ctx.timezone,`report ${r.id}`,checked(()=>parsePage(m![2])),m[3],m[4]);}
  if((m=command.match(/^what-if (\S+) recovery\s*\|\s*(\d+)(?: page (\d+) rev (\d+) stamp ([0-9a-f]{64}))?$/))){const r=get(s,m[1]),recovery=num(m[2],0,1440);return reportPage(r,ctx.timezone,`what-if ${r.id} recovery | ${recovery}`,checked(()=>parsePage(m![3])),m[4],m[5],recovery);}
  if((m=command.match(/^export (\S+)$/))){const out=envelope(get(s,m[1]));if(serializedBytes(out)>24576)throw new InputError('Export too large; use show pages.');return JSON.stringify(out);}
- if((m=command.match(/^delete (\S+)(?: (confirm))?$/))){const r=get(s,m[1]);if(!m[2])return `Remove configuration and saved report only: ${route} delete ${r.id} confirm`;return save(next=>{assertSame(get(next,r.id),r);next.records=next.records.filter(x=>x.id!==r.id);return null;},'remove');}
+ if((m=command.match(/^delete (\S+)(?: (confirm))?$/))){const r=get(s,m[1]);if(!m[2])return `Remove configuration and saved report only: ${route} delete ${r.id} confirm`;return deleteRoot(r.id);}
  if(command.startsWith('create ')){const [title,start,end]=fields(command.slice(7),[120,10,10]);date(start);date(end);const c:Config={range:{start,end},work:{...defaultWork},labelBytes:80};config(c);return save(next=>{const r:Review={id:newId,revision:1,title,config:c,snapshot:null};next.records.push(r);return r;});}
  if((m=command.match(/^edit (\S+) title\s*\|([\s\S]*)$/))){const [title]=fields(m[2],[120]);return edit(m[1],r=>{r.title=title;});}
  if((m=command.match(/^range (\S+)\s*\|([\s\S]*)$/))){const [start,end]=fields(m[2],[10,10]).map(date);return edit(m[1],r=>{r.config.range={start,end};},'lifecycle');}

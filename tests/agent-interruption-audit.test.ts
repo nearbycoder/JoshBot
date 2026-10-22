@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import feature from '../lib/agent-features/interruption-audit.js';
@@ -121,4 +122,61 @@ test('ceiling erasure remains exact, unrelated exhausted records do not block ed
  assert.match(await f.run(`clear ${key} task confirm`),/^Saved/);assert.equal((await state(f)).records[0].task,'');assert.equal((await state(f)).revision,Number.MAX_SAFE_INTEGER);
  assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);assert.equal((await state(f)).records.length,0);
  assert.match(await f.run('log 2026-10-22 | chat | Original | 1 | 2 | measured'),/Revision limit/);
+});
+
+
+async function legacyAggregate(){
+ const f=createAgentFeatureFixture(feature),key=id(await f.run('log 2026-10-22 | chat | Work | 3 | 8 | measured'));
+ const template=(await state(f)).records[0];template.category='\\'.repeat(80);template.task='\\'.repeat(240);
+ const records=Array.from({length:80},()=>({...structuredClone(template),id:randomUUID()}));
+ // Deleting the range must not enlarge the reserved replacement range slot.
+ await f.run('review 2026-10-01 | 2026-10-31');records.unshift((await state(f)).records.find((r:any)=>r.kind==='range'));
+ const saved={version:1,revision:1,records};f.backend.data.set(f.key('state'),JSON.stringify(saved));
+ assert.ok(Buffer.byteLength(JSON.stringify(saved))<512000);assert.ok(Buffer.byteLength(JSON.stringify({...saved,records:records.slice(1)}))>49152);
+ return {f,saved};
+}
+test('confirmed root deletion recovers readable legacy aggregates to empty with exact surviving snapshots',async()=>{
+ const {f,saved}=await legacyAggregate(),target=saved.records.find((r:any)=>r.kind==='log')!;
+ const before=f.backend.data.get(f.key('state')),sources=[...f.backend.data].filter(([k])=>k!==f.key('state')),writes=f.backend.calls.writes;
+ assert.match(await f.run('list'),/Current list/);
+ for(const r of saved.records)assert.deepEqual(JSON.parse(await f.run(`export ${r.id}`)).record,r);
+ for(const command of [`log 2026-10-22 | c | t | 1 | 2 | measured`,`edit ${target.id} | 2026-10-22 | c | edit | 1 | 2 | measured`,`measure ${target.id} | 1 | 2 | measured`,`clear ${target.id} task confirm`]){
+  assert.doesNotMatch(await f.run(command),/^Saved/);assert.equal(f.backend.data.get(f.key('state')),before);assert.equal(f.backend.calls.writes,writes);
+ }
+ for(const scope of [{teamId:'TOTHER',userId:f.owner.userId},{teamId:f.owner.teamId,userId:'UOTHER'}]){
+  assert.match(await f.run(`delete ${target.id} confirm`,{owner:scope}),/not found/);assert.equal(f.backend.data.get(f.key('state')),before);
+ }
+ // The recovery path must also remain usable when both counters are saturated.
+ saved.revision=Number.MAX_SAFE_INTEGER;for(const r of saved.records)r.revision=Number.MAX_SAFE_INTEGER;f.backend.data.set(f.key('state'),JSON.stringify(saved));
+ let expected=structuredClone(saved.records);
+ for(const target of saved.records){const previous=f.backend.data.get(f.key('state'))!,count=f.backend.calls.writes,reads=f.calls.readContext;
+  assert.match(await f.run(`delete ${target.id} confirm`),/^Deleted/);expected=expected.filter((r:any)=>r.id!==target.id);const current=await state(f);
+  assert.deepEqual(current,{version:1,revision:Number.MAX_SAFE_INTEGER,records:expected});assert.ok(Buffer.byteLength(f.backend.data.get(f.key('state'))!)<Buffer.byteLength(previous));assert.equal(f.backend.calls.writes,count+1);assert.equal(f.calls.readContext,reads);
+  assert.deepEqual([...f.backend.data].filter(([k])=>k!==f.key('state')),sources);
+ }
+});
+
+test('legacy root recovery binds its intended record across mutation/deletion races and preserves malformed raw data',async()=>{
+ const {f,saved}=await legacyAggregate(),target=saved.records[0],other=saved.records[1],original=f.backend.compareSet;
+ for(const mode of ['target-mutation','target-delete','unrelated-mutation','unrelated-delete']){
+  f.backend.data.set(f.key('state'),JSON.stringify(saved));let once=true,winning:any;const conflicts=f.backend.calls.conflicts;
+  f.backend.compareSet=async(k,p,n,ttl)=>{
+   if(once){once=false;const key=mode.startsWith('target')?target.id:other.id;
+    if(mode.endsWith('delete'))assert.match(await f.run(`delete ${key} confirm`),/^Deleted/);
+    else await f.store().update('state',saved,(raw:any)=>{
+     // Simulate a schema-valid legacy writer using the real scoped CAS store;
+     // ordinary feature edits correctly remain blocked above the feature quota.
+     const next=structuredClone(raw),r=next.records.find((r:any)=>r.id===key);if(r.kind==='range')r.start='2026-09-30';else r.task='Legacy concurrent edit';r.revision++;next.revision++;return {value:next,result:null};
+    });winning=await state(f);
+   }return original(k,p,n,ttl);
+  };
+  const out=await f.run(`delete ${target.id} confirm`);assert.equal(f.backend.calls.conflicts,conflicts+1);
+  if(mode.startsWith('target')){assert.match(out,/changed|not found/);assert.deepEqual(await state(f),winning);}
+  else{assert.match(out,/^Deleted/);assert.deepEqual(await state(f),{...winning,revision:winning.revision+1,records:winning.records.filter((r:any)=>r.id!==target.id)});}
+ }
+ f.backend.compareSet=original;
+ for(const mutate of [(s:any)=>s.unrecognized=true,(s:any)=>s.records[0].unrecognized=true,(s:any)=>s.records[0].revision=0]){
+  const bad=structuredClone(saved);mutate(bad);const raw=' \n'+JSON.stringify(bad)+' \t';f.backend.data.set(f.key('state'),raw);const writes=f.backend.calls.writes;
+  for(const command of ['list',`delete ${target.id} confirm`]){assert.doesNotMatch(await f.run(command),/^Deleted|^Current list/);assert.equal(f.backend.data.get(f.key('state')),raw);assert.equal(f.backend.calls.writes,writes);}
+ }
 });
