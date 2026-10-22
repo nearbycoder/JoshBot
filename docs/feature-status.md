@@ -2,11 +2,11 @@
 
 The baseline sections below record the October 22, 2026 refresh against implementation, automated tests, and production configuration. Their live observations and test counts are historical evidence for that refresh, not verification of the later personal-agent expansion. “Implemented” describes code availability; Slack permissions, subscriptions, credentials, and storage determine what is usable in a particular workspace.
 
-## Twenty personal agents on the development branch — not deployed
+## Twenty private personal agents
 
-Use `/nobo-help agent` or **NoBo Home → More → Personal agents** to discover all 20, then `/nobo-help agent <name> help` for syntax. All 20 modules and routes, scoped storage limits, and real source adapters are integrated in development. Remaining fixes, independent reviews, and validation are still in progress; this is **not a production release or final acceptance**. The [personal-agent guide](agent-features/README.md) has workflows and limits, and the [expansion roadmap](personal-agent-expansion.md) tracks release readiness.
+Use `/nobo-help agent` or **NoBo Home → More → Personal agents** to discover all 20, then `/nobo-help agent <name> help` for syntax. All 20 modules, private routes, scoped storage limits, and source adapters are implemented and independently reviewed. Release validation passed with **1,093 tests, zero skips**, typecheck, production build, and a dependency audit with zero vulnerabilities. The [personal-agent guide](agent-features/README.md) has workflows and limits, the [expansion record](personal-agent-expansion.md) holds validation evidence, and [PR #58](https://github.com/nearbycoder/JoshBot/pull/58) tracks rollout status.
 
-Each row below is available in development code through the private `/nobo-help agent` route. Append the name and command shown:
+Each row below uses the private `/nobo-help agent` route. Append the name and command shown:
 
 | Name | First command after the name |
 | --- | --- |

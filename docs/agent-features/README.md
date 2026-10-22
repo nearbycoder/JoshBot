@@ -2,7 +2,7 @@
 
 Use `/nobo-help agent` to see the catalog, or open **NoBo Home → More → Personal agents**. Each command uses `/nobo-help agent <name> <command>`, and `<name> help` explains its syntax.
 
-All 20 features, private routes, storage limits, and source adapters are integrated on the development branch. Remaining fixes, independent review, and release validation are in progress; the expansion is **not deployed** and has not reached final acceptance. Follow [release status and research](../personal-agent-expansion.md). Replies are private. Saved data is separated by Slack workspace, user, and feature.
+All 20 features, private routes, storage limits, and source adapters are implemented and independently reviewed. The complete release checks passed with 1,093 tests and zero skips. See [release evidence and research](../personal-agent-expansion.md) and [PR #58](https://github.com/nearbycoder/JoshBot/pull/58) for rollout status. Replies are private. Saved data is separated by Slack workspace, user, and feature.
 
 ## Find a feature
 

@@ -31,13 +31,13 @@ Use `/nobo-help agent` to browse the 20 personal agents, `/nobo-help agent <name
 - Utility commands: `/nobo-help`, `/nobo-status`, and `/nobo-dad-joke`.
 - Ops and safety: Slack signature verification, retry suppression, duplicate event locks, admin allow/deny controls, audit log, Redis status, async error recording, `/healthz`, and CI checks.
 
-## Personal agents on the development branch
+## Twenty private personal agents
 
 Start with `/nobo-help agent morning-brief brief`, capture a thought with `/nobo-help agent inbox capture Review the launch draft`, or search your available records with `/nobo-help agent recall search launch`. See the [20-feature command guide](docs/agent-features/README.md) for planning, writing, reading, research, memory review, workflows, and the remaining commands. Replies are private; the shared runtime requires Redis for all non-help commands. Model-assisted commands use the existing configured model, and research uses the existing Exa integration.
 
 Connected context includes your private toolbox records, confirmed calendar imports, and eligible approved memory cards. Legacy follow-ups, reminders, monitors, and digests cover only **your records in the channel where you run the command**. Saved artifacts and legacy personal memory are not connected to these agents; memory-review legacy import currently returns no candidates. Capture and confirm facts directly instead. Missing references describe the current permitted snapshot, not proof of deletion. Maintainers can find exact bounds and date semantics in the [source contract](docs/agent-features/context.md).
 
-These features run on demand. Calendar input is an explicitly confirmed ICS snapshot, recall is lexical, and workflow continuation is manual. This expansion adds no calendar OAuth, autonomous sending, vector search, new recurring jobs, or arbitrary tool execution. Its registration and local test coverage do not establish deployment or final acceptance.
+These features run on demand. Calendar input is an explicitly confirmed ICS snapshot, recall is lexical, and workflow continuation is manual. This expansion adds no calendar OAuth, autonomous sending, vector search, new recurring jobs, or arbitrary tool execution. All 20 features and the shared runtime passed independent review; the complete release checks passed 1,093 tests with zero skips. See [release evidence](docs/personal-agent-expansion.md) and [PR #58](https://github.com/nearbycoder/JoshBot/pull/58) for rollout status.
 
 ## Stack
 
@@ -189,7 +189,7 @@ NoBo publishes a Slack App Home dashboard on `app_home_opened`. It includes:
 - **Coming up**: the next three reminders, with controls behind Manage
 - **Recent documents**: the three most recently updated documents, with Browse for more
 - **Watching for you**: a short monitor preview, shown only when needed
-- **More**: focused views for personal memory, channel activity, monitors, model settings, integrations, and a command guide; the development branch also adds **Personal agents** discovery
+- **More**: focused views for personal memory, channel activity, monitors, model settings, integrations, a command guide, and **Personal agents** discovery
 - Preferences and Refresh controls; dates use the user's saved timezone
 
 The Home page uses native Slack Block Kit controls and avoids repeating settings or a large command reference in the main view. Empty and unavailable-data states are distinct. Existing Home setup and permissions are unchanged; reopen Home after deployment to load the new layout.
@@ -522,7 +522,7 @@ NoBo supports explicit Slack skills triggered with `@NoBo <skill> ...`.
 Current skills:
 
 - `/nobo-help`
-- `/nobo-help agent [<name> <command>]` (20-feature development expansion; not deployed)
+- `/nobo-help agent [<name> <command>]` (20 private personal-agent features)
 - `/nobo-status`
 - `/nobo-search <query>`
 - `/nobo-listen [on|off|status]`

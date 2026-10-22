@@ -1,6 +1,6 @@
 # Personal-agent expansion — 2026-10-22
 
-Status: all 20 modules, private routes, storage limits, and source adapters are integrated on the development branch; **not deployed and not finally accepted**. Twenty implementation assignments were launched in isolated worktrees. Remaining fixes and independent re-reviews are in progress. Registration and earlier validation do not establish release readiness; complete the validation below after the final changes.
+All 20 modules, private routes, storage limits, and source adapters are implemented and independently reviewed. Twenty implementation assignments ran in isolated worktrees, followed by integration fixes and independent reviews. The final implementation passed the release checks below. [PR #58](https://github.com/nearbycoder/JoshBot/pull/58) tracks merge and deployment status; repository validation does not substitute for verifying the running deployment.
 
 Start with `/nobo-help agent`, `/nobo-help agent <id> help`, or **NoBo Home → More → Personal agents**. The [user guide](agent-features/README.md) covers all 20 commands; the [source contract](agent-features/context.md) describes connected data and limits.
 
@@ -51,7 +51,7 @@ These are product design choices inspired by current first-party descriptions, n
 
 ## Per-feature acceptance scope
 
-The following scopes retain the research rationale and intended acceptance criteria. Implemented command syntax, source availability, and limits live in the individual guides; these scopes are not a record of final acceptance. In particular, artifacts and legacy-memory imports remain outside the connected sources.
+The following scopes retain the research rationale and acceptance criteria. Implemented command syntax, source availability, and limits live in the individual guides. Artifacts and legacy-memory imports remain outside the connected sources.
 
 ### 1. Personal morning briefing (`morning-brief`)
 
@@ -136,7 +136,9 @@ Build an on-demand private review of the caller-owned reminders, monitors and di
 
 ## Verification
 
-Release validation remains open. Earlier full-suite, build, and dependency-audit results preceded later changes; targeted connected-source checks are narrower evidence and do not replace a final run. Do not promote an earlier count to a current pass claim.
+On Node 24, implementation commit `1df6c8ab7a2c377aff793c8139dec3ed4b75caef` passed **1,093 tests with zero failures or skips**, typecheck, the production build, and a full dependency audit with **zero vulnerabilities**. CI's Test and build check passed for the same commit. Subsequent release-documentation edits do not change the tested implementation.
+
+Independent reviews approved all 20 modules and the shared runtime/source integration. Review regressions cover cancellation before initial policy evaluation, stale writes and request receipts, UTF-8 quota headroom, calendar points and all-day boundaries, date-only deadlines, complete travel/research pagination, and reopening filtered recall results at supported source limits.
 
 From the integrated checkout with Node 24 and the documented local test prerequisites:
 
@@ -150,4 +152,4 @@ git diff --check
 
 Run affected feature suites and connected-source/startup/integration tests after relevant fixes, then complete independent review and the full release checks on the final code. Verify all 20 registrations, private routing, workspace/user isolation, signed-current-channel legacy boundaries, approved-memory eligibility, calendar consumers, cancellation, and storage lifecycle limits. Documentation changes also need internal-link and whitespace checks.
 
-Feature/source tests use fake services and in-memory storage; repository suites may have their own local Redis/server prerequisites. These checks do not establish live Slack delivery, production service configuration, or model-output quality. Any deployment and live acceptance remain separate release work. No deployment has occurred for this expansion.
+Feature/source tests use fake services and in-memory storage. The full release run also used isolated local Redis for concurrency, leases and request receipts, plus signed local Slack fixtures. It made no live model calls or Slack sends for this expansion. Deployment identity, service health, and production configuration require separate verification recorded with the release; model-output quality and workspace-specific Slack behavior remain outside automated acceptance.
