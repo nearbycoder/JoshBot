@@ -51,3 +51,14 @@ test("corrupt shapes and raw null stay untouched, separate owner/workspace canno
  for(const raw of ["null","{broken"]){f.backend.data.set(f.key("state"),raw);await f.run(`delete ${id} confirm`);assert.equal(f.backend.data.get(f.key("state")),raw);}f.backend.data.set(f.key("state"),JSON.stringify(original));for(const owner of [{teamId:"TOTHER",userId:f.owner.userId},{teamId:f.owner.teamId,userId:"UOTHER"}])assert.match(await f.run(`show ${id}`,{owner}),/not found/);assert.deepEqual(f.calls,{generate:0,search:0,readContext:0});
 });
 test("metadata exact catalog parity and bounded grammar",()=>{const e=JSON.parse(readFileSync(new URL("../docs/personal-agent-50-catalog.json",import.meta.url),"utf8")).find((x:any)=>x.id===feature.id);for(const k of ["id","title","description","group","keywords","example","resourceBudgets"] as const)assert.deepEqual(feature[k],e[k]);assert.ok(feature.help.length<=3500);});
+
+test("explicit meter correction establishes the next monotonic sequence and its reason follows the service baseline",async()=>{
+ const f=createAgentFeatureFixture(feature),id=await create(f);await f.run(`edit ${id} | intervalUsage | 100`);await f.run(`service ${id} | 2026-07-01 | 1000 | Old meter`);
+ assert.match(await f.run(`correct ${id} | 500 | Meter replaced and reading confirmed`),/^Saved/);
+ assert.match(await f.run(`meter ${id} | 600`),/^Saved/);
+ assert.equal((await record(f,id)).latestReason,"Meter replaced and reading confirmed");
+ assert.match(await f.run(`service ${id} | 2026-10-22 | 650 | New meter service`),/^Saved/);
+ const r=await record(f,id);assert.equal(r.services[1].correctionReason,"Meter replaced and reading confirmed");assert.equal(r.latestReason,"");
+ assert.match(await f.run(`meter ${id} | 700`),/^Saved/);assert.match(await f.run("due 2026-10-22"),/Usage threshold 750; latest 700; 50 usage units remaining/);
+ const raw=f.backend.data.get(f.key("state"));assert.match(await f.run(`meter ${id} | 699`),/Decreasing meter requires/);assert.equal(f.backend.data.get(f.key("state")),raw);
+});
