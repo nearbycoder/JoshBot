@@ -9,7 +9,10 @@ export type AgentContextItem = {
   kind: AgentContextKind;
   title: string;
   text: string;
+  /** Source update instant; the production adapter supplies an explicit offset. */
   updatedAt?: string;
+  /** An offset timestamp or a YYYY-MM-DD calendar label (for example a goal deadline).
+   * Preserve date-only labels without assigning an instant or shifting their day. */
   dueAt?: string;
   status?: string;
   sourceUrl?: string;
