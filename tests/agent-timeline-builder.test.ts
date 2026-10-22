@@ -55,7 +55,7 @@ test("maximum counts and lossless revision-bound show/view pages, including fina
   const f = createAgentFeatureFixture(feature); await f.run("create Dense chronology"); const id = (await state(f)).records[0].id;
   for (let i=0;i<30;i++) assert.match(await f.run(`entry ${id} add E${i} | unknown | S | ${i === 29 ? 'LAST 界😀 é '+escape('"\\'.repeat(50)) : "x"}`), /Saved entry/);
   const r = (await state(f)).records[0];
-  assert.match(await f.run(`entry ${id} add excess | unknown | s | x`), /Invalid saved/);
+  assert.match(await f.run(`entry ${id} add excess | unknown | s | x`), /Maximum 30/);
   for (const verb of ["show","view"]) {
     const walked = await pages(f, `${verb} ${id}`); assert.ok(walked.count>1); assert.match(walked.all, /LAST 界😀 é/);
     const next = walked.first.match(/Next: (.+)/)![1].slice(prefix.length);
@@ -99,4 +99,8 @@ test("UTF8 admission reserves worst-case disputes; lifecycle and removal remain 
   assert.ok(lifecycle>10); assert.ok(Buffer.byteLength(f.backend.data.get(f.key("state"))!)>32768); assert.ok(Buffer.byteLength(f.backend.data.get(f.key("state"))!)<=49152);
   for(const r of (await state(f)).records) { assert.ok(Buffer.byteLength(await f.run(`export ${r.id}`))<=24576); await f.run(`delete ${r.id} confirm`); }
   assert.equal((await state(f)).records.length,0);
+});
+test("confirmed whole-timeline deletion remains available at the valid revision ceiling",async()=>{
+ const f=createAgentFeatureFixture(feature);await f.run("create Ceiling");const s=await state(f),id=s.records[0].id;s.records[0].revision=999999999;f.backend.data.set(f.key("state"),JSON.stringify(s));
+ assert.match(await f.run(`delete ${id} confirm`),/Deleted privately/);assert.equal((await state(f)).records.length,0);
 });

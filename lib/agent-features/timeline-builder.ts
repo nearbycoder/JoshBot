@@ -90,9 +90,9 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const expected = key === undefined ? undefined : get(s, key).revision;
     return ctx.store.update("state", initial, raw => {
       const state = validate(raw), r = key === undefined ? undefined : get(state, key);
-      if (r) { assertRevision(r.revision, expected); if (r.revision === MAX_REV) throw new Error("Revision limit reached; export then delete this record."); }
+      if (r) assertRevision(r.revision, expected);
       const detail = change(state, r);
-      if (r && state.records.includes(r)) r.revision++;
+      if (r && state.records.includes(r)) { if (r.revision === MAX_REV) throw new Error("Revision limit reached; export then delete this record."); r.revision++; }
       validate(state); quota(state, content);
       return { value: state, result: `${detail}\n${serializedBytes(state)}/49152 state bytes.\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `view ${key}` : "list"}` };
     });
@@ -105,15 +105,15 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   if ((m = command.match(/^(show|view) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : view(r), parsePage(m[3]), m[4]); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new Error("Record exceeds export limit; retrieve show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete timeline and all observations/orders: ${route} delete ${key} confirm`; return save(key, state => { state.records = state.records.filter(r => r.id !== key); return `Deleted privately: ${key}`; }, false); }
-  if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { state.records.push({ id: newId, title, revision: 1, entries: [], orders: [] }); return `Saved privately: ${newId}\nInspect: ${route} view ${newId}`; }); }
+  if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 12) throw new Error("Maximum 12 timelines. Export/delete one explicitly."); state.records.push({ id: newId, title, revision: 1, entries: [], orders: [] }); return `Saved privately: ${newId}\nInspect: ${route} view ${newId}`; }); }
   if ((m = command.match(/^edit (\S+)\s*\|([\s\S]+)$/))) { const [, key, input] = m, [title] = fields(input, [160]); return save(key, (_, r) => { r!.title = title; return `Updated timeline: ${key}`; }); }
   if ((m = command.match(/^entry (\S+) (add|edit) ([\s\S]+)$/))) {
     const [, key, action, input] = m, f = fields(input, action === "add" ? [160, 29, 200, 600] : [36, 160, 29, 200, 600]), eid = action === "edit" ? f.shift()! : newId, [label, dateInput, sourceLabel, excerpt] = f, parsedDate = parseDate(dateInput);
-    return save(key, (_, r) => { if (action === "add") r!.entries.push({ id: eid, label, date: parsedDate, sourceLabel, excerpt, dispute: null }); else Object.assign(getEntry(r!, eid), { label, date: parsedDate, sourceLabel, excerpt }); return `Saved entry: ${eid}. Existing disputes/orders are retained for review.`; });
+    return save(key, (_, r) => { if (action === "add") { if (r!.entries.length === 30) throw new Error("Maximum 30 observations; remove one explicitly."); r!.entries.push({ id: eid, label, date: parsedDate, sourceLabel, excerpt, dispute: null }); } else Object.assign(getEntry(r!, eid), { label, date: parsedDate, sourceLabel, excerpt }); return `Saved entry: ${eid}. Existing disputes/orders are retained for review.`; });
   }
   if ((m = command.match(/^(before|before-edit) (\S+) ([\s\S]+)$/))) {
     const [, action, key, input] = m, f = fields(input, action === "before" ? [36, 36] : [36, 36, 36]), oid = action === "before-edit" ? f.shift()! : newId;
-    return save(key, (_, r) => { const next = { id: oid, before: f[0], after: f[1] }; if (action === "before") r!.orders.push(next); else { const e = r!.orders.find(e => e.id === oid); if (!e) throw new Error("Order ID not found."); Object.assign(e, next); } return `Saved order: ${oid}`; });
+    return save(key, (_, r) => { const next = { id: oid, before: f[0], after: f[1] }; if (action === "before") { if (r!.orders.length === 50) throw new Error("Maximum 50 order constraints; remove one explicitly."); r!.orders.push(next); } else { const e = r!.orders.find(e => e.id === oid); if (!e) throw new Error("Order ID not found."); Object.assign(e, next); } return `Saved order: ${oid}`; });
   }
   if ((m = command.match(/^(dispute|dispute-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, [eid, note] = fields(input, [36, 256]); return save(key, (_, r) => { const e = getEntry(r!, eid); if ((action === "dispute") !== (e.dispute === null)) throw new Error("Use dispute for a new note, dispute-edit to replace it, or remove TIMELINE dispute ENTRY confirm."); e.dispute = note; return `Saved dispute on entry: ${eid}. No truth winner selected.`; }, false); }
   if ((m = command.match(/^remove (\S+) (entry|order|dispute) (\S+) confirm$/))) {
