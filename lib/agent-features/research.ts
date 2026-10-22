@@ -118,8 +118,17 @@ function storageUsage(state: State): string {
   return `Storage: ${jsonBytes(state)} UTF-8 JSON bytes used; ${reservedBytes(state)} bytes including future refresh space; quota ${MAX_STATE_BYTES}. Free space with delete <id> confirm.`;
 }
 
+function escapeEntities(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 function escape(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/`/g, "'");
+  return escapeEntities(value).replace(/`/g, "'");
+}
+
+function displayUrl(value: string): string {
+  // Preserve query values and existing percent escapes; text substitutions change resources.
+  return escapeEntities(value.replace(/`/g, "%60"));
 }
 
 function display(value: string, max: number): string {
@@ -142,7 +151,10 @@ function publicationDate(value: unknown): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return undefined;
   if (!publicationDate(value.slice(0, 10))) return undefined;
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+  if (!Number.isFinite(date.getTime())) return undefined;
+  const normalized = date.toISOString();
+  // Offsets can cross the four-digit year boundary even when the input is in range.
+  return iso(normalized) ? normalized : undefined;
 }
 
 function publicUrl(value: unknown): string | undefined {
@@ -156,7 +168,7 @@ function publicUrl(value: unknown): string | undefined {
     if (/^(127|10|0)\.|^169\.254\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\./.test(host)) return undefined;
     url.hash = "";
     const normalized = url.toString();
-    return escape(normalized).length <= MAX_URL ? normalized : undefined;
+    return escapeEntities(normalized).length <= MAX_URL ? normalized : undefined;
   } catch {
     return undefined;
   }
@@ -253,7 +265,8 @@ function collectSources(value: unknown, at: string): Source[] {
   for (const item of value.slice(0, MAX_SOURCES)) {
     if (!record(item)) continue;
     const url = publicUrl(item.url);
-    if (!url || typeof item.text !== "string") continue;
+    // Apply the rendered limit to incoming sources without invalidating older stored URLs.
+    if (!url || displayUrl(url).length > MAX_URL || typeof item.text !== "string") continue;
     const snippet = clean(characterPrefix(item.text, MAX_SNIPPET));
     if (!snippet) continue;
     const id = sourceId(url);
@@ -338,7 +351,7 @@ function findings(snapshot: Snapshot, compact = false): string {
 function sourceList(snapshot: Snapshot, date: (value: string) => string, compact = false): string {
   return ["Sources (URLs supplied by search, never by the generator):", ...snapshot.sources.map((s) => [
     `[${s.id}] ${display(s.title, compact ? 100 : 160)}`,
-    escape(s.url),
+    displayUrl(s.url),
     `Observed: ${date(s.observedAt)}; published: ${s.publishedAt ?? "unknown"}`,
     `Excerpt: ${display(s.snippet, compact ? 120 : 600)}`,
   ].join("\n"))].join("\n\n");

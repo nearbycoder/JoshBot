@@ -661,3 +661,103 @@ test("oversized Unicode synthesis is rejected by bytes while preserving an exist
   assert.match(output, /no changes were saved/);
   assert.deepEqual(await state(context), before);
 });
+
+test("out-of-range normalized publication dates cannot poison new or refreshed dossiers", async (t) => {
+  const boundaries = [
+    ["upper", "9999-12-31T23:59:59-01:00"],
+    ["lower", "0000-01-01T00:00:00+01:00"],
+  ] as const;
+  for (const [boundary, publishedAt] of boundaries) {
+    for (const mode of ["research", "refresh"] as const) await t.test(`${boundary} year boundary on ${mode}`, async () => {
+      const { context, generations } = harness([sourceA]);
+      const unrelated = await create(context, "An unrelated existing dossier?");
+      const previous = mode === "refresh" ? await create(context, "A dossier to refresh?") : undefined;
+      context.services.search = async () => [{ ...sourceA, publishedAt }];
+      const output = await feature.execute(previous ? `refresh ${previous.id}` : "research A fresh boundary-date dossier?", context);
+      assert.match(output, mode === "research" ? /^Saved dossier/ : /^Refreshed dossier/);
+      assert.match(output, /published: unknown/);
+      const after = await state(context);
+      const changed = after.dossiers.find((d) => d.id !== unrelated.id)!;
+      assert.ok(changed);
+      assert.equal(changed.current.sources[0]!.publishedAt, undefined);
+      assert.equal(JSON.parse(generations.at(-1)!.input).sources[0].publishedAt, undefined);
+      assert.deepEqual(after.dossiers.find((d) => d.id === unrelated.id), unrelated);
+      if (previous) {
+        assert.equal(changed.id, previous.id);
+        assert.equal(changed.revision, 2);
+        assert.deepEqual(changed.previous, previous.current);
+        assert.match(await feature.execute(`compare ${changed.id}`, context), /published: unknown/);
+      }
+      const listed = await feature.execute("list", context);
+      assert.ok(listed.includes(unrelated.id) && listed.includes(changed.id));
+      assert.match(await feature.execute(`show ${changed.id}`, context), /published: unknown/);
+      assert.match(await feature.execute(`show ${unrelated.id}`, context), /published: 2026-10-01/);
+      assert.match(await feature.execute(`delete ${changed.id} confirm`, context), /^Deleted research/);
+      assert.deepEqual((await state(context)).dossiers, [unrelated]);
+      assert.match(await feature.execute(`delete ${unrelated.id} confirm`, context), /^Deleted research/);
+      assert.match(await feature.execute("list", context), /No research dossiers yet/);
+    });
+  }
+});
+
+test("publication timestamps that normalize within the supported year boundaries remain readable", async () => {
+  const { context } = harness([
+    { ...sourceA, publishedAt: "9999-12-31T23:59:59+01:00" },
+    { ...sourceB, publishedAt: "0000-01-01T00:00:00-01:00" },
+  ]);
+  const saved = await create(context);
+  assert.equal(saved.current.sources[0]!.publishedAt, "9999-12-31T22:59:59.000Z");
+  assert.equal(saved.current.sources[1]!.publishedAt, "0000-01-01T01:00:00.000Z");
+  assert.ok((await feature.execute("list", context)).includes(saved.id));
+  const shown = await feature.execute(`show ${saved.id}`, context);
+  assert.ok(shown.includes("9999-12-31T22:59:59.000Z") && shown.includes("0000-01-01T01:00:00.000Z"));
+  assert.match(await feature.execute(`refresh ${saved.id}`, context), /^Refreshed dossier/);
+  assert.match(await feature.execute(`delete ${saved.id} confirm`, context), /^Deleted research/);
+});
+
+test("rendered source URLs preserve backticks, reserved query characters and existing percent escapes", async (t) => {
+  const urls = [
+    "https://example.org/search?q=`code`",
+    "https://example.org/search?q=`code`&plus=a+b&encodedPlus=a%2Bb&punct=!$'()*,:;@?&empty=&repeat=1&repeat=2",
+    "https://example.org/search?q=%60code%60&literal=%2560&token=a%2Bb%26c%3Dd%25&html=%26amp%3B",
+    "https://example.org/a%2Fb?reserved=%2F%3F%23%5B%5D%40%21%24%26%27%28%29%2A%2B%2C%3B%3D&repeat=a&repeat=b&plus=a+b&empty=",
+  ];
+  for (const url of urls) await t.test(url, async () => {
+    const original = new URL(url);
+    const { context } = harness([{ ...sourceA, url, title: "Use `code` & context" }]);
+    const initial = await feature.execute("research A topic with query characters?", context);
+    assert.match(initial, /^Saved dossier/);
+    const saved = (await state(context)).dossiers[0]!;
+    const shown = await feature.execute(`show ${saved.id}`, context);
+    const refreshed = await feature.execute(`refresh ${saved.id}`, context);
+    assert.match(refreshed, /^Refreshed dossier/);
+    const history = await feature.execute(`compare ${saved.id}`, context);
+    const other = await create(context, "Another topic with the same source?");
+    const compared = await feature.execute(`compare ${saved.id} ${other.id}`, context);
+    for (const output of [initial, shown, refreshed, history, compared]) {
+      assert.ok(output.includes("Use 'code' &amp; context"), "Human-text escaping must stay unchanged");
+      const renderedUrls = output.split("\n").filter((line) => line.startsWith("https://"));
+      assert.ok(renderedUrls.length > 0);
+      for (const rendered of renderedUrls) {
+        assert.ok(!rendered.includes("`"));
+        if (original.searchParams.get("q") === "`code`") assert.ok(rendered.includes("q=%60code%60"));
+        const actual = new URL(rendered.replace(/&amp;/g, "&"));
+        assert.equal(actual.origin, original.origin);
+        assert.equal(actual.pathname, original.pathname);
+        assert.deepEqual([...actual.searchParams], [...original.searchParams]);
+      }
+    }
+    const updated = (await state(context)).dossiers.find((d) => d.id === saved.id)!;
+    assert.equal(updated.current.sources[0]!.url, original.href);
+    assert.equal(updated.current.sources[0]!.id, saved.current.sources[0]!.id);
+    assert.equal(updated.previous!.sources[0]!.url, original.href);
+  });
+});
+
+test("incoming URL bounds account for percent-encoded backticks without saving partial research", async () => {
+  const { context, generations } = harness([{ ...sourceA, url: `https://example.org/search?q=${"`".repeat(400)}` }]);
+  const output = await feature.execute("research A URL that grows during safe rendering?", context);
+  assert.match(output, /No usable public-web sources/);
+  assert.equal(generations.length, 0);
+  assert.equal(await context.store.read("dossiers"), null);
+});
