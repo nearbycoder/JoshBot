@@ -53,7 +53,8 @@ const rangeSchema=v.strictObject({start:daySchema,end:daySchema});
 const configSchema=v.strictObject({range:v.nullable(rangeSchema),work:v.nullable(workSchema),labelBytes:v.pipe(v.number(),v.integer(),v.minValue(0),v.maxValue(80))});
 const millis=v.pipe(v.number(),v.integer(),v.check(n=>Number.isSafeInteger(n)&&Number.isFinite(new Date(n).getTime())&&new Date(n).toISOString().length===24));
 // Compact columns are documented/exported; all 100 intervals survive, including points and transparent events.
-const eventSchema=v.tuple([v.pipe(v.string(),v.regex(/^[0-9a-f]{24}$/)),millis,millis,v.pipe(v.number(),v.integer(),v.minValue(0),v.maxValue(7)),v.pipe(v.number(),v.integer(),v.minValue(0),v.maxValue(99)),text(80),millis,v.nullable(daySchema),v.nullable(daySchema)]);
+// Check the stored arity before tuple parsing can discard unknown columns.
+const eventSchema=v.pipe(v.unknown(),v.check(input=>Array.isArray(input)&&input.length===9),v.strictTuple([v.pipe(v.string(),v.regex(/^[0-9a-f]{24}$/)),millis,millis,v.pipe(v.number(),v.integer(),v.minValue(0),v.maxValue(7)),v.pipe(v.number(),v.integer(),v.minValue(0),v.maxValue(99)),text(80),millis,v.nullable(daySchema),v.nullable(daySchema)]));
 const snapshotSchema=v.strictObject({capturedAt:instantSchema,captureDay:daySchema,timezone:zoneSchema,config:configSchema,
  coverage:v.picklist(['complete-confirmed-import','empty-unverified']),fingerprint:v.pipe(v.string(),v.regex(/^e1:[0-9a-f]{64}$/)),sourceStamp:v.pipe(v.string(),v.regex(/^[0-9a-f]{64}$/)),
  zones:v.pipe(v.array(zoneSchema),v.maxLength(100)),events:v.pipe(v.array(eventSchema),v.maxLength(100))});

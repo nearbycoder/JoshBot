@@ -80,3 +80,25 @@ test('snapshot capacity reserves replacements after admission saturation; fields
  const key=keys[0];for(const field of ['title','range','settings','snapshot','labels'])assert.match(await f.run(`clear ${key} ${field} confirm`),/Saved privately/);
  for(const r of (await state(f)).records)assert.match(await f.run(`delete ${r.id} confirm`),/Deleted privately/);
 });
+
+test('persisted ICS tuples reject extra or missing columns and unknown own fields before any read or mutation',async()=>{
+ const {f,cal}=fixture();await importEvents(cal,[timed('strict','20261026T140000Z','20261026T150000Z')]);
+ const key=id(await f.run('create Strict | 2026-10-26 | 2026-10-26'));assert.match(await f.run(`analyze ${key}`),/Total busy 60/);
+ const good=await state(f);
+ const variants=[
+  (s:any)=>s.records[0].snapshot.events[0].push('unrecognized column'),
+  (s:any)=>s.records[0].snapshot.events[0].push(null),
+  (s:any)=>s.records[0].snapshot.events[0].push({private:'retained'}),
+  (s:any)=>s.records[0].snapshot.events[0].pop(),
+  (s:any)=>s.records[0].snapshot.events[0].splice(1,1),
+  (s:any)=>s.records[0].snapshot.events[0]={...s.records[0].snapshot.events[0],extra:true},
+  (s:any)=>s.extra=true,(s:any)=>s.records[0].extra=true,
+  (s:any)=>s.records[0].snapshot.extra=true,(s:any)=>s.records[0].snapshot.config.extra=true,
+ ];
+ for(const mutate of variants){const bad=structuredClone(good);mutate(bad);const raw=' \n'+JSON.stringify(bad)+'\t';f.backend.data.set(f.key('state'),raw);
+  const writes=f.backend.calls.writes,reads=f.calls.readContext;
+  for(const command of ['list',`show ${key}`,`report ${key}`,`export ${key}`,`edit ${key} title | Valid edit`,`delete ${key} confirm`,`analyze ${key}`]){
+   assert.match(await f.run(command),/Invalid saved meeting-load schema/);assert.equal(f.backend.data.get(f.key('state')),raw);assert.equal(f.backend.calls.writes,writes);assert.equal(f.calls.readContext,reads);
+  }
+ }
+});
