@@ -139,12 +139,35 @@ Pipes separate fields and cannot occur inside them. Dates use `YYYY-MM-DD`;
 but each may occur only once. Subject/key cannot be changed in place: capture a
 replacement under the desired key and explicitly forget the old card.
 
-The workspace holds at most 100 cards without silent eviction. Each card retains
-at most six revisions. Subjects and keys are at most 80 characters each; facts
-are at most 1,200; sources at most 300. Commands are at most 4,000 characters.
-Plain-text responses are capped below Slack's 28,000-character target. There is
-no automatic cleanup: use `forget` to remove a card and its retained history.
-Malformed persisted data is rejected without resetting it.
+The workspace holds at most 100 cards without silent eviction, subject to a
+**479,000-byte serialized UTF-8 quota including reserved history space**. `list`
+shows both actual saved bytes and the budget including reserves. Unicode and
+JSON escaping count toward the byte quota; character count alone does not
+predict capacity. The quota stays below the parent's 480,000-byte feature target
+and 512,000-byte hard limit for each stored JSON value.
+
+Before accepting a capture, import, or correction, the feature reserves enough
+space for every card's six retained revisions using its largest current or
+retained claim, complete confirmation timestamps, and maximum revision-number
+width. Accepted cards can therefore be confirmed repeatedly and fill or roll
+their six-entry history without exhausting storage. A correction that needs more
+space may be rejected; its previous claim and history remain unchanged. Cards
+and history are never silently evicted to make a rejected write fit.
+
+When the quota is reached, use `list`, inspect a card with `show <id>`, and remove
+an unneeded card with `forget <id> <revision> confirm` before retrying. Deletion
+releases both that card's saved bytes and its reservation. Shortening a claim
+may not immediately release its full reservation while larger older revisions
+remain in history. Deletion also remains available if an older feature version
+stored a valid state above the new reservation budget, provided the resulting
+serialized value fits the 479,000-byte quota.
+
+Each card retains at most six revisions. Subjects and keys are at most 80
+characters each; facts are at most 1,200; sources at most 300. Commands are at
+most 4,000 characters. Replies are capped at 27,500 characters, below the parent's
+28,000-character output limit. There is no automatic cleanup: `forget` removes
+a card and its retained history. Malformed persisted data is rejected without
+resetting it.
 
 There are no model calls, semantic conflict guesses, automatic legacy sync,
 reminders, external writes, or outbound messages. Claim text and source content
@@ -162,12 +185,22 @@ instructions or evidence of an external action.
    storage key is `cards`, with schema version `1`. It must never resolve to
    legacy/global keys. UUIDs and timestamps are generated outside the pure,
    synchronous, retryable store transforms. The parent owns identity/access
-   checks, request deduplication, and persistence error handling.
+   checks, request deduplication, and persistence error handling. The feature
+   checks serialized UTF-8 bytes and its lifecycle reservation inside the atomic
+   transform, so concurrent additions cannot bypass the quota. The schema and
+   sole storage key are unchanged.
 3. For import, implement `services.readContext(["memory"])` with only owned
    legacy candidates, using stable unique IDs and complete candidate text. Return
    at most 500 records per call; this module rejects larger responses rather than
    silently omitting candidates. No other context kinds, generation, or search
    services are needed. Candidate IDs must remain stable across listing/import.
+   Each invocation uses zero generate calls, zero searches, and at most one
+   context read, fitting the runtime's eight-generation/six-search budgets.
+   The parent's 120-second deadline and abortable services stop waiting promptly;
+   its signal-guarded store prevents late commits. This feature also checks the
+   supplied signal before work and at write transforms, and rethrows cancellation
+   instead of reporting it as a successful or ordinary provider response. A late
+   import response cannot be written after cancellation.
 4. Optionally consume the exported read-only adapter:
 
    ```ts
@@ -206,5 +239,8 @@ git diff --check
 The focused tests use isolated stores and fake services for complete command
 flows, review rules, timezone/DST expiry, provenance, bounded retention and
 capacity, invalid input/state, provider failures, optimistic concurrency,
-deterministic retryable transforms, and untrusted text. They do not access Slack,
-Redis, models, or production accounts.
+deterministic retryable transforms, and untrusted text. Additional quota tests
+exercise Unicode and JSON escaping, repeated confirmations at capacity, rejected
+corrections/imports, deletion recovery, and cancelled late imports against fake
+services and a fake 512,000-byte store ceiling. They do not access Slack, Redis,
+models, or production accounts.

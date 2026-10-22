@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import type { AgentContextItem, AgentFeature, AgentFeatureContext } from "./types.js";
 
 const STORE_KEY = "cards";
 const MAX_CARDS = 100;
 const MAX_HISTORY = 6;
+// Stay below the parent's 480 KB feature target / 512 KB hard value limit.
+const MAX_STATE_BYTES = 479_000;
+const RESERVE_INSTANT = "9999-12-31T23:59:59.999Z";
 const PAGE_SIZE = 10;
 const FACT_LIMIT = 1_200;
 const SOURCE_LIMIT = 300;
@@ -220,8 +224,42 @@ async function read(context: Pick<AgentFeatureContext, "store">): Promise<State>
   return raw === null ? { version: 1, cards: [] } : parseState(raw);
 }
 
-async function change(context: AgentFeatureContext, transform: (state: State) => { value: State; result: string }): Promise<string> {
-  return context.store.update<unknown, string>(STORE_KEY, { version: 1, cards: [] }, (raw) => transform(parseState(raw)));
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/** Upper bound for six future confirmations, including JSON escaping and revision growth. */
+function reservedBytes(state: State): number {
+  return jsonBytes({ version: 1, cards: [] }) + state.cards.reduce((total, card, index) => {
+    const snapshots = [...card.history, revision(card, "confirm")].map((entry) => ({
+      ...entry, action: "confirm", revision: Number.MAX_SAFE_INTEGER,
+      at: RESERVE_INSTANT, confirmedAt: RESERVE_INSTANT,
+    }));
+    // Retained older claims can be larger than the current one. Account for the
+    // largest full snapshot so confirmations never need to evict extra history.
+    const largest = snapshots.reduce((a, b) => jsonBytes(a) >= jsonBytes(b) ? a : b);
+    const budget = jsonBytes({
+      ...card, revision: Number.MAX_SAFE_INTEGER, confirmedAt: RESERVE_INSTANT,
+      history: Array.from({ length: MAX_HISTORY }, () => largest),
+    });
+    return total + budget + (index === 0 ? 0 : 1);
+  }, 0);
+}
+
+function quotaSummary(state: State): string {
+  return `Storage: ${jsonBytes(state)} UTF-8 bytes saved; ${reservedBytes(state)}/${MAX_STATE_BYTES} bytes including confirmation/history reserve.`;
+}
+
+async function change(context: AgentFeatureContext, transform: (state: State) => { value: State; result: string }, reserveLifecycle = true): Promise<string> {
+  context.signal?.throwIfAborted();
+  return context.store.update<unknown, string>(STORE_KEY, { version: 1, cards: [] }, (raw) => {
+    context.signal?.throwIfAborted();
+    const next = transform(parseState(raw));
+    const actual = jsonBytes(next.value);
+    const required = reserveLifecycle ? Math.max(actual, reservedBytes(next.value)) : actual;
+    if (required > MAX_STATE_BYTES) fail(`Memory-review storage quota reached: ${required} UTF-8 bytes required${reserveLifecycle ? " including confirmation/history reserve" : ""}; limit ${MAX_STATE_BYTES}. No cards changed. Use list and show, then forget <id> <revision> confirm to free space before retrying. Larger corrections also need free space.`);
+    return next;
+  });
 }
 
 function getCard(state: State, id: string): Card {
@@ -418,13 +456,14 @@ Then show the returned ID and confirm its revision. Revision checks protect newe
 Use one subject/key for one claim slot; different text in the same slot flags a possible conflict. No model guesses are used.
 Review includes unconfirmed, expired, 90-day stale, and potentially conflicting cards. Expiry includes the whole supplied local date. Confidence is an optional user rating, not a verified probability.
 Correction keeps omitted expiry/confidence and resets approval; expires=none and confidence=unknown clear them. A past expiry must be renewed/cleared before confirming.
-At most 100 cards and the last 6 revisions per card; forget deletes the card and its retained history. Pipes delimit fields and cannot appear inside them. No external changes or automatic legacy-memory rewrites.`;
+At most 100 cards and the last 6 revisions per card, within a 479000-byte UTF-8 quota including reserved history space. List shows usage; if full, use show then forget <id> <revision> confirm to free space. Larger corrections also need free space. Forget deletes the card and its retained history. Pipes delimit fields and cannot appear inside them. No external changes or automatic legacy-memory rewrites.`;
 
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
   try {
     if (typeof command !== "string" || command.length > 4_000) fail("Command must be text of at most 4000 characters.");
     const trimmed = command.trim();
     if (!trimmed || trimmed === "help") return help;
+    context.signal?.throwIfAborted();
     const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(trimmed)!;
     const action = match[1];
     const input = (match[2] ?? "").trim();
@@ -447,6 +486,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         : "No memory cards yet. Use capture me | work-city | I work in Chicago | My update today, or import to inspect owned legacy candidates.";
       return reply([
         `${action === "review" ? "Review queue" : "Memory cards"}: ${cards.length}; page ${number}/${Math.ceil(cards.length / PAGE_SIZE)}. As of ${now.today} (${safe(now.timezone)}).`,
+        quotaSummary(state),
         ...selected.map((card) => `• ${card.id} r${card.revision} — ${excerpt(card.subject, 50)} / ${excerpt(card.key, 50)}: ${excerpt(card.fact, 140)}\n  ${status(card, state.cards, now)}`),
         "Use show <id> for the source, conflict IDs, revision history, and review commands.",
       ].join("\n"));
@@ -479,10 +519,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         updated.history = [...card.history, revision(updated, action)].slice(-MAX_HISTORY);
         const value: State = { version: 1, cards: state.cards.map((entry) => entry.id === card.id ? updated : entry) };
         return { value, result: `${action === "confirm" ? "Confirmed" : "Corrected"} ${card.id} (revision ${updated.revision}).\nReview: ${status(updated, value.cards, now)}.\n${action === "correct" ? `Approval was reset. Check show ${card.id}, then confirm ${card.id} ${updated.revision}.` : `User confirmation records your review; it does not independently verify the claim. Use show ${card.id} for provenance.`}` };
-      }));
+      }, action !== "forget"));
     }
     return "Unknown memory-review command. Use help for capture, list, show, review, correct, confirm, forget, and import.";
   } catch (error) {
+    context.signal?.throwIfAborted();
     return error instanceof MemoryReviewError ? reply(error.message)
       : "Memory review is unavailable; no successful change was confirmed. Retry, or use show to check the latest saved revision.";
   }

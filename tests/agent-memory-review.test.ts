@@ -48,6 +48,37 @@ function withMemory(items: AgentContextItem[]): AgentFeatureContext {
   return context;
 }
 
+function byteLimitedContext(): AgentFeatureContext {
+  const backing = createAgentTestStore();
+  return createAgentTestContext({ store: {
+    read: (key) => backing.read(key),
+    async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      return backing.update(key, initial, (current) => {
+        const next = transform(current);
+        // Match the parent store's per-value ceiling without importing shared files.
+        assert.ok(Buffer.byteLength(JSON.stringify(next.value), "utf8") <= 512_000);
+        return next;
+      });
+    },
+  } });
+}
+
+async function fillByteQuota(context: AgentFeatureContext, fact: string, source: string): Promise<SavedCard[]> {
+  for (let index = 0; index < 100; index++) {
+    const before = await context.store.read("cards");
+    const response = await feature.execute(`capture me | quota-${index} | ${fact} | ${source}`, context);
+    if (response.includes("storage quota reached")) {
+      assert.match(response, /UTF-8 bytes required including confirmation\/history reserve/);
+      assert.match(response, /forget <id> <revision> confirm/);
+      assert.deepEqual(await context.store.read("cards"), before);
+      return (await saved(context)).cards;
+    }
+    assert.match(response, /Captured:/);
+    assert.ok(Buffer.byteLength(JSON.stringify(await saved(context)), "utf8") < 480_000);
+  }
+  assert.fail("Large claims should hit the byte quota before the 100-card limit");
+}
+
 test("exports the assigned feature and provides useful help/empty states without services", async () => {
   assert.equal(defaultFeature, feature);
   assert.equal(feature.id, "memory-review");
@@ -403,6 +434,119 @@ test("capacity is bounded without silent eviction and deletion frees capacity", 
   await feature.execute(`forget ${first} 1 confirm`, context);
   await capture(context, "me | replacement | Replacement fact | My note");
   assert.equal((await saved(context)).cards.length, 100);
+});
+
+test("quota measures serialized UTF-8 bytes and reserves space before accepting Unicode claims", async () => {
+  const ascii = byteLimitedContext();
+  const unicode = byteLimitedContext();
+  const asciiCards = await fillByteQuota(ascii, "a".repeat(1_200), "s".repeat(300));
+  const unicodeCards = await fillByteQuota(unicode, "界".repeat(1_200), "源".repeat(300));
+  assert.ok(unicodeCards.length < asciiCards.length, "equal character counts use different UTF-8 byte budgets");
+  const state = await saved(unicode);
+  assert.ok(Buffer.byteLength(JSON.stringify(state), "utf8") > JSON.stringify(state).length);
+  assert.match(await feature.execute("list", unicode), /Storage: \d+ UTF-8 bytes saved; \d+\/479000 bytes including confirmation\/history reserve/);
+  assert.match(feature.help, /479000-byte UTF-8 quota/);
+});
+
+test("all accepted cards can fill and roll their history through confirmations at byte quota", async () => {
+  const context = byteLimitedContext();
+  const cards = await fillByteQuota(context, "界".repeat(1_200), "源".repeat(300));
+  for (const card of cards) {
+    for (let version = 1; version <= 12; version++) {
+      const response = await feature.execute(`confirm ${card.id} ${version}`, context);
+      assert.match(response, /^Confirmed/, response);
+      assert.ok(Buffer.byteLength(JSON.stringify(await saved(context)), "utf8") < 480_000);
+    }
+  }
+  const state = await saved(context);
+  assert.equal(state.cards.length, cards.length);
+  assert.ok(state.cards.every((card) => card.history.length === 6 && card.revision === 13));
+  assert.equal((await readApprovedMemoryContext(context)).length, cards.length);
+});
+
+test("quota rejects growing corrections without losing data and deletion allows an escaped-JSON claim", async () => {
+  const context = byteLimitedContext();
+  const id = await capture(context, "me | victim | Small claim | Small source");
+  const cards = await fillByteQuota(context, "界".repeat(1_200), "源".repeat(300));
+  // Lone surrogate code units are escaped as six ASCII bytes by JSON.stringify.
+  // This catches accounting that only measures raw strings, even with UTF-8.
+  const fact = "\ud800".repeat(1_200);
+  const source = "\ud800".repeat(300);
+  assert.ok(Buffer.byteLength(JSON.stringify(fact), "utf8") > Buffer.byteLength(fact, "utf8"));
+  const before = await saved(context);
+  const correction = `correct ${id} 1 | ${fact} | ${source}`;
+  assert.match(await feature.execute(correction, context), /storage quota reached/);
+  assert.deepEqual(await saved(context), before);
+  for (const card of cards.filter((entry) => entry.id !== id).slice(0, 2)) {
+    assert.match(await feature.execute(`forget ${card.id} 1 confirm`, context), /^Forgot/);
+  }
+  assert.match(await feature.execute(correction, context), /^Corrected/);
+  for (let version = 2; version <= 8; version++) {
+    assert.match(await feature.execute(`confirm ${id} ${version}`, context), /^Confirmed/);
+  }
+  assert.ok(Buffer.byteLength(JSON.stringify(await saved(context)), "utf8") < 480_000);
+  assert.equal((await saved(context)).cards.find((card) => card.id === id)?.fact, fact);
+});
+
+test("legacy imports enforce the same reserved byte quota without overwriting accepted cards", async () => {
+  const context = byteLimitedContext();
+  const candidates: AgentContextItem[] = Array.from({ length: 30 }, (_, index) => ({
+    id: `legacy:${index}`, kind: "memory", title: "", text: "界".repeat(1_200),
+  }));
+  let reads = 0;
+  context.services.readContext = async (kinds) => {
+    assert.deepEqual(kinds, ["memory"]);
+    reads++;
+    return candidates;
+  };
+  let reachedQuota = false;
+  for (const [index, candidate] of candidates.entries()) {
+    const before = await context.store.read("cards");
+    const result = await feature.execute(`import ${candidate.id} | me | key-${index}`, context);
+    if (result.includes("storage quota reached")) {
+      assert.deepEqual(await context.store.read("cards"), before);
+      assert.match(result, /forget <id> <revision> confirm/);
+      reachedQuota = true;
+      break;
+    }
+    assert.match(result, /^Imported a private copy/);
+  }
+  assert.ok(reachedQuota);
+  const state = await saved(context);
+  assert.equal(reads, state.cards.length + 1);
+  assert.ok(Buffer.byteLength(JSON.stringify(state), "utf8") < 480_000);
+});
+
+test("deletion can recover older valid state above the new lifecycle reservation budget", async () => {
+  const context = byteLimitedContext();
+  await capture(context, `me | template | ${"界".repeat(1_200)} | ${"源".repeat(300)}`);
+  const template = (await saved(context)).cards[0];
+  const cards = Array.from({ length: 40 }, (_, index) => ({
+    ...structuredClone(template), id: `mr_00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    key: `old-slot-${index}`,
+  }));
+  const olderState = { version: 1, cards };
+  assert.ok(Buffer.byteLength(JSON.stringify(olderState), "utf8") < 479_000);
+  await seed(context, olderState);
+  assert.match(await feature.execute(`confirm ${cards[0].id} 1`, context), /storage quota reached/);
+  assert.deepEqual(await saved(context), olderState);
+  assert.match(await feature.execute(`forget ${cards[0].id} 1 confirm`, context), /^Forgot/);
+  assert.equal((await saved(context)).cards.length, 39);
+  assert.ok(Buffer.byteLength(JSON.stringify(await saved(context)), "utf8") < 480_000);
+});
+
+test("cancellation blocks delayed import writes even when a fake provider ignores the signal", async () => {
+  const controller = new AbortController();
+  const context = createAgentTestContext({ signal: controller.signal });
+  let resolve!: (items: AgentContextItem[]) => void;
+  context.services.readContext = () => new Promise((done) => { resolve = done; });
+  const pending = feature.execute("import legacy:1 | me | preference", context);
+  controller.abort(new Error("Cancelled test import"));
+  resolve([{ id: "legacy:1", kind: "memory", title: "", text: "A delayed claim" }]);
+  await assert.rejects(pending, /Cancelled test import/);
+  assert.equal(await context.store.read("cards"), null);
+  await assert.rejects(feature.execute("capture me | city | Chicago | My note", context), /Cancelled test import/);
+  assert.equal(await context.store.read("cards"), null);
 });
 
 test("invalid persisted state fails closed without losing stored data", async () => {
