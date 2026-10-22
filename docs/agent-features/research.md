@@ -28,18 +28,22 @@ The registered private route is `/nobo-help agent research <command>`. The repea
    ```text
    /nobo-help agent research refresh <id>
    /nobo-help agent research compare <id>
+   /nobo-help agent research compare <id> page 2
    ```
 
-   Refresh searches the original question again. The reply counts new URLs, URLs with changed excerpts/title/publication date, and old URLs not returned. Observation-time changes alone are not evidence changes. Single-dossier `compare` shows before/after excerpts for changed sources plus both dated syntheses and their source lists. A missing search result does **not** mean its claim was disproven or its page removed.
+   Refresh searches the original question again. The reply counts new URLs, URLs with changed excerpts/title/publication date, and old URLs not returned. Observation-time changes alone are not evidence changes. Single-dossier `compare` shows before/after excerpts for changed sources and both dated syntheses. Source lists appear inline when they fit; otherwise the overview indexes every source with an evidence-page command. A missing search result does **not** mean its claim was disproven or its page removed.
 
 4. Research a related question and compare the saved dossiers:
 
    ```text
    /nobo-help agent research research What evidence exists for sodium-ion batteries in cold climates?
    /nobo-help agent research compare <first-id> <second-id>
+   /nobo-help agent research compare <first-id> <second-id> page 2
    ```
 
    This comparison shows shared source URLs, source counts unique to each dossier, differences in captured evidence at shared URLs, and the two sets of findings and uncertainties. Shared URLs are overlapping evidence, not independent corroboration. The comparison does not invent a new judgment or automatically label different findings as contradictions.
+
+   For either comparison mode, `page 1` is the overview and is also the default. Every reply lists commands for all evidence pages. Each evidence page contains at most two sources with complete URLs, full saved excerpts, and the dossier/revision/snapshot they belong to. There are at most six pages in total. This also preserves long URLs retained by earlier releases: links are never cut to fit a reply, sources are never silently omitted, and existing percent escapes and query values retain their meaning. Pagination reads saved state without search, generation, or writes. If you refresh a dossier between pages, restart at page 1 to compare its newly retained snapshots.
 
 5. Remove a dossier and all its retained snapshots:
 

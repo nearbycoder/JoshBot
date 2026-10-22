@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import feature, { feature as namedFeature } from "../lib/agent-features/research.js";
-import type { AgentFeatureContext, AgentFeatureServices, AgentSearchResult } from "../lib/agent-features/types.js";
+import type { AgentFeatureContext, AgentFeatureServices, AgentFeatureStore, AgentSearchResult } from "../lib/agent-features/types.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
 
 type Source = { id: string; title: string; url: string; snippet: string; observedAt: string; publishedAt?: string };
@@ -760,4 +762,153 @@ test("incoming URL bounds account for percent-encoded backticks without saving p
   assert.match(output, /No usable public-web sources/);
   assert.equal(generations.length, 0);
   assert.equal(await context.store.read("dossiers"), null);
+});
+
+test("comparison page commands validate input and expose complete saved excerpts without new service calls", async () => {
+  const { context, searches, generations } = harness([{ ...sourceA, text: "A complete excerpt. ".repeat(50) }]);
+  const first = await create(context);
+  await feature.execute(`refresh ${first.id}`, context);
+  const second = await create(context, "Another comparison topic?");
+  const counts = [searches.length, generations.length];
+  for (const command of [`compare ${first.id}`, `compare ${first.id} ${second.id}`]) {
+    const overview = await feature.execute(command, context);
+    assert.equal(await feature.execute(`${command} page 1`, context), overview);
+    assert.match(overview, /Page 1 of 2/);
+    assert.ok(overview.includes(`${command} page 2`));
+    const evidence = await feature.execute(`${command} page 2`, context);
+    assert.match(evidence, /Page 2 of 2/);
+    assert.ok(evidence.includes(`Excerpt: ${first.current.sources[0]!.snippet}`));
+    assert.equal(evidence.split("\n").filter((line) => line.startsWith("https://")).length, 2);
+    for (const value of ["0", "-1", "1.5", "NaN", "", "01"]) {
+      assert.match(await feature.execute(`${command} page ${value}`, context), /Usage: compare/);
+    }
+    for (const value of ["3", "999"]) {
+      assert.match(await feature.execute(`${command} page ${value}`, context), /comparison has 2 pages/);
+    }
+  }
+  assert.deepEqual([searches.length, generations.length], counts);
+  assert.match(await feature.execute(`compare ${second.id} page 2`, context), /no previous snapshot/);
+});
+
+/** Retained state accepted before URL rendering changed, including the original larger excerpts. */
+function legacyComparisonState(reservedCharacters: boolean): State {
+  const urls = Array.from({ length: 5 }, (_, index) => {
+    const prefix = `https://example.org/source${index}?q=`;
+    const suffix = reservedCharacters ? "&literal=%2560&hash=%23fragment%26value&plus=a+b&plus=a%2Bb&empty=" : "";
+    // Earlier admission bounded HTML-escaped URL length, before %60 expansion.
+    const escapedSuffix = suffix.replace(/&/g, "&amp;");
+    return prefix + "`".repeat(1_000 - prefix.length - escapedSuffix.length) + suffix;
+  });
+  const snapshot = (at: string, label: string): Snapshot => {
+    const sources = urls.map((url, index) => ({
+      id: `s-${createHash("sha256").update(url).digest("hex").slice(0, 16)}`,
+      url, title: `${label} title ${index} `.padEnd(160, "&"),
+      snippet: `${label} complete evidence ${index} `.padEnd(1_000, "&"),
+      observedAt: at, publishedAt: "2026-10-22",
+    }));
+    return { at, sources,
+      findings: Array.from({ length: 5 }, () => ({ text: "f".repeat(450), sourceIds: sources.map((s) => s.id) })),
+      uncertainties: Array(4).fill("u".repeat(300)),
+    };
+  };
+  return { version: 1, dossiers: [
+    { id: missingId, question: `${"Q".repeat(590)} first?`, revision: 2,
+      createdAt: "2026-10-22T15:00:00.000Z", previous: snapshot("2026-10-22T15:00:00.000Z", "Previous"),
+      current: snapshot("2026-10-23T15:00:00.000Z", "Current") },
+    { id: "r-22222222-2222-4222-8222-222222222222", question: `${"Q".repeat(590)} second?`, revision: 1,
+      createdAt: "2026-10-24T15:00:00.000Z", current: snapshot("2026-10-24T15:00:00.000Z", "Second") },
+  ] };
+}
+
+test("real runtime preserves complete legacy citations and every evidence item in both comparison modes", async (t) => {
+  // Isolated child checkouts point this at the parent-owned runtime.ts. After
+  // integration, the local runtime.js import resolves normally under tsx.
+  const runtimeUrl = process.env.JOSHBOT_AGENT_RUNTIME_MODULE
+    ? pathToFileURL(process.env.JOSHBOT_AGENT_RUNTIME_MODULE)
+    : new URL("../lib/agent-features/runtime.js", import.meta.url);
+  const { runAgentFeature } = await import(runtimeUrl.href);
+  const { createAgentFeatureStore } = await import(new URL("./store.js", runtimeUrl).href);
+  for (const reservedCharacters of [false, true]) await t.test(reservedCharacters ? "reserved query characters" : "original backtick-only reproducer", async () => {
+    const records = new Map<string, string>();
+    let writes = 0;
+    const backend = {
+      get: async (key: string) => records.get(key) ?? null,
+      compareSet: async (key: string, previous: string | null, next: string) => {
+        if ((records.get(key) ?? null) !== previous) return false;
+        writes++;
+        records.set(key, next);
+        return true;
+      },
+    };
+    const owner = { teamId: "TRESEARCH", userId: "URESEARCH" };
+    const store: AgentFeatureStore = createAgentFeatureStore(backend, owner, "research");
+    const saved = legacyComparisonState(reservedCharacters);
+    await store.update<State, void>("dossiers", saved, () => ({ value: saved, result: undefined }));
+    const services: AgentFeatureServices = {
+      search: async () => assert.fail("Reading retained evidence must not search"),
+      generate: async () => assert.fail("Reading retained evidence must not generate"),
+      readContext: async () => assert.fail("Reading retained evidence must not read owner context"),
+    };
+    const options = { backend, services, timezone: "America/Chicago", now: new Date("2026-10-25T15:00:00Z") };
+    const directContext = createAgentTestContext({ ...owner, store, services, timezone: options.timezone, now: options.now });
+    const render = async (command: string): Promise<string> => {
+      const direct = await feature.execute(command, directContext);
+      const delivered: string = await runAgentFeature(feature, command, owner, options);
+      assert.ok(direct.length <= 28_000, `${command} has ${direct.length} characters`);
+      assert.equal(delivered, direct, "Real runtime must not truncate any part of the response");
+      assert.ok(!delivered.includes("Output shortened."));
+      return delivered;
+    };
+    const assertCompleteUrl = (rendered: string, source: Source) => {
+      assert.equal(rendered, source.url.replace(/`/g, "%60").replace(/&/g, "&amp;"));
+      const decoded = new URL(rendered.replace(/&amp;/g, "&"));
+      const original = new URL(source.url);
+      assert.equal(decoded.pathname, original.pathname);
+      assert.equal(decoded.hash, original.hash);
+      assert.equal(decoded.search, original.search.replace(/`/g, "%60"));
+      assert.deepEqual([...decoded.searchParams], [...original.searchParams]);
+      assert.equal(source.id, `s-${createHash("sha256").update(source.url).digest("hex").slice(0, 16)}`);
+    };
+    const first = saved.dossiers[0]!;
+    const second = saved.dossiers[1]!;
+    for (const dossier of saved.dossiers) {
+      const shown = await render(`show ${dossier.id}`);
+      const urlLines = shown.split("\n").filter((line) => line.startsWith("https://"));
+      assert.equal(urlLines.length, 5);
+      urlLines.forEach((url, index) => assertCompleteUrl(url, dossier.current.sources[index]!));
+    }
+    for (const [command, expectedSources, labels] of [
+      [`compare ${first.id}`, [...first.previous!.sources, ...first.current.sources], ["Previous", "Current"]],
+      [`compare ${first.id} ${second.id}`, [...first.current.sources, ...second.current.sources], ["First", "Second"]],
+    ] as const) {
+      const overview = await render(command);
+      assert.match(overview, /source lists are too long for one reply/);
+      assert.match(overview, /Page 1 of 6/);
+      assert.equal(overview.split("\n").filter((line) => line.startsWith("https://")).length, 0);
+      const navigation = [...overview.matchAll(/^Evidence: (compare .+? page \d+) — /gm)].map((match) => match[1]!);
+      assert.equal(new Set(navigation).size, 5);
+      for (const [index, source] of expectedSources.entries()) {
+        assert.ok(overview.includes(`${labels[Math.floor(index / 5)]} [${source.id}]`));
+      }
+      const retrieved: string[] = [];
+      for (const [pageIndex, pageCommand] of navigation.entries()) {
+        assert.equal(pageCommand, `${command} page ${pageIndex + 2}`);
+        const evidence = await render(pageCommand);
+        const urlLines = evidence.split("\n").filter((line) => line.startsWith("https://"));
+        assert.equal(urlLines.length, 2);
+        for (const [offset, url] of urlLines.entries()) {
+          const source = expectedSources[pageIndex * 2 + offset]!;
+          assertCompleteUrl(url, source);
+          assert.ok(evidence.includes(`[${source.id}] ${source.title.replace(/&/g, "&amp;")}`));
+          assert.ok(evidence.includes(`Excerpt: ${source.snippet.replace(/&/g, "&amp;")}`));
+          assert.ok(evidence.includes(`Observed: `));
+          retrieved.push(url);
+        }
+      }
+      assert.equal(retrieved.length, expectedSources.length);
+      assert.match(await render(`${command} page 7`), /comparison has 6 pages/);
+    }
+    assert.deepEqual(await store.read<State>("dossiers"), saved);
+    assert.equal(writes, 1, "Pagination must not rewrite or discard legacy evidence");
+  });
 });

@@ -13,6 +13,7 @@ const MAX_STATE_BYTES = 470_000;
 const MAX_SNAPSHOT_BYTES = 18_000;
 const MAX_SOURCE_BYTES = 1_800;
 const MAX_SYNTHESIS_BYTES = 8_000;
+const MAX_REPLY_CHARACTERS = 28_000;
 const ID = /^r-[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 type Source = {
@@ -46,8 +47,9 @@ const help = [
   "Private cited research dossiers",
   "research <question> — search public web snippets and save a cited dossier",
   "list | show <id> | refresh <id>",
-  "compare <id> — changes since its previous refresh",
-  "compare <id> <other-id> — compare saved findings, uncertainties and shared sources",
+  "compare <id> [page <n>] — changes since its previous refresh",
+  "compare <id> <other-id> [page <n>] — compare saved findings, uncertainties and shared sources",
+  "Comparison page 1 is the overview; evidence pages preserve complete URLs and saved excerpts, two sources per page.",
   "delete <id> confirm — permanently remove a dossier and both snapshots",
   "Example: /nobo-help agent research research What are the tradeoffs of sodium-ion batteries for home storage?",
   "Then: /nobo-help agent research refresh <id>",
@@ -348,13 +350,18 @@ function findings(snapshot: Snapshot, compact = false): string {
   ].join("\n");
 }
 
-function sourceList(snapshot: Snapshot, date: (value: string) => string, compact = false): string {
-  return ["Sources (URLs supplied by search, never by the generator):", ...snapshot.sources.map((s) => [
-    `[${s.id}] ${display(s.title, compact ? 100 : 160)}`,
+function sourceEntry(s: Source, date: (value: string) => string, detail: "compact" | "summary" | "complete"): string {
+  return [
+    `[${s.id}] ${detail === "complete" ? escape(s.title) : display(s.title, detail === "compact" ? 100 : 160)}`,
     displayUrl(s.url),
     `Observed: ${date(s.observedAt)}; published: ${s.publishedAt ?? "unknown"}`,
-    `Excerpt: ${display(s.snippet, compact ? 120 : 600)}`,
-  ].join("\n"))].join("\n\n");
+    `Excerpt: ${detail === "complete" ? escape(s.snippet) : display(s.snippet, detail === "compact" ? 120 : 600)}`,
+  ].join("\n");
+}
+
+function sourceList(snapshot: Snapshot, date: (value: string) => string, compact = false): string {
+  return ["Sources (URLs supplied by search, never by the generator):",
+    ...snapshot.sources.map((s) => sourceEntry(s, date, compact ? "compact" : "summary"))].join("\n\n");
 }
 
 function sameEvidence(a: Source, b: Source): boolean {
@@ -392,29 +399,64 @@ function show(dossier: Dossier, date: (value: string) => string): string {
   ].join("\n\n");
 }
 
-function compare(left: Dossier, right: Dossier | undefined, date: (value: string) => string): string {
+type ComparisonSection = { label: string; heading: string; snapshot: Snapshot };
+
+function comparisonPage(
+  command: string, page: number, introduction: string, sections: ComparisonSection[],
+  date: (value: string) => string, note = "",
+): string {
+  const evidence = sections.flatMap((section) => section.snapshot.sources.map((source) => ({ section, source })));
+  const totalPages = 1 + Math.ceil(evidence.length / 2);
+  if (page > totalPages) throw new ResearchError(`This comparison has ${totalPages} pages. Use ${command} page 1, or choose a page from 1 to ${totalPages}.`);
+  const navigation = [
+    `Page ${page} of ${totalPages}. Evidence pages show complete saved excerpts and URLs; each entry names its dossier, revision and snapshot.`,
+    `Overview: ${command} page 1`,
+    ...Array.from({ length: totalPages - 1 }, (_, index) => {
+      const items = evidence.slice(index * 2, index * 2 + 2);
+      return `Evidence: ${command} page ${index + 2} — ${items.map(({ section, source }) => `${section.label} [${source.id}]`).join(", ")}`;
+    }),
+  ].join("\n");
+  if (page > 1) {
+    // Two full legacy entries fit even when every backtick expands to %60 and
+    // every snippet character requires a five-character Slack entity escape.
+    return [...evidence.slice((page - 2) * 2, (page - 2) * 2 + 2).map(({ section, source }) =>
+      `${section.heading}\n\n${sourceEntry(source, date, "complete")}`), navigation].join("\n\n");
+  }
+  const full = [introduction, ...sections.map((section) => [section.heading,
+    findings(section.snapshot, true), sourceList(section.snapshot, date, true)].join("\n\n")), note, navigation].filter(Boolean).join("\n\n");
+  if (full.length <= MAX_REPLY_CHARACTERS) return full;
+  // Never slice a URL or drop a source to meet the runtime's response limit.
+  return [introduction, ...sections.map((section) => `${section.heading}\n\n${findings(section.snapshot, true)}`), note,
+    "These source lists are too long for one reply. Every source is indexed below; use the evidence-page commands for complete URLs and saved excerpts.",
+    navigation].filter(Boolean).join("\n\n");
+}
+
+function compare(left: Dossier, right: Dossier | undefined, date: (value: string) => string, page = 1): string {
   if (!right) {
     if (!left.previous) return `Research ${left.id}: no previous snapshot yet. Use refresh ${left.id}, then compare ${left.id}.`;
-    return [
+    return comparisonPage(`compare ${left.id}`, page, [
       `Research ${left.id}: previous vs current — ${display(left.question, MAX_QUESTION)}`,
       changes(left, true),
-      `Previous · ${date(left.previous.at)}`, findings(left.previous, true), sourceList(left.previous, date, true),
-      `Current · revision ${left.revision} · ${date(left.current.at)}`, findings(left.current, true), sourceList(left.current, date, true),
-      "Source IDs identify URLs. When an excerpt changed, each section's citations refer to that section's dated snapshot.",
-    ].join("\n\n");
+    ].join("\n\n"), [
+      { label: "Previous", heading: `Previous · research ${left.id} · revision ${left.revision - 1} · ${date(left.previous.at)}`,
+        snapshot: left.previous },
+      { label: "Current", heading: `Current · research ${left.id} · revision ${left.revision} · ${date(left.current.at)}`,
+        snapshot: left.current },
+    ], date, "Source IDs identify URLs. When an excerpt changed, each section's citations refer to that section's dated snapshot.");
   }
   if (left.id === right.id) throw new ResearchError(`Choose two different dossiers, or use compare ${left.id} for refresh changes.`);
   const shared = left.current.sources.filter((s) => right.current.sources.some((other) => other.id === s.id));
-  return [
+  return comparisonPage(`compare ${left.id} ${right.id}`, page, [
     "Saved dossier comparison (no new search or generation)",
     `Shared source URLs: ${shared.length}; only in first: ${left.current.sources.length - shared.length}; only in second: ${right.current.sources.length - shared.length}.`,
     ...shared.map((s) => `[${s.id}] ${display(s.title, 160)} — ${sameEvidence(s, right.current.sources.find((other) => other.id === s.id)!) ? "same captured evidence" : "different captured excerpts/metadata; compare the dated sections below"}`),
     "Shared URLs indicate overlap, not independent corroboration. Findings below are existing generated interpretations; differences are not automatically contradictions.",
-    `First: ${left.id} · revision ${left.revision} · ${date(left.current.at)}\n${display(left.question, MAX_QUESTION)}`,
-    findings(left.current, true), sourceList(left.current, date, true),
-    `Second: ${right.id} · revision ${right.revision} · ${date(right.current.at)}\n${display(right.question, MAX_QUESTION)}`,
-    findings(right.current, true), sourceList(right.current, date, true),
-  ].join("\n\n");
+  ].join("\n\n"), [
+    { label: "First", heading: `First: ${left.id} · revision ${left.revision} · ${date(left.current.at)}\n${display(left.question, MAX_QUESTION)}`,
+      snapshot: left.current },
+    { label: "Second", heading: `Second: ${right.id} · revision ${right.revision} · ${date(right.current.at)}\n${display(right.question, MAX_QUESTION)}`,
+      snapshot: right.current },
+  ], date);
 }
 
 async function execute(command: string, context: AgentFeatureContext): Promise<string> {
@@ -423,6 +465,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     const [verb = "help", ...parts] = command.trim().split(/\s+/);
     const action = verb.toLowerCase() || "help";
     const args = parts.join(" ");
+    let page = 1;
+    if (action === "compare" && parts.at(-2) === "page" && /^[1-9]\d{0,2}$/.test(parts.at(-1) ?? "")) {
+      page = Number(parts.pop());
+      parts.pop();
+    }
     if (action === "help" && !args) return help;
     if (!["research", "list", "show", "refresh", "compare", "delete"].includes(action)) return `Unknown research command.\n\n${help}`;
     if (action === "research" ? !bounded(args, MAX_QUESTION) || args.length < 3
@@ -432,7 +479,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       : parts.length !== 1 || !ID.test(parts[0]!)) {
       throw new ResearchError(action === "research" ? `Supply a research question of 3–${MAX_QUESTION} characters.`
         : action === "delete" ? "To permanently delete a dossier, use delete <id> confirm. Find IDs with list."
-        : `Usage: ${action === "compare" ? "compare <id> [other-id]" : action === "list" ? "list" : `${action} <id>`}. Find IDs with list.`);
+        : `Usage: ${action === "compare" ? "compare <id> [other-id] [page <n>]" : action === "list" ? "list" : `${action} <id>`}. Find IDs with list.`);
     }
     const date = dates(context);
     ensureActive(context);
@@ -441,7 +488,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
       ? ["Saved research dossiers:", storageUsage(state), ...state.dossiers.map((d) => `${d.id} · revision ${d.revision} · ${date(d.current.at)}\n${display(d.question, 200)}`), "Use show <id>, refresh <id> or compare <id> <other-id>."].join("\n\n")
       : `No research dossiers yet. Use research <question>, for example: research What are the tradeoffs of sodium-ion batteries for home storage?\n\n${storageUsage(state)}`;
     if (action === "show") return show(find(state, parts[0]!), date);
-    if (action === "compare") return compare(find(state, parts[0]!), parts[1] ? find(state, parts[1]) : undefined, date);
+    if (action === "compare") return compare(find(state, parts[0]!), parts[1] ? find(state, parts[1]) : undefined, date, page);
     if (action === "delete") {
       find(state, parts[0]!);
       ensureActive(context);
