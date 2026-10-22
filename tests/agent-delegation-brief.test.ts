@@ -313,3 +313,35 @@ test("delegation complete contract remains one feasible unsaved call with every 
   for (const source of sources) assert.ok(reply.includes(`Entered: ${source.quote}\nSuggested: ${source.quote}`));
   assert.equal(f.backend.data.get(f.key("state")), raw); assert.deepEqual(f.calls, { generate: 1, search: 0, readContext: 0 });
 });
+
+test("pending assistance binds full target content through ceiling removals, edits, deletes and unrelated changes", async () => {
+  for (const action of ["ceiling-removal", "edit", "delete", "unrelated-edit", "unrelated-create"]) {
+    const entered = deferred<void>(), release = deferred<void>();
+    const f = createAgentFeatureFixture(feature, { services: { generate: async ({ input }) => {
+      const { sources } = JSON.parse(input); entered.resolve(); await release.promise;
+      return JSON.stringify({ sections: sources.map((s: { ref: string; quote: string }) => ({ ...s, text: s.quote })) });
+    } } }), id = await create(f), removed = "SECRET REMOVED: no weekend work";
+    await f.run(`authority ${id} | ${removed}`);
+    const other = await create(f);
+    if (action === "ceiling-removal") {
+      const state = await f.store().read<any>("state"); state.records.find((r: { id: string }) => r.id === id).revision = 999_999_999;
+      f.backend.data.set(f.key("state"), JSON.stringify(state));
+    }
+    const pending = f.run(`polish ${id}`); await entered.promise;
+    try {
+      if (action === "ceiling-removal") {
+        assert.match(await f.run(`clear ${id} authority confirm`), /^Saved/);
+        const current = await record(f,id); assert.equal(current.authority, ""); assert.equal(current.revision, 999_999_999);
+      } else if (action === "edit") assert.match(await f.run(`authority ${id} | Changed boundary`), /^Saved/);
+      else if (action === "delete") assert.match(await f.run(`delete ${id} confirm`), /^Deleted/);
+      else if (action === "unrelated-edit") assert.match(await f.run(`edit ${other} | title | Unrelated winning edit`), /^Saved/);
+      else await create(f);
+    } finally { release.resolve(); }
+    const winningRaw = f.backend.data.get(f.key("state")), result = await pending;
+    if (action.startsWith("unrelated-")) {
+      assert.match(result, /unsaved suggestion/); assert.ok(result.includes(removed));
+    } else { assert.match(result, /stale result was discarded/); assert.ok(!result.includes(removed)); }
+    assert.equal(f.backend.data.get(f.key("state")), winningRaw);
+    assert.deepEqual(f.calls, { generate: 1, search: 0, readContext: 0 });
+  }
+});

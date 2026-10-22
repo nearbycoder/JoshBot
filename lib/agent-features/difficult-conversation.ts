@@ -163,7 +163,7 @@ async function assistance(context: AgentFeatureContext, record: RecordData, sour
     validateAssistance(record, sources, refs, parsed.sections);
     const current = (await read(context)).records.find(r => r.id === record.id);
     context.signal?.throwIfAborted();
-    if (!current || current.revision !== record.revision) return `This item changed or was deleted while assistance ran. The stale result was discarded.\nNext: ${ROUTE} list`;
+    if (!current || pageVersion(current) !== pageVersion(record)) return `This item changed or was deleted while assistance ran. The stale result was discarded.\nNext: ${ROUTE} list`;
     const reply = `Private · unsaved suggestion · revision ${record.revision}\nReview for omissions and added meaning; nothing sent or agreed.\n${prefix}${lines.join("\n\n")}\nNext: ${ROUTE} ${fallback}`;
     if (reply.length > 3500) throw new Error("Suggestion does not fit a complete reply.");
     return reply;
