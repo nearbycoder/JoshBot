@@ -122,7 +122,7 @@ export function createSlackBolt(options: {
       await respond({ response_type: "ephemeral", text: "NoBo could not complete that command. Please try again." });
     }
   });
-  bolt.action(/^(?!nobo_widget_|nobo_home_|nobo_tools_).*/, async ({ body, ack, respond, client }) => {
+  bolt.action(/^(?!nobo_widget_|nobo_home_|nobo_tools_|nobo_agent_catalog_).*/, async ({ body, ack, respond, client }) => {
     await ack();
     const result = await handlers.interaction(body as SlackInteractionPayload);
     if (result.modal) {
@@ -164,7 +164,7 @@ export function createSlackBolt(options: {
       if (code !== "view_not_found" && code !== "not_found") recordOpsError("slack x media modal status", error);
     }
   });
-  bolt.view({ callback_id: /^(?!nobo_widget_|nobo_home_|nobo_tools_|nobo_x_media(?:_|$)).*/, type: "view_submission" }, async ({ body, ack }) => {
+  bolt.view({ callback_id: /^(?!nobo_widget_|nobo_home_|nobo_tools_|nobo_agent_catalog_|nobo_x_media(?:_|$)).*/, type: "view_submission" }, async ({ body, ack }) => {
     // Validation errors and views.update must be returned in the acknowledgement itself.
     const result = await handlers.interaction(body as SlackInteractionPayload);
     if ("response_action" in result.response && result.response.response_action === "update") await ack({
