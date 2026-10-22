@@ -1,5 +1,9 @@
+import { readBoundedContext } from "./bounded-context.js";
+import { contextCapacityMessage } from "./budgets.js";
 import { randomUUID } from "node:crypto";
 import type { AgentContextKind, AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "No packet was saved or replaced. Use /nobo-help agent meeting-prep list, then show <meeting-id> for a saved packet. Reduce relevant source records in their original tools, for example /nobo-help tools notes list then /nobo-help tools notes edit <note-id> | <shorter body>. Meeting text filters after reading; changing it cannot shrink this read.";
 
 const KEY = "packets";
 const MAX_MEETINGS = 12;
@@ -164,8 +168,13 @@ function sourceFrom(value: unknown): Source | undefined {
 async function collect(meeting: Meeting, context: AgentFeatureContext): Promise<{ sources: Source[]; scanned: number }> {
   if (context.signal?.aborted) throw new InputError("Preparation cancelled; no packet was saved.");
   let items: unknown;
-  try { items = await context.services.readContext([...KINDS]); }
-  catch { throw new InputError("Owner context is unavailable. No packet was saved or replaced; try prepare/refresh again later. Your saved meeting and added context remain available with show."); }
+  try { items = await readBoundedContext(context, KINDS); }
+  catch (error) {
+    if (context.signal?.aborted) throw new InputError("Preparation cancelled; no packet was saved.");
+    const capacity = contextCapacityMessage(error, CAPACITY_RECOVERY);
+    if (capacity) throw new InputError(capacity);
+    throw new InputError("Owner context is unavailable. No packet was saved or replaced; try prepare/refresh again later. Your saved meeting and added context remain available with show.");
+  }
   if (!Array.isArray(items)) throw new InputError("Owner context returned an invalid response. No packet was saved or replaced; try again later.");
   const terms = words(`${meeting.title} ${meeting.details} ${meeting.notes.map((note) => note.text).join(" ")}`);
   const seen = new Set<string>();

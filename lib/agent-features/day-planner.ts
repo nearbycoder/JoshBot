@@ -1,7 +1,10 @@
+import { contextCapacityMessage } from "./budgets.js";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 import { instant, iso, minuteOfDay, PlannerError, validDate, ZonedTime } from "./day-planner/time.js";
+
+const CAPACITY_RECOVERY = "Tasks, settings and the saved plan are unchanged. Use /nobo-help agent calendar list, then remove <event-id> confirm for an unneeded event, or import a smaller calendar. Planning another date does not shrink the full event read.";
 
 const KEY = "state";
 const MINUTE = 60_000;
@@ -348,7 +351,11 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     zone.local(date, snapshot.settings.hours.end);
     let events: unknown;
     try { events = await context.services.readContext(["event"]); }
-    catch { throw new PlannerError("Could not read your owned events. Tasks, settings, and any saved plan were kept. Retry plan when event context is available."); }
+    catch (error) {
+      const capacity = contextCapacityMessage(error, CAPACITY_RECOVERY);
+      if (capacity) throw new PlannerError(capacity);
+      throw new PlannerError("Could not read your owned events. Tasks, settings, and any saved plan were kept. Retry plan when event context is available.");
+    }
     if (context.signal?.aborted) throw new PlannerError("Planning was cancelled. No saved plan was replaced.");
     const plan = makePlan(date, context, snapshot, events, zone);
     const revision = randomUUID();

@@ -207,3 +207,7 @@ exports. A Unicode quota test fills reserved capacity to 479,999 bytes, then
 generates maximal summaries and a digest and finishes/archives every article,
 checking every serialized write stays below 480,000 bytes. No tests access live
 models, Slack, Redis, search, or article URLs.
+
+## Source capacity recovery (foundation follow-up)
+
+Bookmark capacity failures are distinct from temporary outages and do not change the reading queue. Use `/nobo-help agent read-later add https://example.com/article | Article | 5` to add a URL directly. To reduce the relevant source records, use `/nobo-help tools bookmarks list`, then `export <bookmark-id>` before `delete <bookmark-id> confirm`. Bookmarks already use one kind; no production byte violation is claimed under normal current quotas. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

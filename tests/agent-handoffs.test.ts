@@ -16,7 +16,7 @@ function setup(items: AgentContextItem[] = []) {
   let contextReads = 0;
   let forbiddenCalls = 0;
   const ctx = createAgentTestContext({ services: {
-    readContext: async () => { contextReads++; return items; },
+    readContext: async kinds => { contextReads++; return items.filter(item => !kinds || kinds.includes(item.kind)); },
     generate: async () => { forbiddenCalls++; throw new Error("No generation allowed"); },
     search: async () => { forbiddenCalls++; throw new Error("No search allowed"); },
   } });
@@ -129,7 +129,7 @@ test("deterministic operations do not read context and offer useful empty guidan
   assert.equal(h.reads(), 0);
   assert.equal(h.forbidden(), 0);
   assert.match(await h.run("sources"), /No selectable owner sources/);
-  assert.equal(h.reads(), 1);
+  assert.equal(h.reads(), 6);
 });
 
 test("invalid command input does not change state or contact services", async () => {
@@ -354,7 +354,7 @@ test("only explicitly selected valid unique owner sources are captured", async (
   h.ctx.services.readContext = async () => null as unknown as AgentContextItem[];
   assert.match(await h.run("sources"), /Owner context is invalid/);
   h.ctx.services.readContext = async () => Array(10001).fill(source);
-  assert.match(await h.run("sources"), /exceeds 10,000/);
+  assert.match(await h.run("sources"), /complete-read budget/);
 });
 
 test("a delayed source refresh cannot overwrite a concurrent edit or closure", async () => {
@@ -609,4 +609,13 @@ test("source text stays inert and replies remain within Slack limits even with m
   assert.equal(h.forbidden(), 0);
   const unscoped = createAgentTestContext();
   assert.match(await feature.execute(`show ${id}`, unscoped), /not found/);
+});
+
+test("source-kind discovery narrows before reading and rejects invalid scopes without work", async () => {
+  const h = setup([source, { ...source, id: "goal:atlas", kind: "goal" }]);
+  for (const command of ["sources --kind", "sources --kind unknown"]) assert.match(await h.run(command), /Use sources --kind/);
+  assert.equal(h.reads(), 0);
+  const reply = await h.run("sources --kind note Login");
+  assert.match(reply, /Scope: note/); assert.match(reply, /note:login/); assert.doesNotMatch(reply, /goal:atlas/);
+  assert.equal(h.reads(), 1); assert.equal(await raw(h.ctx), "null");
 });

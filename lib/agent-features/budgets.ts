@@ -16,7 +16,22 @@ export function resolveAgentBudgets(requested: AgentFeatureResourceBudgets = {})
   return resolved;
 }
 
-const contextTooLarge = () => new Error("Personal context exceeds this command's complete-read budget. Request fewer source kinds or reduce the selected source records, then retry. No source data was truncated.");
+export class AgentContextCapacityError extends Error {
+  constructor(message = "Personal context exceeds this command's complete-read budget.") {
+    super(message); this.name = "AgentContextCapacityError";
+  }
+}
+
+/** Source adapters may wrap a capacity failure with provenance. Never expose raw
+ * provider errors; only this typed, bounded cause chain receives recovery text. */
+export function contextCapacityMessage(error: unknown, recovery: string): string | undefined {
+  for (let depth = 0; depth < 8 && error instanceof Error; depth++, error = error.cause) {
+    if (error instanceof AgentContextCapacityError) return `${error.message}${error.message.includes("No source data was truncated.") ? "" : " No source data was truncated."} ${recovery}`;
+  }
+  return undefined;
+}
+
+const contextTooLarge = () => new AgentContextCapacityError("Personal context exceeds this command's complete-read budget. Request fewer source kinds or reduce the selected source records, then retry. No source data was truncated.");
 
 /** Count JSON-equivalent bytes incrementally: no serialized copy of the snapshot.
  * Metadata traversal itself is bounded, including depth/cycles and tiny-node floods. */

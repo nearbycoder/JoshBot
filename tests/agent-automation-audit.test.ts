@@ -27,7 +27,7 @@ function setup(initial: AgentContextItem[] = []) {
   let items = initial;
   const calls = { context: 0, generate: 0, search: 0 };
   const ctx = createAgentTestContext({ services: {
-    readContext: async kinds => { calls.context++; assert.deepEqual(kinds, ["reminder", "monitor", "digest"]); return items; },
+    readContext: async kinds => { calls.context++; assert.equal(kinds?.length, 1); return items.filter(item => !item || !["reminder", "monitor", "digest"].includes(item.kind) ? kinds?.includes("reminder") : kinds?.includes(item.kind)); },
     generate: async () => { calls.generate++; throw new Error("No inference allowed"); },
     search: async () => { calls.search++; throw new Error("No search needed"); },
   } });
@@ -96,7 +96,7 @@ test("complete private review, inspect, dismiss, refresh, history and compare fl
   assert.match(await feature.execute(`dismiss ${overdue.id}`, ctx), /Dismissed/);
   assert.match(await feature.execute(`dismiss ${overdue.id}`, ctx), /already dismissed/);
   assert.match(await feature.execute(`show ${initial.id}`, ctx), /overdue; dismissed/);
-  assert.equal(calls.context, 1);
+  assert.equal(calls.context, 3);
 
   ctx.now = new Date("2026-10-22T15:05:00Z");
   const refreshed = await feature.execute("review", ctx);
@@ -113,7 +113,7 @@ test("complete private review, inspect, dismiss, refresh, history and compare fl
   assert.match(comparison, /does not prove resolution/);
   assert.match(await feature.execute("history", ctx), new RegExp(initial.id));
   assert.match(await feature.execute(`inspect reminder:late ${initial.id}`, ctx), /Last record edit: Jan 02, 2026/);
-  assert.deepEqual(calls, { context: 3, generate: 0, search: 0 });
+  assert.deepEqual(calls, { context: 9, generate: 0, search: 0 });
 });
 
 for (const variant of ["title", "purpose", "schedule", "destination", "purpose-from-text", "purpose-from-title"] as const) {
@@ -141,7 +141,7 @@ for (const variant of ["title", "purpose", "schedule", "destination", "purpose-f
     assert.match(await feature.execute(`show ${latest.id}`, ctx), /Personal automation review audit-/);
     assert.match(await feature.execute("inspect boundary", ctx), /Snapshot audit-/);
     assert.match(await feature.execute("compare", ctx), new RegExp(`Changed boundary: ${field}:`));
-    assert.deepEqual(calls, { context: 2, generate: 0, search: 0 });
+    assert.deepEqual(calls, { context: 6, generate: 0, search: 0 });
   });
 }
 
@@ -259,7 +259,7 @@ test("source and service data are inert; repeated IDs and malformed inputs are e
   assert.ok(!response.includes("<!channel>"));
   assert.match(response, /&lt;!channel&gt;/);
   assert.deepEqual((await saved(ctx)).snapshots[0].sources.map(s => s.id), ["safe"]);
-  assert.deepEqual(calls, { context: 1, generate: 0, search: 0 });
+  assert.deepEqual(calls, { context: 3, generate: 0, search: 0 });
 });
 
 test("malformed JSON enum values are never coerced into a kind, status or run outcome", async () => {
@@ -336,7 +336,7 @@ test("atomic retries are deterministic and preserve both concurrent reviews", as
   await feature.execute(`dismiss ${suggestions[0].id}`, ctx);
   await feature.execute("clear confirm", ctx);
   assert.deepEqual((await saved(ctx)).snapshots, []);
-  assert.equal(calls.context, 2, "services are outside the retryable transform");
+  assert.equal(calls.context, 6, "services are outside the retryable transform");
 });
 
 test("a dismissal racing a review is retained and immediately applied to its output", async () => {
@@ -401,7 +401,7 @@ test("corrupt persisted shapes are not overwritten; explicit clear recovers them
   await ctx.store.update("audit", corrupted, () => ({ value: corrupted, result: undefined }));
   assert.match(await feature.execute("review", ctx), /could not be validated and was left unchanged/);
   assert.deepEqual(await saved(ctx), corrupted);
-  assert.equal(calls.context, 1);
+  assert.equal(calls.context, 3);
   assert.match(await feature.execute("clear confirm", ctx), /Cleared/);
   assert.match(await feature.execute("review", ctx), /Personal automation review audit-/);
   assert.equal((await saved(ctx)).snapshots.length, 1);
@@ -475,7 +475,7 @@ test("UTF-8 quota evicts oldest history and reserves room to process all retaine
   assert.match(await feature.execute("clear confirm", ctx), /Cleared/);
   assert.deepEqual((await saved(ctx)).snapshots, []);
   assert.deepEqual((await saved(ctx)).dismissals, []);
-  assert.deepEqual(calls, { context: 9, generate: 0, search: 0 });
+  assert.deepEqual(calls, { context: 27, generate: 0, search: 0 });
 });
 
 test("a single oversized JSON review gives quota guidance and preserves prior state atomically", async () => {
@@ -510,4 +510,14 @@ test("compare and inspect reject missing snapshots, unknown sources, and reverse
   assert.match(await feature.execute("inspect absent", ctx), /Source not found/);
   assert.match(await feature.execute("inspect known absent", ctx), /snapshot not found/);
   assert.match(await feature.execute("compare", ctx), /No source metadata changes observed/);
+});
+
+test("explicit review kind is validated before reads and retained through saved snapshots", async () => {
+  const h = setup([item("monitor:one", { kind: "monitor" }), item("reminder:one")]);
+  for (const command of ["review --kind", "review --kind note", "review --kind monitor extra"]) assert.match(await feature.execute(command, h.ctx), /Invalid arguments/);
+  assert.equal(h.calls.context, 0);
+  assert.match(await feature.execute("review --kind monitor", h.ctx), /Scope: monitor/);
+  assert.equal(h.calls.context, 1);
+  const shown = await feature.execute("show", h.ctx);
+  assert.match(shown, /Scope: monitor/); assert.doesNotMatch(shown, /reminder:one/);
 });

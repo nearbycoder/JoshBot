@@ -229,3 +229,7 @@ exercise Unicode and JSON escaping, repeated confirmations at capacity, rejected
 corrections/imports, deletion recovery, and cancelled late imports against fake
 services and a fake 512,000-byte store ceiling. They do not access Slack, Redis,
 models, or production accounts.
+
+## Source capacity recovery (foundation follow-up)
+
+Legacy-import capacity failures are distinct from temporary outages and preserve all cards. Production legacy import remains unconnected and has no candidates; approved cards are not fed back into it. Use `/nobo-help agent memory-review capture Atlas | decision | Launch on Friday | My confirmation`, then `confirm <returned-card-id> 1` to confirm an explicitly supplied fact. Saved `list`/`show` paths remain available. No production byte violation is claimed for legacy import. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

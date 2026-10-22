@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
+import { readBoundedContext } from "./bounded-context.js";
+import { contextCapacityMessage } from "./budgets.js";
+
+const CAPACITY_RECOVERY = "Saved history and dismissals are unchanged. Run /nobo-help agent automation-audit review --kind monitor, review --kind reminder, or review --kind digest separately. If one kind exceeds its own limit, reduce that kind's records in the original automation tool; show still opens the saved review.";
 
 const KEY = "audit";
 const MAX_SNAPSHOTS = 8;
@@ -27,6 +31,8 @@ type Suggestion = { id: string; rule: Rule; sourceIds: string[]; evidence: strin
 type Snapshot = {
   id: string; at: string; timezone: string; sources: Source[]; suggestions: Suggestion[];
   skipped: number; omitted: number; omittedSuggestions: number;
+  /** Absent in original/full reviews; a scoped review must stay labelled. */
+  kind?: Kind;
 };
 type State = { version: 1; generation: string; snapshots: Snapshot[]; dismissals: { id: string; at: string }[] };
 
@@ -123,6 +129,7 @@ function validateSnapshot(s: unknown): asserts s is Snapshot {
     || new Set(s.sources.map(v => v.id)).size !== s.sources.length
     || !Array.isArray(s.suggestions) || s.suggestions.length > MAX_SUGGESTIONS
     || ![s.skipped, s.omitted, s.omittedSuggestions].every(n => Number.isSafeInteger(n) && Number(n) >= 0)) throw new InvalidState();
+  if (s.kind !== undefined && (!["reminder", "monitor", "digest"].includes(s.kind as string) || s.sources.some(source => source.kind !== s.kind))) throw new InvalidState();
   const ids = new Set(s.sources.map(v => v.id));
   for (const suggestion of s.suggestions) {
     if (!object(suggestion) || typeof suggestion.id !== "string" || !/^s-[a-f0-9]{20}$/.test(suggestion.id)
@@ -151,6 +158,7 @@ function parseState(value: unknown): State {
     version: 1, generation: value.generation,
     snapshots: (value.snapshots as Snapshot[]).map(s => ({
       id: s.id, at: s.at, timezone: s.timezone, skipped: s.skipped, omitted: s.omitted, omittedSuggestions: s.omittedSuggestions,
+      ...(s.kind === undefined ? {} : { kind: s.kind }),
       sources: s.sources.map(r => ({ id: r.id, kind: r.kind, title: r.title, purpose: r.purpose, schedule: r.schedule,
         timezone: r.timezone, destination: r.destination, status: r.status, nextRunAt: r.nextRunAt,
         lastRunAt: r.lastRunAt, updatedAt: r.updatedAt, outcome: r.outcome, issues: [...r.issues] })),
@@ -285,7 +293,7 @@ function renderSnapshot(s: Snapshot, state: State, full: boolean): string[] {
     && Date.parse(r.nextRunAt) >= Date.parse(s.at) - GRACE);
   const visible = full ? s.suggestions : open.slice(0, 12);
   return [
-    `Personal automation review ${s.id}`, `Captured ${when(s.at, s.timezone)} (${s.timezone}). Read-only snapshot.`, storageNotice(state), coverage(s),
+    `Personal automation review ${s.id}`, `Scope: ${s.kind ?? "reminder, monitor, digest"}.`, `Captured ${when(s.at, s.timezone)} (${s.timezone}). Read-only snapshot.`, storageNotice(state), coverage(s),
     `Run outcomes: ${s.sources.filter(r => r.outcome === "failed").length} reported failed; ${s.sources.filter(r => r.outcome === "success").length} reported successful; ${s.sources.filter(r => r.outcome === "unknown").length} unknown. Unknown is not a failure.`,
     `Upcoming: next known occurrence within 7 days (${upcoming.length}; ${recent.length} recently due within the 15-minute grace period). Recurrences are not expanded.`,
     ...upcoming.slice(0, full ? MAX_SOURCES : 12).map(r => `${r.id} — ${r.title || r.kind}: ${when(r.nextRunAt, s.timezone)}; enabled state ${r.status}`),
@@ -312,6 +320,7 @@ function inspect(s: Snapshot, r: Source, state: State): string[] {
 
 const COMPARED_FIELDS = ["title", "purpose", "schedule", "timezone", "destination", "status", "nextRunAt", "lastRunAt", "updatedAt", "outcome"] as const;
 function compare(old: Snapshot, recent: Snapshot, state: State): string[] {
+  if (old.kind !== recent.kind) return ["These reviews have different source scopes; no added/missing-source comparison was made. Run /nobo-help agent automation-audit review (all kinds), or review --kind monitor twice for comparable snapshots."];
   const before = new Map(old.sources.map(r => [r.id, r]));
   const after = new Map(recent.sources.map(r => [r.id, r]));
   const lines: string[] = [];
@@ -350,6 +359,11 @@ function output(lines: string[]): string {
 async function execute(command: string, ctx: AgentFeatureContext): Promise<string> {
   if (typeof command !== "string" || command.length > 512) return "Command must be text, at most 512 characters. Use help for syntax.";
   const [verb = "help", ...args] = command.trim().split(/\s+/).filter(Boolean);
+  let sourceKind: Kind | undefined;
+  if (verb === "review" && args.length) {
+    if (args.length !== 2 || args[0] !== "--kind" || !["reminder", "monitor", "digest"].includes(args[1])) return "Invalid arguments. Use review or review --kind reminder|monitor|digest. A scoped review covers only that kind.";
+    sourceKind = args[1] as Kind; args.length = 0;
+  }
   if (verb === "help" && !args.length) return output([HELP]);
   const expected: Record<string, number[]> = { review: [0], history: [0], show: [0, 1], inspect: [1, 2], compare: [0, 2], dismiss: [1], clear: [1] };
   if (!Object.hasOwn(expected, verb) || !expected[verb].includes(args.length)) return output(["Unknown command or invalid arguments.", HELP]);
@@ -367,8 +381,11 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       const id = `audit-${randomUUID()}`, now = ctx.now.getTime(), at = new Date(now).toISOString(), timezone = ctx.timezone;
       if (ctx.signal?.aborted) return "Review cancelled; saved history is unchanged.";
       let raw: unknown;
-      try { raw = await ctx.services.readContext(["reminder", "monitor", "digest"]); }
-      catch { return "Could not read your automation metadata. Saved history and dismissals are unchanged; try review again later."; }
+      try { raw = await readBoundedContext(ctx, sourceKind ? [sourceKind] : ["reminder", "monitor", "digest"]); }
+      catch (error) {
+        if (ctx.signal?.aborted) return "Review cancelled; saved history is unchanged.";
+        return contextCapacityMessage(error, CAPACITY_RECOVERY) ?? "Could not read your automation metadata. Saved history and dismissals are unchanged; try review again later.";
+      }
       if (!Array.isArray(raw)) return "Automation context was invalid. Saved history is unchanged; ask for the context adapter to be checked.";
       if (ctx.signal?.aborted) return "Review cancelled; saved history is unchanged.";
       // Ambiguous IDs are excluded completely; never silently choose one job over another.
@@ -377,7 +394,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       for (const r of candidates) if (r) counts.set(r.id, (counts.get(r.id) ?? 0) + 1);
       const sources = candidates.filter((r): r is Source => r !== null && counts.get(r.id) === 1).sort((a, b) => a.id.localeCompare(b.id));
       const allSuggestions = audit(sources, now);
-      const snapshot: Snapshot = { id, at, timezone, sources, suggestions: allSuggestions.slice(0, MAX_SUGGESTIONS),
+      const snapshot: Snapshot = { id, at, timezone, ...(sourceKind ? { kind: sourceKind } : {}), sources, suggestions: allSuggestions.slice(0, MAX_SUGGESTIONS),
         skipped: candidates.length - sources.length, omitted: Math.max(0, raw.length - MAX_SOURCES), omittedSuggestions: Math.max(0, allSuggestions.length - MAX_SUGGESTIONS) };
       // New evidence must satisfy the exact schema used when reading saved history.
       try { validateSnapshot(snapshot); }

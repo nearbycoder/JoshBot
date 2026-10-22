@@ -239,8 +239,8 @@ test("complete preparation, source-backed commitments, added context, refresh, h
   let reads = 0;
   context.services.readContext = async (kinds) => {
     reads += 1;
-    assert.deepEqual(kinds, ["note", "goal", "follow-up", "reminder", "memory", "event", "artifact"]);
-    return items;
+    assert.ok(kinds?.length);
+    return items.filter(item => kinds.includes(item.kind));
   };
   const id = await prepare(context, "purpose: Agree the Atlas launch; attendees: Ana, Dev; when: 2026-11-12T10:00:00-06:00");
   const first = await run(`show ${id}`, context);
@@ -256,18 +256,18 @@ test("complete preparation, source-backed commitments, added context, refresh, h
   const commitments = first.split("Open commitments — source-reported")[1].split("Proposed agenda")[0];
   assert.doesNotMatch(commitments, /Atlas old action/u);
   assert.match(await run("list", context), new RegExp(id, "u"));
-  assert.equal(reads, 1);
+  assert.equal(reads, 4);
   const added = await run(`add-context ${id} | Orchid budget needs a decision before launch.`, context);
   assert.match(added, /Context saved as ctx-/u);
   const pending = await run(`show ${id}`, context);
   assert.match(pending, /Added context pending refresh/u);
-  assert.equal(reads, 1);
+  assert.equal(reads, 4);
   const refreshed = await run(`refresh ${id}`, context);
   assert.match(refreshed, /packet 2/u);
   assert.match(refreshed, /notes\/orchid/u);
   assert.match(refreshed, /\[C1\] ctx-/u);
   assert.doesNotMatch(refreshed, /pending refresh/u);
-  assert.equal(reads, 2);
+  assert.equal(reads, 8);
   const history = await run(`show ${id} 1`, context);
   assert.match(history, /Historical packet/u);
   assert.doesNotMatch(history, /Orchid/u);

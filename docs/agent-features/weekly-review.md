@@ -84,3 +84,7 @@ git diff --check
 ```
 
 The tests use the supplied scoped in-memory store and fake context services. They cover complete/empty flows, source provenance, input/persisted-data validation, timezone and DST boundaries, historical uncertainty, bounded retention/output, provider errors, cancellation, retry-safe transforms, simultaneous saves and reflection/delete races. Quota tests measure serialized UTF-8 bytes with Unicode-heavy snapshots and worst-case escaped reflections, enforce the runtime/feature limits on every fake-store write, verify full-quota rejection preserves state, and prove deletion permits another review without concurrent overfilling. No live inference or external writes are tested.
+
+## Source capacity recovery (foundation follow-up)
+
+Reviews read the same fixed kinds in bounded sequential groups. Capacity failure saves no review and preserves reflections. `/nobo-help agent weekly-review show latest` remains available. Reduce relevant records in their original tools, such as `/nobo-help tools notes list`, then `edit <note-id> | <shorter body>`. The seven-day filter is applied after the source read; changing the end date cannot fix source capacity. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

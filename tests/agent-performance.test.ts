@@ -233,10 +233,189 @@ test("real adapters serve all 1500 supported records; oversized combined sources
   const settings={...f.options,services,now};
   assert.equal(await runAgentFeature(read,"all",caller,settings),"1500");
   assert.equal(Object.keys(observed[0].kinds).length,11);
+  const expectedOrder = (await services.readContext()).map(item => item.id);
   seed(12_000);
   await assert.rejects(()=>runAgentFeature(read,"all",caller,settings),/complete-read budget/);
   assert.equal(await runAgentFeature(read,"note",caller,settings),"100");
   assert.equal(await runAgentFeature(read,"reminder",caller,settings),"200");
+  const { readBoundedContext } = await import("../lib/agent-features/bounded-context.js");
+  const batches: { count: number; bytes: number }[] = [];
+  const grouped: AgentFeature = { ...feature, execute: async (_, ctx) => {
+    const items = await readBoundedContext(ctx, ["note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder", "monitor", "digest", "artifact", "memory", "event"]);
+    assert.deepEqual(items.map(item => item.id), expectedOrder, "grouped reads preserve the complete production ordering");
+    return String(items.length);
+  } };
+  const cpu = process.cpuUsage(), start = performance.now();
+  assert.equal(await runAgentFeature(grouped, "read", caller, { ...settings, services: { ...services, readContext: async kinds => {
+    const batch = await services.readContext(kinds);
+    batches.push({ count: batch.length, bytes: measureAgentContext(batch) });
+    return batch;
+  } } }), "1500");
+  const elapsedMs = performance.now() - start, used = process.cpuUsage(cpu);
+  assert.equal(batches.length, 6);
+  assert.equal(batches.reduce((sum, batch) => sum + batch.count, 0), 1500);
+  assert.ok(batches.every(batch => batch.bytes < 16 * 1024 * 1024));
+  assert.ok(batches.reduce((sum, batch) => sum + batch.bytes, 0) < 32 * 1024 * 1024);
+  t.diagnostic(JSON.stringify({ groupedAdapterMaxima: batches, elapsedMs, cpuMs: (used.user + used.system) / 1000, rssMiB: process.memoryUsage().rss / 1024 ** 2, instrumentation: "includes a second byte measurement per batch; shared test process" }));
   assert.equal(f.writes,0,"source reads and quota failures never mutate persisted sources");
   t.diagnostic(JSON.stringify({adapterMaxima:observed}));
+});
+
+async function capacityFixture() {
+  const { createAgentFeatureServices, createProductionContextAdapters } = await import("../lib/agent-features/services.js");
+  const { createMemoryAgentBackend } = await import("./helpers/agent-feature-fixture.js");
+  const backend = createMemoryAgentBackend(), now = new Date("2026-10-22T15:00:00Z");
+  const caller = { ...owner, channelId: "CPERF" };
+  const noteKey = `nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`;
+  backend.data.set(noteKey, JSON.stringify({ entries: [{ id: "one", title: "Atlas", body: "Launch details", tags: [], createdAt: now.toISOString(), updatedAt: now.toISOString(), data: {} }] }));
+  const indexes: Record<string, string[]> = {};
+  const requests: string[][] = [];
+  let access = true;
+  const adapters = createProductionContextAdapters({ redis: async () => ({ eval: async (_, options) => indexes[options.keys[0]] ?? [] }), evaluateAccess: async () => ({ allowed: access }) });
+  const services = createAgentFeatureServices(backend, caller, new AbortController().signal, { now, timezone: "UTC" }, adapters);
+  const run = (target: AgentFeature, command: string) => runAgentFeature(target, command, caller, { backend, now, timezone: "UTC", services: {
+    ...services, readContext: kinds => { requests.push(kinds ?? []); return services.readContext(kinds); },
+  } });
+  const seed = (count: number, includeReminders = false) => {
+    for (const [kind, prefix, index, field] of [["monitor", "monitors:job:", "monitors:user:", "query"], ["digest", "channel-digests:subscription:", "channel-digests:user:", "focus"], ...(includeReminders ? [["reminder", "schedules:job:", "schedules:user:", "task"]] : [])]) {
+      indexes[index + caller.userId] = Array.from({ length: count }, (_, i) => `${kind}-${i}`);
+      for (const id of indexes[index + caller.userId]) {
+        const raw = JSON.stringify({ id, ownerUserId: caller.userId, channel: caller.channelId, createdAt: now.toISOString(), kind: "daily", frequency: "daily", hour: 9, minute: 0, timezone: "UTC", [field]: "界".repeat(12_000) });
+        assert.ok(Buffer.byteLength(raw) < 64_000);
+        backend.data.set(prefix + id, raw);
+      }
+    }
+  };
+  return { backend, caller, services, run, requests, seed, revoke: () => { access = false; } };
+}
+
+test("actual 17 MiB sources support handoff discovery, recorded-kind refresh and automation review", async (t) => {
+  const { default: handoffs } = await import("../lib/agent-features/handoffs.js");
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = await capacityFixture();
+  const captured = await f.run(handoffs, "capture Atlas launch | done: Planned | next: Review | sources: toolbox:notes:one");
+  const id = captured.match(/hf_[a-f0-9-]+/)![0];
+  f.seed(120);
+  const bytes = Buffer.byteLength(JSON.stringify(await f.services.readContext()));
+  assert.ok(bytes > 16 * 1024 * 1024 && bytes < 32 * 1024 * 1024);
+  const before = new Map(f.backend.data), writes = f.backend.calls.writes;
+  assert.match(await f.run(handoffs, "sources Atlas"), /Owner source candidates/);
+  assert.ok(f.requests.length <= 12);
+  f.requests.length = 0;
+  assert.match(await f.run(handoffs, `update ${id} | sources: toolbox:notes:one`), /No changes/);
+  assert.deepEqual(f.requests, [["note"]]);
+  f.requests.length = 0;
+  assert.match(await f.run(handoffs, `resume ${id}`), /unchanged since this revision/);
+  assert.deepEqual(f.requests, [["note"]]);
+  assert.match(await f.run(handoffs, `show ${id}`), /Launch details/);
+  assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+  f.requests.length = 0;
+  assert.match(await f.run(audit, "review"), /Personal automation review audit-/);
+  assert.deepEqual(f.requests, [["reminder"], ["monitor"], ["digest"]]);
+  for (const [key, raw] of before) assert.equal(f.backend.data.get(key), raw);
+  t.diagnostic(JSON.stringify({ combinedContextBytes: bytes, sourceRecords: 241, auditReads: f.requests.length }));
+});
+
+test("over-total context fails distinctly without writes; actual narrowing commands and snapshots recover", async () => {
+  const { default: handoffs } = await import("../lib/agent-features/handoffs.js");
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = await capacityFixture();
+  const captured = await f.run(handoffs, "capture Atlas launch | done: Planned | next: Review | sources: toolbox:notes:one");
+  const id = captured.match(/hf_[a-f0-9-]+/)![0];
+  assert.match(await f.run(audit, "review"), /Personal automation review/);
+  f.seed(1, true);
+  const multi = await f.run(handoffs, "capture Automation context | done: Recorded | next: Review | sources: monitor:monitor-0,digest:digest-0,reminder:reminder-0");
+  const multiId = multi.match(/hf_[a-f0-9-]+/)![0];
+  f.seed(180, true);
+  const before = new Map(f.backend.data), writes = f.backend.calls.writes;
+  const sourceReply = await f.run(handoffs, "sources Atlas");
+  assert.match(sourceReply, /total context byte budget/);
+  assert.match(sourceReply, /\/nobo-help agent handoffs sources --kind note Atlas/);
+  assert.doesNotMatch(sourceReply, /retry later|delete.*hf_|Owner source candidates/);
+  const auditReply = await f.run(audit, "review");
+  assert.match(auditReply, /total context byte budget/);
+  assert.match(auditReply, /\/nobo-help agent automation-audit review --kind monitor/);
+  assert.doesNotMatch(auditReply, /again later/);
+  const resume = await f.run(handoffs, `resume ${multiId}`);
+  assert.match(resume, /UNVERIFIED.*total context byte budget/);
+  assert.match(resume, /Source snapshots/);
+  assert.match(await f.run(handoffs, `update ${multiId} | sources: monitor:monitor-0,digest:digest-0,reminder:reminder-0`), /total context byte budget/);
+  assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+  assert.match(await f.run(handoffs, `show ${id}`), /Launch details/);
+  assert.match(await f.run(handoffs, `resume ${id}`), /unchanged since this revision/);
+  assert.match(await f.run(audit, "show"), /Personal automation review/);
+  assert.match(await f.run(handoffs, "sources --kind note Atlas"), /toolbox:notes:one/);
+  assert.match(await f.run(audit, "review --kind monitor"), /Scope: monitor/);
+  assert.match(await f.run(audit, "show"), /Scope: monitor/);
+  assert.match(await f.run(audit, "compare"), /different source scopes/i);
+  for (const [key, raw] of before) if (!key.endsWith(":automation-audit:audit")) assert.equal(f.backend.data.get(key), raw);
+  f.revoke();
+  const revokedBefore = new Map(f.backend.data);
+  assert.doesNotMatch(await f.run(audit, "review --kind monitor"), /Personal automation review audit-/);
+  assert.deepEqual(f.backend.data, revokedBefore, "grouped reads still recheck authorization without caching");
+});
+
+test("bounded groups keep the original deadline and do not continue or write after cancellation", async (t) => {
+  const { readBoundedContext } = await import("../lib/agent-features/bounded-context.js");
+  const f = fixture(), entered = gate<void>(), late = gate<void>(), controller = new AbortController();
+  let reads = 0, deadlines = 0;
+  t.mock.method(AbortSignal, "timeout", (ms: number) => { deadlines++; assert.equal(ms, 120_000); return controller.signal; });
+  f.options.services.readContext = async () => { if (++reads === 2) { entered.resolve(); await late.promise; } return []; };
+  const reading: AgentFeature = { ...feature, execute: async (_, ctx) => {
+    await readBoundedContext(ctx, ["note", "event", "monitor", "digest"]);
+    return ctx.store.update("state", null, () => ({ value: "late write", result: "saved" }));
+  } };
+  const running = runAgentFeature(reading, "read", owner, f.options);
+  const rejected = assert.rejects(running, /original deadline/);
+  await entered.promise; controller.abort(new Error("original deadline")); await rejected;
+  late.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(deadlines, 1); assert.equal(reads, 2); assert.equal(f.writes, 0);
+});
+
+test("every bounded group consumes normal lower-only read budgets without retries", async () => {
+  const { readBoundedContext } = await import("../lib/agent-features/bounded-context.js");
+  const f = fixture(); let reads = 0;
+  f.options.services.readContext = async () => { reads++; return []; };
+  const reading: AgentFeature = { ...feature, resourceBudgets: { contextReads: 1 }, execute: async (_, ctx) => {
+    await readBoundedContext(ctx, ["note", "monitor"]); return "complete";
+  } };
+  await assert.rejects(runAgentFeature(reading, "read", owner, f.options), /1 context reads/);
+  assert.equal(reads, 1); assert.equal(f.writes, 0);
+});
+
+test("consumer boundaries distinguish runtime capacity from temporary source outages", async () => {
+  const f = fixture();
+  const oversized = { id: "large", kind: "note" as const, title: "Large", text: "界".repeat(5_600_000) };
+  f.options.services.readContext = async kinds => [{ ...oversized, kind: kinds?.[0] ?? "note" }];
+  for (const [id, command, recovery] of [
+    ["meeting-prep", "prepare Atlas | purpose: Review launch", /meeting-prep list/],
+    ["weekly-review", "review", /weekly-review show latest/],
+    ["morning-brief", "brief", /settings sources notes/],
+    ["project-briefs", "sources note", /project-briefs list/],
+    ["recall", "search Atlas", /recall search Atlas --kind note/],
+    ["day-planner", "plan 2026-10-22", /calendar list/],
+    ["read-later", "candidates", /add https:\/\/example.com\/article \| Article \| 5/],
+    ["memory-review", "import", /memory-review capture Atlas/],
+  ] as const) {
+    const { default: consumer } = await import(`../lib/agent-features/${id}.js`);
+    const before = new Map(f.data), writes = f.writes;
+    const reply = await runAgentFeature(consumer, command, owner, { ...f.options, now: new Date("2026-10-22T15:00:00Z") });
+    assert.match(reply, /complete-read budget/, id);
+    assert.match(reply, recovery, id);
+    assert.doesNotMatch(reply, /retry later|again later|try brief again/i, id);
+    assert.deepEqual(f.data, before); assert.equal(f.writes, writes);
+  }
+});
+
+test("wrapped production owner-index capacity stays actionable and preserves saved state", async () => {
+  const { createAgentFeatureServices, createProductionContextAdapters } = await import("../lib/agent-features/services.js");
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = fixture(), caller = { ...owner, channelId: "CPERF" }, now = new Date("2026-10-22T15:00:00Z");
+  assert.match(await runAgentFeature(audit, "review", caller, { ...f.options, now }), /Personal automation review/);
+  const before = new Map(f.data), writes = f.writes;
+  const adapters = createProductionContextAdapters({ redis: async () => ({ eval: async () => null }), evaluateAccess: async () => ({ allowed: true }) });
+  const services = createAgentFeatureServices(f.options.backend, caller, new AbortController().signal, { now, timezone: "UTC" }, adapters);
+  const reply = await runAgentFeature(audit, "review --kind monitor", caller, { ...f.options, services, now });
+  assert.match(reply, /owner index exceeds.*200/); assert.match(reply, /original automation tool/);
+  assert.doesNotMatch(reply, /again later/); assert.deepEqual(f.data, before); assert.equal(f.writes, writes);
 });

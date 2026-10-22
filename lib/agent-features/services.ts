@@ -2,6 +2,7 @@ import type { evaluateNoboAccess } from "../access-controls.js";
 import { getRedisClient } from "../redis.js";
 import type { AgentContextAdapters, AgentContextRequest } from "./context.js";
 import { contextRead } from "./context/shared.js";
+import { AgentContextCapacityError } from "./budgets.js";
 import type { AgentStateBackend } from "./store.js";
 import type { AgentFeatureServices } from "./types.js";
 
@@ -22,7 +23,7 @@ export function createProductionContextAdapters(dependencies: {
       const redis = await contextRead(signal, dependencies.redis ?? getRedisClient);
       if (!redis) throw new Error("Personal automation context requires the existing Redis connection.");
       const ids = await contextRead(signal, () => redis.eval(BOUNDED_OWNER_INDEX, { keys: [key], arguments: [String(limit)] }));
-      if (!Array.isArray(ids)) throw new Error(`Personal owner index exceeds the complete-read limit (${limit}).`);
+      if (!Array.isArray(ids)) throw new AgentContextCapacityError(`Personal owner index exceeds the complete-read limit (${limit}).`);
       return ids;
     },
     async authorizeChannel(owner, signal) {

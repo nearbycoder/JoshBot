@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { AgentContextKind, AgentFeature, AgentFeatureContext } from "./types.js";
+import { readBoundedContext } from "./bounded-context.js";
+import { contextCapacityMessage } from "./budgets.js";
 
 const KEY = "packets-v1";
 const MAX_PACKETS = 20;
@@ -10,6 +12,7 @@ const MAX_REVISION_NUMBER = 1_000_000;
 const STALE_MS = 30 * 24 * 60 * 60 * 1000;
 const FIELD_LIMITS = { objective: 240, done: 1000, questions: 800, next: 1000, constraints: 800 };
 const KINDS: AgentContextKind[] = ["note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder", "monitor", "digest", "artifact", "memory", "event"];
+const CAPACITY_RECOVERY = "Saved handoffs are unchanged. Narrow discovery with /nobo-help agent handoffs sources --kind note Atlas (or another source kind). A text query alone does not reduce the read. Use show <handoff-id> for saved context; reduce the selected records in their original source tool if one kind is too large.";
 type Field = keyof typeof FIELD_LIMITS;
 type Fields = Record<Field, string>;
 type Change = Field | "sources" | "status";
@@ -203,11 +206,15 @@ function snapshot(raw: unknown): Source | null {
     fingerprint: createHash("sha256").update(JSON.stringify([raw.kind, raw.title, raw.text, updatedAt, dueAt, raw.status ?? null, sourceUrl])).digest("hex"),
   };
 }
-async function contextItems(ctx: AgentFeatureContext): Promise<unknown[]> {
+async function contextItems(ctx: AgentFeatureContext, kinds: AgentContextKind[] = KINDS): Promise<unknown[]> {
   ensureActive(ctx);
   let items: unknown;
-  try { items = await ctx.services.readContext(); }
-  catch { fail("Owner context is unavailable. Saved handoffs were left unchanged; retry later."); }
+  try { items = await readBoundedContext(ctx, kinds); }
+  catch (error) {
+    ensureActive(ctx);
+    if (contextCapacityMessage(error, "")) throw error;
+    fail("Owner context is unavailable. Saved handoffs were left unchanged; retry later.");
+  }
   ensureActive(ctx);
   if (!Array.isArray(items) || items.length > 10_000) fail("Owner context is invalid or exceeds 10,000 items. Saved handoffs were left unchanged.");
   return items;
@@ -223,9 +230,15 @@ function indexItems(items: unknown[]): Map<string, unknown[]> {
   }
   return index;
 }
-async function selectSources(ids: string[], ctx: AgentFeatureContext): Promise<Source[]> {
+async function selectSources(ids: string[], ctx: AgentFeatureContext, recorded: Source[] = []): Promise<Source[]> {
   if (!ids.length) return [];
-  const index = indexItems(await contextItems(ctx));
+  // Refresh uses saved kinds. New production IDs carry a kind-specific prefix;
+  // unknown adapter IDs retain complete discovery rather than guessing a kind.
+  const prefixes: Record<string, AgentContextKind> = { "toolbox:notes:": "note", "toolbox:goals:": "goal", "toolbox:habits:": "habit", "toolbox:journal:": "journal", "toolbox:bookmarks:": "bookmark", "calendar:": "event", "memory-review:": "memory" };
+  const kinds = ids.map(id => recorded.find(source => source.id === id)?.kind ??
+    Object.entries(prefixes).find(([prefix]) => id.startsWith(prefix))?.[1] ?? KINDS.find(kind => id.startsWith(`${kind}:`)));
+  const selectedKinds = kinds.every((kind): kind is AgentContextKind => kind !== undefined) ? [...new Set(kinds)] : KINDS;
+  const index = indexItems(await contextItems(ctx, selectedKinds));
   return ids.map(id => {
     const matches = index.get(id);
     if (!matches?.length) fail(`Source ${id} is missing from owner context. Use sources to find available IDs.`);
@@ -276,10 +289,11 @@ function age(source: Source, ctx: AgentFeatureContext): string {
 async function sourceChecks(r: Revision, ctx: AgentFeatureContext): Promise<string[]> {
   if (!r.sources.length) return [];
   let items: unknown[];
-  try { items = await contextItems(ctx); }
-  catch {
+  try { items = await contextItems(ctx, [...new Set(r.sources.map(source => source.kind))]); }
+  catch (error) {
     ensureActive(ctx);
-    return r.sources.map(s => `${s.id}: UNVERIFIED — owner context unavailable; saved snapshot only. ${age(s, ctx)}.`);
+    const capacity = contextCapacityMessage(error, CAPACITY_RECOVERY);
+    return r.sources.map(s => `${s.id}: UNVERIFIED — ${capacity ?? "owner context unavailable"}; saved snapshot only. ${age(s, ctx)}.`);
   }
   const index = indexItems(items);
   return r.sources.map(s => {
@@ -340,15 +354,18 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   ensureActive(ctx);
   const at = now(ctx);
   if (verb === "sources") {
-    if (args.length > 100) fail("Source query must fit 100 characters.");
-    const index = indexItems(await contextItems(ctx));
+    const scoped = /^--kind\s+(\S+)(?:\s+([\s\S]*))?$/.exec(args);
+    if (args.startsWith("--kind") && (!scoped || !KINDS.includes(scoped[1] as AgentContextKind))) fail(`Use sources --kind <kind> [query]. Kinds: ${KINDS.join(", ")}.`);
+    const query = scoped ? scoped[2] ?? "" : args;
+    if (query.length > 100) fail("Source query must fit 100 characters.");
+    const index = indexItems(await contextItems(ctx, scoped ? [scoped[1] as AgentContextKind] : KINDS));
     const available = [...index.values()].filter(items => items.length === 1).map(items => snapshot(items[0]))
       .filter((s): s is Source => s !== null)
-      .filter(s => !args || args === "-" || `${s.id} ${s.kind} ${s.title} ${s.excerpt}`.toLowerCase().includes(args.toLowerCase()))
+      .filter(s => !query || query === "-" || `${s.id} ${s.kind} ${s.title} ${s.excerpt}`.toLowerCase().includes(query.toLowerCase()))
       .sort((a, b) => a.id.localeCompare(b.id));
     if (!available.length) return "No selectable owner sources found. Capture explicit progress without sources, or try a different source query.";
-    return ["Owner source candidates (not linked until you select IDs):", ...available.slice(0, 30).map(s => `${s.id} · ${s.kind} · ${display(s.title, 280)}`),
-      `Showing ${Math.min(available.length, 30)} of ${available.length} matches. Narrow with sources <query>.`,
+    return ["Owner source candidates (not linked until you select IDs):", `Scope: ${scoped ? scoped[1] : "all source kinds"}.`, ...available.slice(0, 30).map(s => `${s.id} · ${s.kind} · ${display(s.title, 280)}`),
+      `Showing ${Math.min(available.length, 30)} of ${available.length} matches. Narrow with sources --kind <kind> <query>.`,
       "Select with capture … | sources: <id>,<id> or update <handoff-id> | sources: <id>,<id>."].join("\n");
   }
   if (verb === "capture") {
@@ -387,7 +404,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const base = latest(find(await read(ctx), id));
     if (base.status === "closed") fail("This handoff is closed. Capture a new packet to continue; show and resume still provide reference context.");
     if (number !== undefined && number !== base.number) fail(`Revision conflict: current revision is r${base.number}. Show it before retrying your update.`);
-    const sources = patch.sourceIds === undefined ? undefined : await selectSources(patch.sourceIds, ctx);
+    const sources = patch.sourceIds === undefined ? undefined : await selectSources(patch.sourceIds, ctx, base.sources);
     ensureActive(ctx);
     return ctx.store.update<State, string>(KEY, EMPTY, raw => {
       const current = state(raw);
@@ -439,6 +456,8 @@ export const feature: AgentFeature = {
       const result = await execute(command, context);
       return result.length <= 27_500 ? result : `${result.slice(0, 27_300)}\n[Output shortened to fit Slack. Use show and revisions to inspect saved state.]`;
     } catch (error) {
+      const capacity = contextCapacityMessage(error, CAPACITY_RECOVERY);
+      if (capacity) return capacity;
       if (error instanceof HandoffError) return error.message;
       return "Handoffs could not complete this request. Check list/show before retrying; no automatic retry or reset was attempted.";
     }

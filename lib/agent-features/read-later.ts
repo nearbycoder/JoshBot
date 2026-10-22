@@ -1,5 +1,8 @@
+import { contextCapacityMessage } from "./budgets.js";
 import { randomUUID } from "node:crypto";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "Your reading queue is unchanged. Use /nobo-help agent read-later add https://example.com/article | Article | 5 to add a URL directly, or /nobo-help tools bookmarks list then delete <bookmark-id> confirm to reduce the relevant source records.";
 
 const KEY = "queue";
 const MAX_ITEMS = 30;
@@ -323,7 +326,10 @@ async function digest(context: AgentFeatureContext, args: string): Promise<strin
 type Candidate = { id: string; title: string; url: string };
 async function candidates(context: AgentFeatureContext): Promise<Candidate[]> {
   let raw: unknown;
-  try { raw = await context.services.readContext(["bookmark"]); } catch { return fail("Owned bookmarks are unavailable. Your reading queue is unchanged; add a URL directly or try candidates again later."); }
+  try { raw = await context.services.readContext(["bookmark"]); }
+  catch (error) {
+    return fail(contextCapacityMessage(error, CAPACITY_RECOVERY) ?? "Owned bookmarks are unavailable. Your reading queue is unchanged; add a URL directly or try candidates again later.");
+  }
   if (!Array.isArray(raw)) fail("Owned bookmarks are unavailable. Your reading queue is unchanged.");
   const found: Candidate[] = [];
   for (const value of raw.slice(0, 100) as unknown[]) {

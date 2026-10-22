@@ -90,3 +90,7 @@ git diff --check
 ```
 
 Tests use isolated JSON-cloning stores and fake context/generation services. Coverage includes the complete command flow, source selection and freshness, project/owner isolation, limits, malformed input/state, unknown citations, service failures, cancellation, retry purity, and refresh/edit/archive/delete races. Quota tests fill admission capacity, reject growth atomically, expand every accepted source to worst-case JSON-escaped Unicode, generate briefs, archive/restore across revision growth, and delete/recreate while checking that every write remains below 480,000 UTF-8 bytes.
+
+## Source capacity recovery (foundation follow-up)
+
+Source reads partition the explicitly linked/discovered kinds into bounded sequential groups. Capacity failure preserves the project and previous brief. Use `/nobo-help agent project-briefs list`, then `show <project-id> brief`; `sources note` discovers one kind, and `unlink <project-id> <kind> <source-id>` can reduce linked kinds before the next `brief <project-id>`. A single-kind failure needs fewer/smaller records in that original source tool; project relevance text does not narrow the upstream read. See [shared source capacity handling](context.md#capacity-handling-in-the-foundation-follow-up).

@@ -1,4 +1,4 @@
-import { AGENT_CONTEXT_LIMITS, measureAgentContext, resolveAgentBudgets } from "./budgets.js";
+import { AgentContextCapacityError, AGENT_CONTEXT_LIMITS, measureAgentContext, resolveAgentBudgets } from "./budgets.js";
 import { AGENT_BUSY_MESSAGE, agentInvocationSignal, withAgentAdmission } from "./admission.js";
 import { contextRead } from "./context/shared.js";
 import { createHash } from "node:crypto";
@@ -87,7 +87,7 @@ export async function runAgentFeature(
           const items = await abortable(() => Promise.resolve().then(() => options.services.readContext(kinds)).finally(() => { pendingContext = false; }), signal);
           signal.throwIfAborted();
           contextBytes += measureAgentContext(items);
-          if (contextBytes > AGENT_CONTEXT_LIMITS.invocationBytes) throw new Error("This command reached its total context byte budget. Request fewer source kinds, then retry; no sources were truncated.");
+          if (contextBytes > AGENT_CONTEXT_LIMITS.invocationBytes) throw new AgentContextCapacityError("This command reached its total context byte budget (32 MiB). Request fewer source kinds, then retry; no sources were truncated.");
           return items;
         }
       },

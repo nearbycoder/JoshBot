@@ -1,4 +1,7 @@
+import { contextCapacityMessage } from "./budgets.js";
 import type { AgentContextKind, AgentFeature, AgentFeatureContext } from "./types.js";
+
+const CAPACITY_RECOVERY = "No source data was changed. Narrow with /nobo-help agent recall search Atlas --kind note, or reopen a returned full reference with /nobo-help agent recall source note/toolbox:notes:<note-id>. Query/date/limit filters run after reading and do not reduce source bytes. If one kind is too large, reduce its records in the original source tool.";
 
 const KINDS: AgentContextKind[] = ["note", "journal", "goal", "bookmark", "artifact", "memory", "follow-up"];
 const MAX_ITEMS = 1_000;
@@ -347,9 +350,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         ],
       };
     }
-  } catch {
+  } catch (error) {
     if (context.signal?.aborted) return "Recall cancelled.";
-    return "Your personal context could not be read. Try recall again later; no source data was changed.";
+    return contextCapacityMessage(error, CAPACITY_RECOVERY) ?? "Your personal context could not be read. Try recall again later; no source data was changed.";
   }
   const notes = snapshot.notes.length ? `\n\nCoverage notes: ${snapshot.notes.join(" ")}` : "";
   if (parsed.verb === "source") {
