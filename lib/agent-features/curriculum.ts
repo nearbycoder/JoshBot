@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import * as v from 'valibot';
 
 import metadata from './curriculum.metadata.js';
@@ -144,17 +144,30 @@ function invalidate(c: Course, seeds: string[]) {
     if (affected.has(u.id)) u.revision++;
 }
 const envelope = (c: Course) => ({feature: metadata.id, version: 1, record: c});
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Course) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Course) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Course, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Course, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < Number.MAX_SAFE_INTEGER && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function parts(s: string): DisplayPart[] {
   return s.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g)
       .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function page(c: Course, verb: string, body: string, n = 1, expected?: string) {
-  if (expected) assertRevision(c.revision, Number(expected));
+  checkPage(c, n, expected);
   return pageAt(
              paginateParts(parts(body), {
                mode: 'plain',
                title: `${c.id} · revision ${c.revision}`,
-               command: p => `${route} ${verb} ${c.id} page ${p} rev ${c.revision}`
+               command: p => `${route} ${verb} ${c.id} page ${p} rev ${pageToken(c)}`
              }),
              n)
       .text;
@@ -274,12 +287,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       });
   const edit =
       (key: string, change: (c: Course) => void, mode: 'content'|'lifecycle'|'remove' = 'content') => {
-        const expected = get(s, key).revision;
+        const expected = stamp(get(s, key));
         return save(state => {
           const c = get(state, key);
-          assertRevision(c.revision, expected);
+          assertSnapshot(c, expected);
+          if (mode !== 'remove' && c.revision === Number.MAX_SAFE_INTEGER)
+            throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
           change(c);
-          c.revision++;
+          c.revision = Math.min(c.revision + 1, Number.MAX_SAFE_INTEGER);
           return c;
         }, mode);
       };
@@ -293,7 +308,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
                 .join('\n') ||
         `No saved items. Start: ${metadata.example}`}\nOpen: ${route} show ID`;
   }
-  if ((m = command.match(/^(show|plan) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) {
+  if ((m = command.match(/^(show|plan) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) {
     const c = get(s, m[2]);
     return page(
         c, m[1], m[1] === 'show' ? JSON.stringify(envelope(c), null, 2) : plan(c), parsePage(m[3]), m[4]);
@@ -308,7 +323,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const c = get(s, m[1]);
     if (!m[2]) return `Deletes course, units and evidence: ${route} delete ${c.id} confirm`;
     return save(state => {
-      assertRevision(get(state, c.id).revision, c.revision);
+      assertSnapshot(get(state, c.id), stamp(c));
       state.records = state.records.filter(x => x.id !== c.id);
       return null;
     }, 'remove');

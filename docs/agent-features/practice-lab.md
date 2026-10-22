@@ -61,3 +61,9 @@ Generation budget 1, searches/context 0, logical state reads 8/updates 4. Normal
 Node 24.22.1: eight real-runtime/store fake-backed tests cover catalog progress, unequal maxima, historical comparisons, stale scores, all edits/removals, stale/unrelated CAS retries, optional exact evidence/oversize/refusal/cancellation, maximum counts, dynamic lifecycle saturation and complete retrieval/export, corrupt snapshots and owner isolation. Run `node --import tsx --test --test-concurrency=1 tests/agent-practice-lab.test.ts`. No live provider, Slack, production performance or release certification is claimed.
 
 Domain validation and quota failures return private actionable help text. Unknown backend errors expose no raw exception details and direct inspection before retry. Runtime cancellation still propagates.
+
+Explicit removals remain available when only the root revision reaches its valid ceiling (9,007,199,254,740,991); that revision stays at the ceiling. Creation of children, edits and new lifecycle reports at that ceiling are refused. Every intended mutation is also bound to the complete record's content stamp, including every CAS retry. Unrelated records may change and retry safely. No stored fields, schema versions or budgets were added.
+
+Copy the complete emitted continuation: `rev R` now carries `NUMBER:CONTENT_HASH`. A continuation requires the content hash even when a removal leaves the numeric revision unchanged. Start again with `show ID` if an old numeric-only continuation is rejected. Page 1 without a token remains available. Complete pages and exports retain their existing limits.
+
+Pending optional generation compares the full record content before returning. A same-revision erasure discards the draft and cannot repeat removed evidence or save a late result.

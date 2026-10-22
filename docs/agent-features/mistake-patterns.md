@@ -49,3 +49,9 @@ Use the pipe form of `patterns` for literal category labels containing paginatio
 Node 24.22.1: seven real-runtime/store fake-backed tests cover civil boundaries, denominator honesty, overlapping rules, all edits/removals, stale and unrelated CAS retries, maximum counts, dynamic first-follow-up reservation, complete pagination/export, changed list/pattern/review snapshots, strict persisted enums, invalid state/inputs and tenant isolation. Run `node --import tsx --test --test-concurrency=1 tests/agent-mistake-patterns.test.ts`. No live Slack/provider/production tests or release approval is claimed.
 
 Domain validation and quota failures return private actionable help text. Unknown backend errors expose no raw exception details and direct inspection before retry. Runtime cancellation still propagates.
+
+Explicit removals remain available when only the root revision reaches its valid ceiling (9,007,199,254,740,991); that revision stays at the ceiling. Creation of children, edits and new lifecycle reports at that ceiling are refused. Every intended mutation is also bound to the complete record's content stamp, including every CAS retry. Unrelated records may change and retry safely. No stored fields, schema versions or budgets were added.
+
+Copy the complete emitted continuation: `rev R` now carries `NUMBER:CONTENT_HASH`. A continuation requires the content hash even when a removal leaves the numeric revision unchanged. Start again with `show ID` if an old numeric-only continuation is rejected. Page 1 without a token remains available. Complete pages and exports retain their existing limits.
+
+Deleting a rule captures its linked-case set and each case content stamp. Concurrent new links or changed linked cases require a fresh explicit deletion. Unlinking retained cases at the root revision ceiling preserves their other fields and invalidates saved detail continuations.

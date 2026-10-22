@@ -231,3 +231,138 @@ test(
       await rejects(f.run(`delete ${r} confirm`), /Invalid saved/);
       assert.equal(f.backend.data.get(f.key('state')), bad);
     });
+
+async function erasureFixture(f: ReturnType<typeof createAgentFeatureFixture>) {
+  assert.match(await f.run("rule add Check boundaries | testing | 2026-10-23"), /Saved/);
+  const read = async () => (await f.store().read<any>("state"))!;
+  const id = (await read()).records[0].id;
+  for (let i = 0; i < 20; i++) assert.match(await f.run(`opportunity ${id} | 2026-10-24 | success | ${"E".repeat(150)}`), /Saved/);
+  return { id, read };
+}
+
+for (const ceiling of [false, true]) test(`selective erasure retains other children and invalidates complete pages (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  const f = createAgentFeatureFixture(feature), {id, read} = await erasureFixture(f);
+  if (ceiling) { const s = await read(); s.records[0].revision = Number.MAX_SAFE_INTEGER; f.backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const before = (await read()).records[0], child = before.opportunities[0].id;
+  assert.deepEqual(JSON.parse(await f.run(`export ${id}`)).record, before);
+  const first = await f.run(`show ${id}`), continuation = first.match(/\nNext: \/nobo-help agent [\w-]+ ([^\n]+)$/)?.[1];
+  assert.ok(continuation, "fixture exercises real continuation");
+  assert.match(continuation, / rev \d+:[a-f0-9]{64}$/);
+  assert.match(await f.run(continuation), /Page 2\//);
+  assert.match(await f.run(`opportunity ${id} remove ${child} confirm`), /Saved|Removed/);
+  const after = (await read()).records[0];
+  assert.equal(after.revision, ceiling ? Number.MAX_SAFE_INTEGER : before.revision + 1);
+  assert.deepEqual(after.opportunities, before.opportunities.slice(1));
+  assert.match(await f.run(continuation), /changed|snapshot|Restart/i);
+  assert.match(await f.run(continuation.replace(/:[a-f0-9]{64}/, "")), /changed|snapshot|Restart/i);
+  // New pages remain complete and lossless after a saturated revision removal.
+  let cmd = `show ${id}`, body = "";
+  while (cmd) {
+    const reply = await f.run(cmd); assert.ok(reply.length <= 3500 && reply.isWellFormed());
+    const marker = reply.match(/\nPage \d+\/\d+\n/); assert.ok(marker);
+    body += reply.slice(marker.index! + marker[0].length).replace(/\nNext: \/nobo-help agent [^\n]+$/, "");
+    cmd = reply.match(/\nNext: \/nobo-help agent [\w-]+ ([^\n]+)$/)?.[1] ?? "";
+  }
+  assert.deepEqual(JSON.parse(body.slice(body.indexOf("{"))), JSON.parse(await f.run(`export ${id}`)));
+  if (ceiling) {
+    const raw = f.backend.data.get(f.key("state")); assert.match(await f.run(`edit ${id} text | Changed`), /Revision limit/);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+  await f.run(`delete ${id} confirm`); assert.equal((await read()).records.length, 0);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+for (const ceiling of [false, true]) test(`real CAS protects erasure intent and retries unrelated changes (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  let action: (() => Promise<void>) | undefined, winning: string | undefined;
+  const backend = createMemoryAgentBackend({async beforeCompareSet(key) {
+    if (key.endsWith(":state") && action) { const work = action; action = undefined; await work(); winning = backend.data.get(key); }
+  }});
+  const f = createAgentFeatureFixture(feature, {backend}), {id, read} = await erasureFixture(f);
+  await f.run("rule add Check boundaries | testing | 2026-10-23");
+  if (ceiling) { const s = await read(); s.records[0].revision = Number.MAX_SAFE_INTEGER; backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const original = backend.data.get(f.key("state"))!, r = (await read()).records[0], child = r.opportunities[0].id;
+  const remove = (child: string) => `opportunity ${id} remove ${child} confirm`;
+  // A real same-record removal wins while the original operation is awaiting CAS.
+  for (const pending of [remove(child), `delete ${id} confirm`]) {
+    backend.data.set(f.key("state"), original);
+    action = async () => { assert.match(await f.run(remove(r.opportunities[1].id)), /Saved|Removed/); };
+    assert.match(await f.run(pending), /changed/); assert.equal(backend.data.get(f.key("state")), winning);
+  }
+  // A competing writer reintroduces the child ID with changed content. The exact
+  // numeric revision can be unchanged; intent must still bind the full snapshot.
+  backend.data.set(f.key("state"), original);
+  action = async () => {
+    assert.match(await f.run(remove(child)), /Saved|Removed/);
+    const s = await read(), replacement = structuredClone(r.opportunities[0]);
+    replacement.evidence = "Reintroduced evidence";
+    s.records[0].opportunities.push(replacement); backend.data.set(f.key("state"), JSON.stringify(s));
+    assert.equal(JSON.parse(await f.run(`export ${id}`)).record.opportunities.at(-1).id, child);
+  };
+  assert.match(await f.run(remove(child)), /changed/); assert.equal(backend.data.get(f.key("state")), winning);
+  backend.data.set(f.key("state"), original);
+  action = async () => { await f.run(`delete ${id} confirm`); };
+  assert.match(await f.run(remove(child)), /not found/); assert.equal(backend.data.get(f.key("state")), winning);
+  backend.data.set(f.key("state"), original);
+  action = async () => { const other = (await read()).records[1].id; await f.run(`delete ${other} confirm`); };
+  assert.match(await f.run(remove(child)), /Saved|Removed/);
+  const after = await read(); assert.equal(after.records.length, 1);
+  assert.deepEqual(after.records[0].opportunities, r.opportunities.slice(1));
+  assert.ok(backend.calls.conflicts >= 5);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+for (const ceiling of [false, true]) test(`linked rule deletion protects case/rule snapshots (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  let action: (() => Promise<void>) | undefined, winning: string | undefined;
+  const backend = createMemoryAgentBackend({async beforeCompareSet(key) {
+    if (key.endsWith(":state") && action) { const work = action; action = undefined; await work(); winning = backend.data.get(key); }
+  }});
+  const f = createAgentFeatureFixture(feature, {backend});
+  await f.run("record 2026-10-22 | Review | Retain observable evidence | testing");
+  const rid = await rule(f);
+  const read = async () => (await f.store().read<any>("state"))!;
+  const cid = (await read()).records[0].id;
+  await f.run(`link ${cid} | ${rid}`);
+  await f.run(`opportunity ${rid} | 2026-10-24 | success | Keep other evidence`);
+  if (ceiling) { const s = await read(); for (const r of s.records) r.revision = Number.MAX_SAFE_INTEGER; backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const original = backend.data.get(f.key("state"))!, before = (await read()).records[0];
+  for (const target of ["case", "rule", "new-link"]) {
+    backend.data.set(f.key("state"), original);
+    action = async () => {
+      if (target === "case") await f.run(`clear ${cid} situation confirm`);
+      else if (target === "rule") { const r = (await read()).records[1]; await f.run(`opportunity ${rid} remove ${r.opportunities[0].id} confirm`); }
+      else {
+        await f.run("record 2026-10-22 | Added case | New evidence | testing");
+        const s = await read();
+        // Model a valid concurrent legacy writer introducing a link to the same rule.
+        s.records[2].preventionRuleId = rid; backend.data.set(f.key("state"), JSON.stringify(s));
+        assert.equal(JSON.parse(await f.run(`export ${s.records[2].id}`)).record.preventionRuleId, rid);
+      }
+    };
+    assert.match(await f.run(`delete ${rid} confirm`), /changed/i);
+    assert.equal(backend.data.get(f.key("state")), winning);
+  }
+  backend.data.set(f.key("state"), original);
+  assert.match(await f.run(`delete ${rid} confirm`), /Deleted/);
+  const after = (await read()).records;
+  assert.deepEqual(after, [{...before,preventionRuleId:null,revision:ceiling ? Number.MAX_SAFE_INTEGER : before.revision + 1}]);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+test("all field and relationship erasures remain valid at the root revision ceiling", async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await rule(f);
+  await f.run(`opportunity ${id} | 2026-10-24 | success | Evidence`);
+  const s = (await f.store().read<any>("state"))!; s.records[0].revision = Number.MAX_SAFE_INTEGER;
+  const original = JSON.stringify(s);
+  for (const cmd of [`clear ${id} text confirm`,
+    `clear ${id} category confirm`,
+    `clear ${id} startDate confirm`]) {
+    f.backend.data.set(f.key("state"), original);
+    assert.match(await f.run(cmd), /Saved|Removed|Cleared/);
+    assert.notEqual(f.backend.data.get(f.key("state")), original, cmd);
+    const exported = JSON.parse(await f.run(`export ${id}`));
+    assert.equal(exported.record.revision, Number.MAX_SAFE_INTEGER);
+    assert.ok(Buffer.byteLength(JSON.stringify(exported)) <= 24576);
+  }
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});

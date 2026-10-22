@@ -61,6 +61,19 @@ function topological(r: ReadingPath) {
   }
   return order;
 }
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: ReadingPath) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: ReadingPath) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: ReadingPath, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: ReadingPath, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < MAX_REV && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function validate(raw: unknown): State {
   assertStateVersion(raw, 1); serializedBytes(raw); const p = v.safeParse(schema, raw); if (!p.success) throw new CommandError("Invalid saved reading fields; data preserved. Ask the operator for scoped recovery.");
   const ids: string[] = [];
@@ -85,8 +98,8 @@ const get = (s: State, key: string) => { const r = s.records.find(r => r.id === 
 const getItem = (r: ReadingPath, key: string) => { const i = r.items.find(i => i.id === key); if (!i) throw new CommandError("Reading not found; inspect show for full IDs."); return i; };
 const fields = (s: string, sizes: number[]) => pipeFields(s, sizes.map(maxBytes => ({ label: "Field", maxBytes: maxBytes + 32 }))).map((s, i) => boundedText(s, { label: "Field", maxBytes: sizes[i] }));
 function render(r: ReadingPath, command: string, body: string, page: number, expected?: string, suffix = "") {
-  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new CommandError(`Reading path changed or revision missing. Restart: ${route} ${command} page 1`);
-  return pageAt(paginateParts(body.split(/(https?:\/\/[^\s"\\]+|toolbox:bookmarks:[A-Za-z0-9:._/-]+|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[es]1:[a-f0-9]{64})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Reading path ${r.id} · revision ${r.revision}`, command: p => `${route} ${command} page ${p} rev ${r.revision}${suffix}` }), page).text;
+  checkPage(r, page, expected);
+  return pageAt(paginateParts(body.split(/(https?:\/\/[^\s"\\]+|toolbox:bookmarks:[A-Za-z0-9:._/-]+|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}|[es]1:[a-f0-9]{64})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Reading path ${r.id} · revision ${r.revision}`, command: p => `${route} ${command} page ${p} rev ${pageToken(r)}${suffix}` }), page).text;
 }
 function quota(s: State, content: boolean) {
   const future = { ...s, records: s.records.map(r => ({ ...r, revision: MAX_REV, items: r.items.map(i => ({ ...i, completed: true, completedAt: "9999-12-31T23:59:59.999Z" })) })) }, limits = { maxRecords: 10 };
@@ -141,14 +154,17 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
     });
   };
-  const save = (key: string | undefined, change: (s: State, r?: ReadingPath) => string, content = true) => {
-    const expected = key === undefined ? undefined : get(s, key).revision;
-    return ctx.store.update("state", initial, raw => { const state = validate(raw), r = key === undefined ? undefined : get(state, key); if (r) assertRevision(r.revision, expected); const detail = change(state, r); if (r && state.records.includes(r)) r.revision++; validate(state); quota(state, content); return { value: state, result: `${detail}\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `show ${key}` : "list"}` }; });
+  const save = (key: string | undefined, change: (s: State, r?: ReadingPath) => string, content = true, removal = false) => {
+    const expected = key === undefined ? undefined : stamp(get(s, key));
+    return ctx.store.update("state", initial, raw => { const state = validate(raw), r = key === undefined ? undefined : get(state, key); if (r) assertSnapshot(r, expected!); const detail = change(state, r); if (r && state.records.includes(r)) {
+        if (!removal && r.revision === MAX_REV) throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
+        r.revision = Math.min(r.revision + 1, MAX_REV);
+      } validate(state); quota(state, content); return { value: state, result: `${detail}\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `show ${key}` : "list"}` }; });
   };
   let m: RegExpMatchArray | null;
   if ((m = command.match(/^list(?: (?:page )?(\d+))?$/))) { if (parsePage(m[1]) !== 1) throw new CommandError(`Restart: ${route} list 1`); return `Private current list · 1/1\n${s.records.map(r => `${r.id} · ${r.goal.replace(/[\r\n]/g, " ")} · revision ${r.revision}`).join("\n") || `No reading paths. Start: ${metadata.example}`}`; }
-  if ((m = command.match(/^show (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[1]); return render(r, `show ${r.id}`, `Reading reports are not mastery; bookmark snapshots are historical, freshness unverified.\n${JSON.stringify(envelope(r), null, 2)}`, parsePage(m[2]), m[3]); }
-  if ((m = command.match(/^route (\S+)\s*\|\s*(\d+)(?: page (\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[1]), minutes = parseInteger(m[2], { min: 1, max: 10080, label: "Minute budget" }); return render(r, `route ${r.id} | ${minutes}`, plan(r, minutes), parsePage(m[3]), m[4]); }
+  if ((m = command.match(/^show (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) { const r = get(s, m[1]); return render(r, `show ${r.id}`, `Reading reports are not mastery; bookmark snapshots are historical, freshness unverified.\n${JSON.stringify(envelope(r), null, 2)}`, parsePage(m[2]), m[3]); }
+  if ((m = command.match(/^route (\S+)\s*\|\s*(\d+)(?: page (\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) { const r = get(s, m[1]), minutes = parseInteger(m[2], { min: 1, max: 10080, label: "Minute budget" }); return render(r, `route ${r.id} | ${minutes}`, plan(r, minutes), parsePage(m[3]), m[4]); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new CommandError("Record exceeds export limit; use show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete path and owned readings/edges/bookmark snapshots: ${route} delete ${key} confirm`; return deleteRoot(key); }
   if (command.startsWith("create ")) { const [goal] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 10) throw new CommandError("Maximum ten paths. Export/delete one explicitly."); state.records.push({ id: newId, goal, revision: 1, items: [], edges: [], attachments: [] }); return `Saved privately: ${newId}\nInspect: ${route} show ${newId}`; }); }
@@ -156,15 +172,15 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   if ((m = command.match(/^item (\S+) (add|edit) ([\s\S]+)$/))) { const [, key, action, input] = m, f = fields(input, action === "add" ? [160, 4, 200] : [36, 160, 4, 200]), iid = action === "edit" ? f.shift()! : newId, minutes = parseInteger(f[1], { min: 1, max: 1440, label: "Reading minutes" }); return save(key, (_, r) => { let reset = 0; if (action === "add") { if (r!.items.length === 24) throw new CommandError("Maximum 24 readings."); r!.items.push({ id: iid, title: f[0], minutes, sourceLabel: f[2], completed: false, completedAt: null }); } else { const item = getItem(r!, iid); if (item.title !== f[0] || item.sourceLabel !== f[2]) reset = invalidate(r!, [iid]); Object.assign(item, { title: f[0], minutes, sourceLabel: f[2] }); } return `Saved reading: ${iid}. ${reset} completion report(s) cleared for changed material/dependents; minutes-only edits retain reports.`; }); }
   if ((m = command.match(/^(requires|requires-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, f = fields(input, action === "requires" ? [36, 36] : [36, 36, 36]), eid = action === "requires-edit" ? f.shift()! : newId; return save(key, (_, r) => { getItem(r!, f[0]); getItem(r!, f[1]); let reset = 0; const next = { id: eid, dependent: f[0], prerequisite: f[1] }; if (action === "requires") { if (r!.edges.length === 48) throw new CommandError("Maximum 48 prerequisite edges."); r!.edges.push(next); } else { const e = r!.edges.find(e => e.id === eid); if (!e) throw new CommandError("Prerequisite edge not found."); reset += invalidate(r!, [e.dependent]); Object.assign(e, next); } reset += invalidate(r!, [f[0]]); return `Saved prerequisite edge: ${eid}. ${reset} affected completion report(s) cleared; re-report after reviewing changed prerequisites.`; }); }
   if ((m = command.match(/^read (\S+) (\S+)$/))) { const [, key, iid] = m; return save(key, (_, r) => { const item = getItem(r!, iid); if (item.completed) throw new CommandError(`Already reported read. To remove that report: ${route} unread ${key} ${iid} confirm`); item.completed = true; item.completedAt = now; return `Reading ${iid} reported read; this is not mastery or evidence that prerequisites were read. Recompute a route with your chosen minute budget.`; }, false); }
-  if ((m = command.match(/^unread (\S+) (\S+) confirm$/))) { const [, key, iid] = m; return save(key, (_, r) => { getItem(r!, iid); const count = invalidate(r!, [iid]); return `Cleared ${count} reading report(s), including dependents; material remains saved.`; }, false); }
+  if ((m = command.match(/^unread (\S+) (\S+) confirm$/))) { const [, key, iid] = m; return save(key, (_, r) => { getItem(r!, iid); const count = invalidate(r!, [iid]); return `Cleared ${count} reading report(s), including dependents; material remains saved.`; }, false, true); }
   if ((m = command.match(/^bookmarks (\S+)([\s\S]*)$/))) {
     const r = get(s, m[1]); let rest = m[2].trim(), page = 1, rev: string | undefined, expected: string | undefined;
-    const tail = rest.match(/(?:^| )page (\d+) rev (\d+) fingerprint (s1:[a-f0-9]{64})$/); if (tail) { page = parsePage(tail[1]); rev = tail[2]; expected = tail[3]; rest = rest.slice(0, tail.index).trim(); } else { const p = rest.match(/(?:^| )page (\d+)$/); if (p) { page = parsePage(p[1]); rest = rest.slice(0, p.index).trim(); } }
+    const tail = rest.match(/(?:^| )page (\d+) rev (\d+(?::[a-f0-9]{64})?) fingerprint (s1:[a-f0-9]{64})$/); if (tail) { page = parsePage(tail[1]); rev = tail[2]; expected = tail[3]; rest = rest.slice(0, tail.index).trim(); } else { const p = rest.match(/(?:^| )page (\d+)$/); if (p) { page = parsePage(p[1]); rest = rest.slice(0, p.index).trim(); } }
     const selected = rest.match(/^--source (\S+)$/); if (rest.startsWith("--") && !selected) throw new CommandError("Use bookmarks PATH [QUERY or --source SOURCE_ID] [page N rev R fingerprint F].");
     boundedText(rest, { label: "Query/source selector", maxBytes: 300, allowEmpty: true }); const commandBase = `bookmarks ${r.id}${rest ? ` ${rest}` : ""}`;
-    if ((page > 1 && !rev) || (rev && rev !== String(r.revision))) throw new CommandError(`Path changed; restart: ${route} ${commandBase} page 1`);
+    checkPage(r, page, rev);
     const sourceSet = await readBookmarks(ctx); if (expected && expected !== sourceSet.fingerprint) throw new CommandError(`Bookmark snapshot changed; restart: ${route} ${commandBase} page 1`);
-    assertRevision(get(validate(await ctx.store.read("state") ?? initial), r.id).revision, r.revision);
+    assertSnapshot(get(validate(await ctx.store.read("state") ?? initial), r.id), stamp(r));
     const rows = sourceSet.rows.filter(row => selected ? row.source.id === selected[1] : rest.toLowerCase().split(/\s+/).every(token => `${row.source.title} ${row.source.text}`.toLowerCase().includes(token)));
     const out = [`Owned permitted bookmarks: ${rows.length} matches of ${sourceSet.rows.length}; selection only, no article fetch or invented time estimate.\n`];
     for (const a of r.attachments) { const src = a.evidence.sources[0] as AgentContextItem, current = sourceSet.rows.find(row => row.source.id === src.id); out.push(`Attachment ${a.id}: ${!current ? "absent/unavailable in this permitted snapshot, not proven deleted everywhere" : current.fingerprint !== a.evidence.fingerprint ? "STALE: bookmark changed; saved reference is historical" : "unchanged within adapter coverage"}.\n`); }
@@ -178,7 +194,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const snapshot = evidence([row.source]);
     return save(key, (_, path) => { const next = { id: aid, itemId: iid, capturedAt: now, evidence: snapshot }; let reset = 0; if (action === "attach") { if (path!.attachments.length === 10) throw new CommandError("Maximum ten bookmark snapshots."); path!.attachments.push(next); } else { const a = path!.attachments.find(a => a.id === aid); if (!a) throw new CommandError("Attachment not found."); reset += invalidate(path!, [a.itemId]); Object.assign(a, next); } reset += invalidate(path!, [iid]); return `Saved selected bookmark: ${aid}; exact URL/metadata retained. ${reset} affected completion report(s) cleared. Owning bookmark read flags do not mark this reading complete.`; });
   }
-  if ((m = command.match(/^remove (\S+) (item|edge|attachment) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { let reset = 0; if (kind === "item") { getItem(r!, child); reset = invalidate(r!, [child]); r!.items = r!.items.filter(i => i.id !== child); r!.edges = r!.edges.filter(e => e.dependent !== child && e.prerequisite !== child); r!.attachments = r!.attachments.filter(a => a.itemId !== child); } else if (kind === "edge") { const e = r!.edges.find(e => e.id === child); if (!e) throw new CommandError("Edge not found."); reset = invalidate(r!, [e.dependent]); r!.edges = r!.edges.filter(e => e.id !== child); } else { const a = r!.attachments.find(a => a.id === child); if (!a) throw new CommandError("Attachment not found."); reset = invalidate(r!, [a.itemId]); r!.attachments = r!.attachments.filter(a => a.id !== child); } return `Removed ${kind}: ${child}; ${reset} affected completion report(s) cleared. Item removal also removes incident edges/bookmark snapshot.`; }, false); }
+  if ((m = command.match(/^remove (\S+) (item|edge|attachment) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { let reset = 0; if (kind === "item") { getItem(r!, child); reset = invalidate(r!, [child]); r!.items = r!.items.filter(i => i.id !== child); r!.edges = r!.edges.filter(e => e.dependent !== child && e.prerequisite !== child); r!.attachments = r!.attachments.filter(a => a.itemId !== child); } else if (kind === "edge") { const e = r!.edges.find(e => e.id === child); if (!e) throw new CommandError("Edge not found."); reset = invalidate(r!, [e.dependent]); r!.edges = r!.edges.filter(e => e.id !== child); } else { const a = r!.attachments.find(a => a.id === child); if (!a) throw new CommandError("Attachment not found."); reset = invalidate(r!, [a.itemId]); r!.attachments = r!.attachments.filter(a => a.id !== child); } return `Removed ${kind}: ${child}; ${reset} affected completion report(s) cleared. Item removal also removes incident edges/bookmark snapshot.`; }, false, true); }
   throw new CommandError(`Unknown/incomplete command. Use ${route} help`);
 }
 export default { ...metadata, async execute(command, ctx) { try { return await execute(command, ctx); } catch (error) { ctx.signal?.throwIfAborted(); if (error instanceof CommandError) return `${error.message}\nNext: ${route} help`;

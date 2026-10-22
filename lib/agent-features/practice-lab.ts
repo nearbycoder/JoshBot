@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import * as v from 'valibot';
 
 import {assertQuota as kitAssertQuota, assertRevision as kitAssertRevision, assertStateVersion as kitAssertStateVersion, serializedBytes as kitSerializedBytes} from './feature-kit/bounded-state.js';
@@ -138,17 +138,30 @@ function lowest(a: Attempt) {
 }
 const getMax = (a: Attempt, key: string) => a.rubric.dimensions.find(d => d.id === key)!.maxScore!;
 const envelope = (d: Drill) => ({feature: metadata.id, version: 1, record: d});
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Drill) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Drill) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Drill, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Drill, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < Number.MAX_SAFE_INTEGER && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function parts(s: string): DisplayPart[] {
   return s.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g)
       .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function page(d: Drill, verb: string, body: string, n = 1, expected?: string) {
-  if (expected) assertRevision(d.revision, Number(expected));
+  checkPage(d, n, expected);
   return pageAt(
              paginateParts(parts(body), {
                mode: 'plain',
                title: `${d.id} · revision ${d.revision} · rubric ${d.rubricVersion}`,
-               command: p => `${route} ${verb} ${d.id} page ${p} rev ${d.revision}`
+               command: p => `${route} ${verb} ${d.id} page ${p} rev ${pageToken(d)}`
              }),
              n)
       .text;
@@ -302,12 +315,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       });
   const edit =
       (key: string, change: (d: Drill) => void, mode: 'content'|'lifecycle'|'remove' = 'content') => {
-        const expected = get(s, key).revision;
+        const expected = stamp(get(s, key));
         return save(state => {
           const d = get(state, key);
-          assertRevision(d.revision, expected);
+          assertSnapshot(d, expected);
+          if (mode !== 'remove' && d.revision === Number.MAX_SAFE_INTEGER)
+            throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
           change(d);
-          d.revision++;
+          d.revision = Math.min(d.revision + 1, Number.MAX_SAFE_INTEGER);
           return d;
         }, mode);
       };
@@ -321,7 +336,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
                 .join('\n') ||
         `No saved items. Start: ${metadata.example}`}\nOpen: ${route} show ID`;
   }
-  if ((m = command.match(/^(show|progress|next) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) {
+  if ((m = command.match(/^(show|progress|next) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) {
     const d = get(s, m[2]);
     return page(
         d, m[1],
@@ -341,7 +356,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     if (!m[2])
       return `Deletes drill, attempts and historical rubric evidence: ${route} delete ${d.id} confirm`;
     return save(state => {
-      assertRevision(get(state, d.id).revision, d.revision);
+      assertSnapshot(get(state, d.id), stamp(d));
       state.records = state.records.filter(x => x.id !== d.id);
       return null;
     }, 'remove');
@@ -506,7 +521,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     }
     ctx.signal?.throwIfAborted();
     const latest = validate(await ctx.store.read('state') ?? initial).records.find(x => x.id === d.id);
-    if (!latest || latest.revision !== d.revision)
+    if (!latest || stamp(latest) !== stamp(d))
       return `Drill changed or was deleted; stale result discarded. Use ${route} list`;
     try {
       if (output.length > 4000) throw new CommandError();

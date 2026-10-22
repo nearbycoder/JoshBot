@@ -227,3 +227,108 @@ test(
           f.run(`requires ${c} ${units[11]} | ${units.slice(0, 6).join(',')}`), /60 prerequisite/);
       assert.equal(f.backend.data.get(f.key('state')), before);
     });
+
+async function erasureFixture(f: ReturnType<typeof createAgentFeatureFixture>) {
+  assert.match(await f.run("create Learn joins | 3 | 25"), /Saved/);
+  const read = async () => (await f.store().read<any>("state"))!;
+  const id = (await read()).records[0].id;
+  for (let i = 0; i < 12; i++) assert.match(await f.run(`unit ${id} add Unit | 2 | ${"E".repeat(240)}`), /Saved/);
+  return { id, read };
+}
+
+for (const ceiling of [false, true]) test(`selective erasure retains other children and invalidates complete pages (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  const f = createAgentFeatureFixture(feature), {id, read} = await erasureFixture(f);
+  if (ceiling) { const s = await read(); s.records[0].revision = Number.MAX_SAFE_INTEGER; f.backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const before = (await read()).records[0], child = before.units[0].id;
+  assert.deepEqual(JSON.parse(await f.run(`export ${id}`)).record, before);
+  const first = await f.run(`show ${id}`), continuation = first.match(/\nNext: \/nobo-help agent [\w-]+ ([^\n]+)$/)?.[1];
+  assert.ok(continuation, "fixture exercises real continuation");
+  assert.match(continuation, / rev \d+:[a-f0-9]{64}$/);
+  assert.match(await f.run(continuation), /Page 2\//);
+  assert.match(await f.run(`unit ${id} remove ${child} confirm`), /Saved|Removed/);
+  const after = (await read()).records[0];
+  assert.equal(after.revision, ceiling ? Number.MAX_SAFE_INTEGER : before.revision + 1);
+  assert.deepEqual(after.units, before.units.slice(1));
+  assert.match(await f.run(continuation), /changed|snapshot|Restart/i);
+  assert.match(await f.run(continuation.replace(/:[a-f0-9]{64}/, "")), /changed|snapshot|Restart/i);
+  // New pages remain complete and lossless after a saturated revision removal.
+  let cmd = `show ${id}`, body = "";
+  while (cmd) {
+    const reply = await f.run(cmd); assert.ok(reply.length <= 3500 && reply.isWellFormed());
+    const marker = reply.match(/\nPage \d+\/\d+\n/); assert.ok(marker);
+    body += reply.slice(marker.index! + marker[0].length).replace(/\nNext: \/nobo-help agent [^\n]+$/, "");
+    cmd = reply.match(/\nNext: \/nobo-help agent [\w-]+ ([^\n]+)$/)?.[1] ?? "";
+  }
+  assert.deepEqual(JSON.parse(body.slice(body.indexOf("{"))), JSON.parse(await f.run(`export ${id}`)));
+  if (ceiling) {
+    const raw = f.backend.data.get(f.key("state")); assert.match(await f.run(`edit ${id} target | Changed`), /Revision limit/);
+    assert.equal(f.backend.data.get(f.key("state")), raw);
+  }
+  await f.run(`delete ${id} confirm`); assert.equal((await read()).records.length, 0);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+for (const ceiling of [false, true]) test(`real CAS protects erasure intent and retries unrelated changes (${ceiling ? "ceiling" : "ordinary"})`, async () => {
+  let action: (() => Promise<void>) | undefined, winning: string | undefined;
+  const backend = createMemoryAgentBackend({async beforeCompareSet(key) {
+    if (key.endsWith(":state") && action) { const work = action; action = undefined; await work(); winning = backend.data.get(key); }
+  }});
+  const f = createAgentFeatureFixture(feature, {backend}), {id, read} = await erasureFixture(f);
+  await f.run("create Learn joins | 3 | 25");
+  if (ceiling) { const s = await read(); s.records[0].revision = Number.MAX_SAFE_INTEGER; backend.data.set(f.key("state"), JSON.stringify(s)); }
+  const original = backend.data.get(f.key("state"))!, r = (await read()).records[0], child = r.units[0].id;
+  const remove = (child: string) => `unit ${id} remove ${child} confirm`;
+  // A real same-record removal wins while the original operation is awaiting CAS.
+  for (const pending of [remove(child), `delete ${id} confirm`]) {
+    backend.data.set(f.key("state"), original);
+    action = async () => { assert.match(await f.run(remove(r.units[1].id)), /Saved|Removed/); };
+    assert.match(await f.run(pending), /changed/); assert.equal(backend.data.get(f.key("state")), winning);
+  }
+  // A competing writer reintroduces the child ID with changed content. The exact
+  // numeric revision can be unchanged; intent must still bind the full snapshot.
+  backend.data.set(f.key("state"), original);
+  action = async () => {
+    assert.match(await f.run(remove(child)), /Saved|Removed/);
+    const s = await read(), replacement = structuredClone(r.units[0]);
+    replacement.label = "Reintroduced evidence";
+    s.records[0].units.push(replacement); backend.data.set(f.key("state"), JSON.stringify(s));
+    assert.equal(JSON.parse(await f.run(`export ${id}`)).record.units.at(-1).id, child);
+  };
+  assert.match(await f.run(remove(child)), /changed/); assert.equal(backend.data.get(f.key("state")), winning);
+  backend.data.set(f.key("state"), original);
+  action = async () => { await f.run(`delete ${id} confirm`); };
+  assert.match(await f.run(remove(child)), /not found/); assert.equal(backend.data.get(f.key("state")), winning);
+  backend.data.set(f.key("state"), original);
+  action = async () => { const other = (await read()).records[1].id; await f.run(`delete ${other} confirm`); };
+  assert.match(await f.run(remove(child)), /Saved|Removed/);
+  const after = await read(); assert.equal(after.records.length, 1);
+  assert.deepEqual(after.records[0].units, r.units.slice(1));
+  assert.ok(backend.calls.conflicts >= 5);
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});
+
+test("all field and relationship erasures remain valid at the root revision ceiling", async () => {
+  const f = createAgentFeatureFixture(feature);
+  const id = await create(f), a = await unit(f,id,"A"), b = await unit(f,id,"B");
+  await f.run(`requires ${id} ${b} | ${a}`);
+  await f.run(`demonstrate ${id} ${a} | Evidence A`); await f.run(`demonstrate ${id} ${b} | Evidence B`);
+  const s = (await f.store().read<any>("state"))!; s.records[0].revision = Number.MAX_SAFE_INTEGER;
+  const original = JSON.stringify(s);
+  for (const cmd of [`clear ${id} target confirm`,
+    `clear ${id} sessionsPerWeek confirm`,
+    `clear ${id} sessionMinutes confirm`,
+    `unit ${id} clear ${a} label confirm`,
+    `unit ${id} clear ${a} estimateSessions confirm`,
+    `unit ${id} clear ${a} readinessTest confirm`,
+    `unit ${id} remove ${a} confirm`,
+    `requires ${id} ${b} clear confirm`,
+    `reopen ${id} ${a} confirm`]) {
+    f.backend.data.set(f.key("state"), original);
+    assert.match(await f.run(cmd), /Saved|Removed|Cleared/);
+    assert.notEqual(f.backend.data.get(f.key("state")), original, cmd);
+    const exported = JSON.parse(await f.run(`export ${id}`));
+    assert.equal(exported.record.revision, Number.MAX_SAFE_INTEGER);
+    assert.ok(Buffer.byteLength(JSON.stringify(exported)) <= 24576);
+  }
+  assert.deepEqual(f.calls, {generate:0,search:0,readContext:0});
+});

@@ -1,4 +1,4 @@
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import * as v from 'valibot';
 
 import {assertQuota as kitAssertQuota, assertRevision as kitAssertRevision, assertStateVersion as kitAssertStateVersion, serializedBytes as kitSerializedBytes} from './feature-kit/bounded-state.js';
@@ -108,17 +108,30 @@ const getConcept = (s: Session, key: string) => {
   return c;
 };
 const envelope = (s: Session) => ({feature: metadata.id, version: 1, record: s});
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Session) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Session) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Session, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Session, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < Number.MAX_SAFE_INTEGER && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function parts(s: string): DisplayPart[] {
   return s.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g)
       .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function page(s: Session, verb: string, body: string, n = 1, expected?: string) {
-  if (expected) assertRevision(s.revision, Number(expected));
+  checkPage(s, n, expected);
   return pageAt(
              paginateParts(parts(body), {
                mode: 'plain',
                title: `${s.id} · revision ${s.revision}`,
-               command: p => `${route} ${verb} ${s.id} page ${p} rev ${s.revision}`
+               command: p => `${route} ${verb} ${s.id} page ${p} rev ${pageToken(s)}`
              }),
              n)
       .text;
@@ -225,12 +238,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       });
   const edit =
       (key: string, change: (s: Session) => void, mode: 'content'|'lifecycle'|'remove' = 'content') => {
-        const expected = get(s, key).revision;
+        const expected = stamp(get(s, key));
         return save(state => {
           const r = get(state, key);
-          assertRevision(r.revision, expected);
+          assertSnapshot(r, expected);
+          if (mode !== 'remove' && r.revision === Number.MAX_SAFE_INTEGER)
+            throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
           change(r);
-          r.revision++;
+          r.revision = Math.min(r.revision + 1, Number.MAX_SAFE_INTEGER);
           return r;
         }, mode);
       };
@@ -244,7 +259,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
                 .join('\n') ||
         `No saved items. Start: ${metadata.example}`}\nOpen: ${route} show ID`;
   }
-  if ((m = command.match(/^(show|review) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) {
+  if ((m = command.match(/^(show|review) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) {
     const r = get(s, m[2]);
     return page(
         r, m[1], m[1] === 'show' ? JSON.stringify(envelope(r), null, 2) : review(r), parsePage(m[3]), m[4]);
@@ -259,7 +274,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const r = get(s, m[1]);
     if (!m[2]) return `Deletes session, concepts and self-ratings: ${route} delete ${r.id} confirm`;
     return save(state => {
-      assertRevision(get(state, r.id).revision, r.revision);
+      assertSnapshot(get(state, r.id), stamp(r));
       state.records = state.records.filter(x => x.id !== r.id);
       return null;
     }, 'remove');
@@ -417,7 +432,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     }
     ctx.signal?.throwIfAborted();
     const latest = validate(await ctx.store.read('state') ?? initial).records.find(x => x.id === r.id);
-    if (!latest || latest.revision !== r.revision)
+    if (!latest || stamp(latest) !== stamp(r))
       return `Session changed or was deleted; stale result discarded. Use ${route} list`;
     try {
       if (output.length > 4000) throw new CommandError();

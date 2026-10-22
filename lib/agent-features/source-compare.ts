@@ -34,6 +34,19 @@ type State = v.InferOutput<typeof schema>;
 const initial: State = { version: 1, records: [] };
 const limits = { maxBytes: 65536, contentBytes: 49152, maxRecordBytes: 24576, maxRecords: 6 };
 const envelope = (r: Comparison) => ({ feature: metadata.id, version: 1, record: r });
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Comparison) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Comparison) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Comparison, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Comparison, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < MAX_REV && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function validate(raw: unknown): State {
   assertStateVersion(raw, 1); const p = v.safeParse(schema, raw); if (!p.success) throw new CommandError("Invalid saved comparison fields; data preserved. Ask the operator for scoped recovery.");
   const ids: string[] = [];
@@ -51,8 +64,8 @@ const getTopic = (r: Comparison, key: string) => { const t = r.topics.find(t => 
 const getSource = (r: Comparison, key: string) => { const s = r.sources.find(s => s.id === key); if (!s) throw new CommandError("Source not found; inspect show for full IDs."); return s; };
 const fields = (s: string, sizes: number[]) => pipeFields(s, sizes.map(maxBytes => ({ label: "Field", maxBytes: maxBytes + 32 }))).map((s, i) => boundedText(s, { label: "Field", maxBytes: sizes[i] }));
 function render(r: Comparison, verb: string, body: string, page: number, expected?: string) {
-  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new CommandError(`Comparison changed or revision missing. Restart: ${route} ${verb} ${r.id} page 1`);
-  return pageAt(paginateParts(body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Comparison ${r.id} · revision ${r.revision}`, command: p => `${route} ${verb} ${r.id} page ${p} rev ${r.revision}` }), page).text;
+  checkPage(r, page, expected);
+  return pageAt(paginateParts(body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Comparison ${r.id} · revision ${r.revision}`, command: p => `${route} ${verb} ${r.id} page ${p} rev ${pageToken(r)}` }), page).text;
 }
 function quota(s: State, content: boolean) {
   // Pasted sources, topic wording and quote selections are content. Reserve all
@@ -78,7 +91,6 @@ function compare(r: Comparison) {
   return out.join("");
 }
 type DigestItem = { topicId: string; cells: { sourceId: string; excerpt: string }[] };
-const stamp = (r: Comparison) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
 function composeDigest(r: Comparison, items: DigestItem[]) {
   const lines = ["Unsaved interpretation — model-selected evidence digest. Selection/order are model opinion; all displayed words below are supplied fields or fixed labels. No generated factual prose or truth ranking.\n"];
   for (const item of items) {
@@ -144,11 +156,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
     });
   };
-  const save = (key: string | undefined, change: (s: State, r?: Comparison) => string, content = true) => {
-    const expected = key === undefined ? undefined : get(s, key).revision;
+  const save = (key: string | undefined, change: (s: State, r?: Comparison) => string, content = true, removal = false) => {
+    const expected = key === undefined ? undefined : stamp(get(s, key));
     return ctx.store.update("state", initial, raw => {
-      const state = validate(raw), r = key === undefined ? undefined : get(state, key); if (r) assertRevision(r.revision, expected);
-      const detail = change(state, r); if (r && state.records.includes(r)) { if (r.revision === MAX_REV) throw new CommandError("Revision limit reached; export then delete the record explicitly."); r.revision++; }
+      const state = validate(raw), r = key === undefined ? undefined : get(state, key); if (r) assertSnapshot(r, expected!);
+      const detail = change(state, r); if (r && state.records.includes(r)) {
+        if (!removal && r.revision === MAX_REV) throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
+        r.revision = Math.min(r.revision + 1, MAX_REV);
+      }
       validate(state); quota(state, content);
       return { value: state, result: `${detail}\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `compare ${key}` : "list"}` };
     });
@@ -158,7 +173,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   const invalidate = (r: Comparison, predicate: (c: Comparison["cells"][number]) => boolean) => { const cells = r.cells.filter(predicate); for (const c of cells) getTopic(r, c.topicId).label = "unknown"; r.cells = r.cells.filter(c => !predicate(c)); return cells.length; };
   let m: RegExpMatchArray | null;
   if ((m = command.match(/^list(?: (?:page )?(\d+))?$/))) { if (parsePage(m[1]) !== 1) throw new CommandError(`Restart: ${route} list 1`); return `Private current list · 1/1\n${s.records.map(r => `${r.id} · ${r.title.replace(/[\r\n]/g, " ")} · revision ${r.revision}`).join("\n") || `No comparisons. Start: ${metadata.example}`}`; }
-  if ((m = command.match(/^(show|compare) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : compare(r), parsePage(m[3]), m[4]); }
+  if ((m = command.match(/^(show|compare) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : compare(r), parsePage(m[3]), m[4]); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new CommandError("Record exceeds export limit; use show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^synthesize (\S+)$/))) return synthesize(get(s, m[1]), ctx);
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete comparison and all source/topic/cell data: ${route} delete ${key} confirm`; return deleteRoot(key); }
@@ -172,7 +187,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   if ((m = command.match(/^topic (\S+) (add|edit) ([\s\S]+)$/))) { const [, key, action, input] = m, f = fields(input, action === "add" ? [200] : [36, 200]), tid = action === "edit" ? f.shift()! : newId; return save(key, (_, r) => { let cleared = 0; if (action === "add") { if (r!.topics.length === 8) throw new CommandError("Maximum eight topics."); r!.topics.push({ id: tid, title: f[0], label: "unknown" }); } else { const t = getTopic(r!, tid); if (t.title !== f[0]) { cleared = invalidate(r!, c => c.topicId === tid); t.label = "unknown"; } t.title = f[0]; } return `Saved topic: ${tid}. ${cleared} dependent quote(s) cleared; edited topic label reset to unknown.`; }); }
   if ((m = command.match(/^(quote|quote-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, f = fields(input, action === "quote" ? [36, 36, 2400] : [36, 36, 36, 2400]), cid = action === "quote-edit" ? f.shift()! : newId; boundedText(f[2], { label: "Quote", maxBytes: 2400, maxUnits: 600 }); return save(key, (_, r) => { const t = getTopic(r!, f[0]); getSource(r!, f[1]); const next = { id: cid, topicId: f[0], sourceId: f[1], quote: f[2] }; if (action === "quote") { if (r!.cells.length === 40) throw new CommandError("Maximum 40 quote cells; use quote-edit or remove a cell explicitly."); r!.cells.push(next); } else { const c = r!.cells.find(c => c.id === cid); if (!c) throw new CommandError("Cell not found."); getTopic(r!, c.topicId).label = "unknown"; Object.assign(c, next); } t.label = "unknown"; return `Saved exact quote cell: ${cid}. Affected user labels reset to unknown.`; }); }
   if ((m = command.match(/^label (\S+) ([\s\S]+)$/))) { const [, key, input] = m, [tid, value] = fields(input, [36, 12]); if (!v.is(label, value)) throw new CommandError("Label must be unknown, agreement or disagreement; these are user judgments."); return save(key, (_, r) => { getTopic(r!, tid).label = value; return `Saved user label for ${tid}: ${value}; not a factual finding.`; }, false); }
-  if ((m = command.match(/^remove (\S+) (source|topic|quote|label) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { let cleared = 0; if (kind === "source") { getSource(r!, child); cleared = invalidate(r!, c => c.sourceId === child); r!.sources = r!.sources.filter(s => s.id !== child); } else if (kind === "topic") { getTopic(r!, child); cleared = invalidate(r!, c => c.topicId === child); r!.topics = r!.topics.filter(t => t.id !== child); } else if (kind === "quote") { if (!r!.cells.some(c => c.id === child)) throw new CommandError("Cell not found."); cleared = invalidate(r!, c => c.id === child); } else getTopic(r!, child).label = "unknown"; return `Removed ${kind}: ${child}; ${cleared} dependent quote(s) cleared, affected labels unknown.`; }, false); }
+  if ((m = command.match(/^remove (\S+) (source|topic|quote|label) (\S+) confirm$/))) { const [, key, kind, child] = m; return save(key, (_, r) => { let cleared = 0; if (kind === "source") { getSource(r!, child); cleared = invalidate(r!, c => c.sourceId === child); r!.sources = r!.sources.filter(s => s.id !== child); } else if (kind === "topic") { getTopic(r!, child); cleared = invalidate(r!, c => c.topicId === child); r!.topics = r!.topics.filter(t => t.id !== child); } else if (kind === "quote") { if (!r!.cells.some(c => c.id === child)) throw new CommandError("Cell not found."); cleared = invalidate(r!, c => c.id === child); } else getTopic(r!, child).label = "unknown"; return `Removed ${kind}: ${child}; ${cleared} dependent quote(s) cleared, affected labels unknown.`; }, false, true); }
   throw new CommandError(`Unknown/incomplete command. Use ${route} help`);
 }
 export default { ...metadata, async execute(command, ctx) { try { return await execute(command, ctx); } catch (error) { ctx.signal?.throwIfAborted(); if (error instanceof CommandError) return `${error.message}\nNext: ${route} help`;

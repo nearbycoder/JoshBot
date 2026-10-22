@@ -56,3 +56,9 @@ Full schema, offsets, source bindings, references and revisions validate before 
 Node 24.22.1: ten real-runtime/store fake-backed tests cover lexical honesty, exact spans, all edits/removals, stale assessment and unrelated CAS retries, optional references/quotes/count/oversize/refusal, late edit/delete/abort, worst-case Unicode lifecycle saturation, full pages/export, exact boundaries, strict persisted enum types and tenant/corruption isolation. Run `node --import tsx --test --test-concurrency=1 tests/agent-teach-back.test.ts`. Fake checks do not certify live Slack delivery, upstream billing or production performance.
 
 Domain validation and quota failures return private actionable help text. Unknown backend errors expose no raw exception details and direct inspection before retry. Runtime cancellation still propagates.
+
+Explicit removals remain available when only the root revision reaches its valid ceiling (9,007,199,254,740,991); that revision stays at the ceiling. Creation of children, edits and new lifecycle reports at that ceiling are refused. Every intended mutation is also bound to the complete record's content stamp, including every CAS retry. Unrelated records may change and retry safely. No stored fields, schema versions or budgets were added.
+
+Copy the complete emitted continuation: `rev R` now carries `NUMBER:CONTENT_HASH`. A continuation requires the content hash even when a removal leaves the numeric revision unchanged. Start again with `show ID` if an old numeric-only continuation is rejected. Page 1 without a token remains available. Complete pages and exports retain their existing limits.
+
+Pending optional generation compares the full record content before returning. A same-revision erasure discards the draft and cannot repeat removed evidence or save a late result.

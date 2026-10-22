@@ -132,17 +132,30 @@ const getCase = (s: State, key: string) => {
   return r;
 };
 const envelope = (r: Record) => ({feature: metadata.id, version: 1, record: r});
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Record) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Record) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Record, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Record, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < Number.MAX_SAFE_INTEGER && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function parts(s: string): DisplayPart[] {
   return s.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g)
       .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function page(r: Record, verb: string, body: string, n = 1, expected?: string, snapshot?: string) {
-  if (expected) assertRevision(r.revision, Number(expected));
+  checkPage(r, n, expected);
   return pageAt(
              paginateParts(parts(body), {
                mode: 'plain',
                title: `${r.kind} ${r.id} · revision ${r.revision}`,
-               command: p => `${route} ${verb} ${r.id} page ${p} rev ${r.revision}${
+               command: p => `${route} ${verb} ${r.id} page ${p} rev ${pageToken(r)}${
                    snapshot ? ` snapshot ${snapshot}` : ''}`
              }),
              n)
@@ -259,12 +272,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   const edit =
       (key: string, change: (r: Record, state: State) => void,
        mode: 'content'|'lifecycle'|'remove' = 'content') => {
-        const expected = get(s, key).revision;
+        const expected = stamp(get(s, key));
         return save(state => {
           const r = get(state, key);
-          assertRevision(r.revision, expected);
+          assertSnapshot(r, expected);
+          if (mode !== 'remove' && r.revision === Number.MAX_SAFE_INTEGER)
+            throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
           change(r, state);
-          r.revision++;
+          r.revision = Math.min(r.revision + 1, Number.MAX_SAFE_INTEGER);
           return r;
         }, mode);
       };
@@ -284,7 +299,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         n < total ? `Next: ${route} list ${n + 1} snapshot ${snapshot}` : `Open: ${route} show ID`}`;
   }
   if ((m = command.match(
-           /^(show|review) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?(?: snapshot ([0-9a-f]{64}))?$/))) {
+           /^(show|review) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?(?: snapshot ([0-9a-f]{64}))?$/))) {
     const r = get(s, m[2]), snapshot = createHash('sha256').update(JSON.stringify(s)).digest('hex');
     if (m[5] && m[5] !== snapshot)
       throw new CommandError('Case/rule data changed; restart review from page 1.');
@@ -304,12 +319,16 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       return `Deletes this record and owned opportunities; linked cases are retained and unlinked: ${
           route} delete ${r.id} confirm`;
     return save(state => {
-      assertRevision(get(state, r.id).revision, r.revision);
+      assertSnapshot(get(state, r.id), stamp(r));
+      const linked = cases(s).filter(c => c.preventionRuleId === r.id);
+      const currentLinked = cases(state).filter(c => c.preventionRuleId === r.id);
+      if (currentLinked.length !== linked.length || currentLinked.some(c => !linked.some(old => old.id === c.id && stamp(old) === stamp(c))))
+        throw new CommandError("Linked cases changed; inspect before deleting the rule again.");
       state.records = state.records.filter(x => x.id !== r.id);
       for (const c of cases(state))
         if (c.preventionRuleId === r.id) {
           c.preventionRuleId = null;
-          c.revision++;
+          c.revision = Math.min(c.revision + 1, Number.MAX_SAFE_INTEGER);
         }
       return null;
     }, 'remove');
@@ -402,10 +421,10 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     }, 'remove');
   }
   if ((m = command.match(/^link (\S+)\s*\|([\s\S]*)$/))) {
-    const key = m[1], [rid] = fields(m[2], [36]), expectedRule = getRule(s, rid).revision;
+    const key = m[1], [rid] = fields(m[2], [36]), expectedRule = stamp(getRule(s, rid));
     return edit(key, (_, state) => {
       const c = getCase(state, key), r = getRule(state, rid);
-      assertRevision(r.revision, expectedRule);
+      assertSnapshot(r, expectedRule);
       if (c.category !== r.category) throw new CommandError('Case and rule categories must match.');
       c.preventionRuleId = r.id;
     }, 'lifecycle');

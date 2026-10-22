@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as v from "valibot";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 import metadata from "./timeline-builder.metadata.js";
@@ -37,6 +37,19 @@ type Timeline = v.InferOutput<typeof record>;
 type State = v.InferOutput<typeof schema>;
 const initial: State = { version: 1, records: [] };
 const envelope = (r: Timeline) => ({ feature: metadata.id, version: 1, record: r });
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Timeline) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Timeline) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Timeline, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Timeline, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < MAX_REV && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function validate(raw: unknown): State {
   assertStateVersion(raw, 1);
   const result = v.safeParse(schema, raw);
@@ -73,8 +86,8 @@ function parseDate(value: string): Timeline["entries"][number]["date"] {
   normalizeInstant(value); return { kind: "instant", value };
 }
 function render(r: Timeline, verb: string, body: string, page: number, expected?: string) {
-  if ((page > 1 && !expected) || (expected !== undefined && String(r.revision) !== expected)) throw new CommandError(`This timeline page changed or needs a revision. Restart: ${route} ${verb} ${r.id} page 1`);
-  return pageAt(paginateParts(body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Timeline ${r.id} · revision ${r.revision}`, command: p => `${route} ${verb} ${r.id} page ${p} rev ${r.revision}` }), page).text;
+  checkPage(r, page, expected);
+  return pageAt(paginateParts(body.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g).map((text, i) => ({ text, atomic: i % 2 === 1 })), { mode: "plain", title: `Timeline ${r.id} · revision ${r.revision}`, command: p => `${route} ${verb} ${r.id} page ${p} rev ${pageToken(r)}` }), page).text;
 }
 function orderStatus(a: Timeline["entries"][number], b: Timeline["entries"][number]) {
   const x = a.date, y = b.date;
@@ -119,13 +132,16 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
       return { value: state, result: `Deleted privately: ${key}\nNext: ${route} list` };
     });
   };
-  const save = (key: string | undefined, change: (s: State, r?: Timeline) => string, content = true) => {
-    const expected = key === undefined ? undefined : get(s, key).revision;
+  const save = (key: string | undefined, change: (s: State, r?: Timeline) => string, content = true, removal = false) => {
+    const expected = key === undefined ? undefined : stamp(get(s, key));
     return ctx.store.update("state", initial, raw => {
       const state = validate(raw), r = key === undefined ? undefined : get(state, key);
-      if (r) assertRevision(r.revision, expected);
+      if (r) assertSnapshot(r, expected!);
       const detail = change(state, r);
-      if (r && state.records.includes(r)) { if (r.revision === MAX_REV) throw new CommandError("Revision limit reached; export then delete this record."); r.revision++; }
+      if (r && state.records.includes(r)) {
+        if (!removal && r.revision === MAX_REV) throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
+        r.revision = Math.min(r.revision + 1, MAX_REV);
+      }
       validate(state); quota(state, content);
       return { value: state, result: `${detail}\n${serializedBytes(state)}/49152 state bytes.\nNext: ${route} ${key && state.records.some(r => r.id === key) ? `view ${key}` : "list"}` };
     });
@@ -135,7 +151,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const p = parsePage(m[1]), total = Math.max(1, Math.ceil(s.records.length / 10)); if (p > total) throw new CommandError(`Page out of range. Restart: ${route} list 1`);
     return `Private current list · ${p}/${total}\n${s.records.slice((p - 1) * 10, p * 10).map(r => `${r.id} · ${r.title.replace(/[\r\n]/g, " ")} · revision ${r.revision}`).join("\n") || `No timelines. Start: ${metadata.example}`}\n${p < total ? `Next: ${route} list ${p + 1}` : ""}`;
   }
-  if ((m = command.match(/^(show|view) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : view(r), parsePage(m[3]), m[4]); }
+  if ((m = command.match(/^(show|view) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) { const r = get(s, m[2]); return render(r, m[1], m[1] === "show" ? JSON.stringify(envelope(r), null, 2) : view(r), parsePage(m[3]), m[4]); }
   if ((m = command.match(/^export (\S+)$/))) { const out = envelope(get(s, m[1])); if (serializedBytes(out) > 24576) throw new CommandError("Record exceeds export limit; retrieve show pages."); return JSON.stringify(out); }
   if ((m = command.match(/^delete (\S+)(?: (confirm))?$/))) { const key = get(s, m[1]).id; if (!m[2]) return `Delete timeline and all observations/orders: ${route} delete ${key} confirm`; return deleteRoot(key); }
   if (command.startsWith("create ")) { const [title] = fields(command.slice(7), [160]); return save(undefined, state => { if (state.records.length === 12) throw new CommandError("Maximum 12 timelines. Export/delete one explicitly."); state.records.push({ id: newId, title, revision: 1, entries: [], orders: [] }); return `Saved privately: ${newId}\nInspect: ${route} view ${newId}`; }); }
@@ -150,7 +166,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
   }
   if ((m = command.match(/^(dispute|dispute-edit) (\S+) ([\s\S]+)$/))) { const [, action, key, input] = m, [eid, note] = fields(input, [36, 256]); return save(key, (_, r) => { const e = getEntry(r!, eid); if ((action === "dispute") !== (e.dispute === null)) throw new CommandError("Use dispute for a new note, dispute-edit to replace it, or remove TIMELINE dispute ENTRY confirm."); e.dispute = note; return `Saved dispute on entry: ${eid}. No truth winner selected.`; }, false); }
   if ((m = command.match(/^remove (\S+) (entry|order|dispute) (\S+) confirm$/))) {
-    const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "order") { if (!r!.orders.some(e => e.id === child)) throw new CommandError("Order ID not found."); r!.orders = r!.orders.filter(e => e.id !== child); } else { const e = getEntry(r!, child); if (kind === "dispute") e.dispute = null; else { r!.entries = r!.entries.filter(e => e.id !== child); r!.orders = r!.orders.filter(e => e.before !== child && e.after !== child); } } return `Removed ${kind}: ${child}${kind === "entry" ? " and its incident orders/dispute" : ""}.`; }, false);
+    const [, key, kind, child] = m; return save(key, (_, r) => { if (kind === "order") { if (!r!.orders.some(e => e.id === child)) throw new CommandError("Order ID not found."); r!.orders = r!.orders.filter(e => e.id !== child); } else { const e = getEntry(r!, child); if (kind === "dispute") e.dispute = null; else { r!.entries = r!.entries.filter(e => e.id !== child); r!.orders = r!.orders.filter(e => e.before !== child && e.after !== child); } } return `Removed ${kind}: ${child}${kind === "entry" ? " and its incident orders/dispute" : ""}.`; }, false, true);
   }
   throw new CommandError(`Unknown/incomplete command. Use ${route} help`);
 }

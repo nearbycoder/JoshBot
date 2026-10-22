@@ -120,17 +120,30 @@ const get = (s: State, key: string) => {
   if (!a) throw new CommandError(`Application not found. Use ${route} list`);
   return a;
 };
+// Content stamps protect same-revision removals without changing persisted schema.
+const stamp = (r: Application) => createHash("sha256").update(JSON.stringify(envelope(r))).digest("hex");
+const pageToken = (r: Application) => `${r.revision}:${stamp(r)}`;
+function assertSnapshot(r: Application, expected: string) {
+  if (stamp(r) !== expected) throw new CommandError("Record changed; inspect and retry from the current saved record.");
+}
+function checkPage(r: Application, page: number, expected?: string) {
+  if (expected?.includes(":")) {
+    if (expected === pageToken(r)) return;
+  } else if (page === 1 && expected === undefined) return;
+  else if (page === 1 && r.revision < Number.MAX_SAFE_INTEGER && expected === String(r.revision)) return;
+  throw new CommandError(`Record changed or page snapshot missing. Restart: ${route} show ${r.id} page 1`);
+}
 function parts(s: string): DisplayPart[] {
   return s.split(/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})/g)
       .map((text, i) => ({text, atomic: i % 2 === 1}));
 }
 function page(a: Application, verb: string, body: string, n = 1, expected?: string) {
-  if (expected) assertRevision(a.revision, Number(expected));
+  checkPage(a, n, expected);
   return pageAt(
              paginateParts(parts(body), {
                mode: 'plain',
                title: `${a.id} · ${status(a)} · revision ${a.revision}`,
-               command: p => `${route} ${verb} ${a.id} page ${p} rev ${a.revision}`
+               command: p => `${route} ${verb} ${a.id} page ${p} rev ${pageToken(a)}`
              }),
              n)
       .text;
@@ -231,12 +244,14 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
           });
   const edit =
       (key: string, change: (a: Application) => void, mode: 'content'|'lifecycle'|'remove' = 'content') => {
-        const expected = get(s, key).revision;
+        const expected = stamp(get(s, key));
         return save(state => {
           const a = get(state, key);
-          assertRevision(a.revision, expected);
+          assertSnapshot(a, expected);
+          if (mode !== 'remove' && a.revision === Number.MAX_SAFE_INTEGER)
+            throw new CommandError("Revision limit reached; only explicit removals or deletion remain available.");
           change(a);
-          a.revision++;
+          a.revision = Math.min(a.revision + 1, Number.MAX_SAFE_INTEGER);
           return a;
         }, mode);
       };
@@ -255,7 +270,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
         n * 10 < all.length ? `Next: ${route} list ${n + 1} snapshot ${snapshot}` :
                               `Open: ${route} show ID`}`;
   }
-  if ((m = command.match(/^(show|review) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+))?$/))) {
+  if ((m = command.match(/^(show|review) (\S+)(?: (?:page )?(\d+))?(?: rev (\d+(?::[a-f0-9]{64})?))?$/))) {
     const a = get(s, m[2]);
     return page(
         a, m[1], m[1] === 'show' ? JSON.stringify(envelope(a), null, 2) : review(a), parsePage(m[3]), m[4]);
@@ -270,7 +285,7 @@ async function execute(command: string, ctx: AgentFeatureContext): Promise<strin
     const a = get(s, m[1]);
     if (!m[2]) return `Deletes application and its observations/reflection: ${route} delete ${a.id} confirm`;
     return save(state => {
-      assertRevision(get(state, a.id).revision, a.revision);
+      assertSnapshot(get(state, a.id), stamp(a));
       state.records = state.records.filter(x => x.id !== a.id);
       return null;
     }, 'remove');
