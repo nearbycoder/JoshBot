@@ -12,7 +12,8 @@ Review compares incidents before the start date (`<`) and after it (`>=`, includ
 record YYYY-MM-DD | SITUATION | OBSERVABLE-ERROR | CATEGORY
 rule add RULE-TEXT | CATEGORY | START-YYYY-MM-DD
 opportunity RULE | YYYY-MM-DD | success|failure | EVIDENCE
-patterns [CATEGORY] [page N]
+patterns [CATEGORY] [page N] [snapshot HASH]
+patterns [page N] [snapshot HASH] | CATEGORY
 review RULE [page N] [rev R] [snapshot HASH]
 link CASE | RULE
 unlink CASE confirm
@@ -22,7 +23,7 @@ clear CASE date|situation|observableError|category confirm
 clear RULE text|category|startDate confirm
 opportunity RULE edit OPPORTUNITY | YYYY-MM-DD | success|failure | EVIDENCE
 opportunity RULE remove OPPORTUNITY confirm
-list [N]
+list [N] [snapshot HASH]
 show ID [page N] [rev R]
 export ID
 delete ID [confirm]
@@ -43,4 +44,8 @@ Situation: 180 UTF-8 bytes; observable error: 300; category: 80; rule: 240; oppo
 
 Zero model/search/context calls; metadata allows eight logical state reads and four updates per invocation. Normal commands read once and update at most once. Corrupt/unknown state preserves raw bytes; help is available and repair requires a maintainer. This checkout starts before the shared JSON-null read fix; parent has integrated `6725cde`, which distinguishes corrupt/null data from absence. No local workaround or shared edit is included.
 
-Node 24.22.1: six real-runtime/store fake-backed tests cover civil boundaries, denominator honesty, overlapping rules, all edits/removals, stale and unrelated CAS retries, maximum counts, dynamic first-follow-up reservation, complete pagination/export, changed-review snapshots, invalid state/inputs and tenant isolation. Run `node --import tsx --test --test-concurrency=1 tests/agent-mistake-patterns.test.ts`. No live Slack/provider/production tests or release approval is claimed.
+Use the pipe form of `patterns` for literal category labels containing pagination words or escaped pipes/backslashes. Generated filtered continuations use that form and bind the full state snapshot.
+
+Node 24.22.1: seven real-runtime/store fake-backed tests cover civil boundaries, denominator honesty, overlapping rules, all edits/removals, stale and unrelated CAS retries, maximum counts, dynamic first-follow-up reservation, complete pagination/export, changed list/pattern/review snapshots, strict persisted enums, invalid state/inputs and tenant isolation. Run `node --import tsx --test --test-concurrency=1 tests/agent-mistake-patterns.test.ts`. No live Slack/provider/production tests or release approval is claimed.
+
+Domain validation and quota failures return private actionable help text. Unknown backend errors expose no raw exception details and direct inspection before retry. Runtime cancellation still propagates.

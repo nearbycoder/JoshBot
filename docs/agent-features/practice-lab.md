@@ -59,3 +59,5 @@ State ≤49,152 bytes, new content ≤32,768, complete export envelope ≤24,576
 Generation budget 1, searches/context 0, logical state reads 8/updates 4. Normal commands read once and update at most once; feedback adds one current-state reread. Parent integrated shared corruption diagnosis `6725cde` after this checkout's baseline; no shared-file edits or workaround are included.
 
 Node 24.22.1: eight real-runtime/store fake-backed tests cover catalog progress, unequal maxima, historical comparisons, stale scores, all edits/removals, stale/unrelated CAS retries, optional exact evidence/oversize/refusal/cancellation, maximum counts, dynamic lifecycle saturation and complete retrieval/export, corrupt snapshots and owner isolation. Run `node --import tsx --test --test-concurrency=1 tests/agent-practice-lab.test.ts`. No live provider, Slack, production performance or release certification is claimed.
+
+Domain validation and quota failures return private actionable help text. Unknown backend errors expose no raw exception details and direct inspection before retry. Runtime cancellation still propagates.

@@ -18,7 +18,7 @@ A lesson stays **planned** until a complete plan has a current observation. A us
 
 ## Inspect and correct
 
-`help` includes every parser form. `list [N]` lists current applications in ID order, ten per page. `show APPLICATION [page N] [rev R]` exposes every retained field and full observation ID. `review` supports the same pagination. Follow the exact revision-bound continuation; restart if edited. `export APPLICATION` returns one complete compact JSON envelope, never a clipped preview.
+`help` includes every parser form. `list [N] [snapshot HASH]` lists current applications in ID order, ten per page. List continuations bind the entire originating state; restart after any application changes. `show APPLICATION [page N] [rev R]` exposes every retained field and full observation ID. `review` supports the same pagination. Follow the exact revision-bound continuation; restart if edited. `export APPLICATION` returns one complete compact JSON envelope, never a clipped preview.
 
 - `edit APPLICATION lesson|sourceLabel|sourceExcerpt|opportunity|action|prediction | TEXT` replaces the selected field. `apply` replaces opportunity/action; `predict` replaces prediction.
 - `clear APPLICATION lesson|sourceLabel|sourceExcerpt|opportunity|action|prediction|reflection confirm` erases a field.
@@ -31,7 +31,7 @@ Literal pipes use `\|`; literal backslashes use `\\`. Slash output is plain text
 
 ## Bounds and state
 
-Schema version 1; UUIDs are stable full IDs. Strict validation rejects extra fields, duplicate IDs, bad civil dates, invalid revisions and malformed state without resetting it. There is no migration, eviction, expiry, background work or retained revision snapshot history. Help remains available if state needs maintainer repair. The known shared-store limitation at this parent revision is that a stored JSON `null` is indistinguishable from absence on a read; a mutation validates the raw null and preserves its bytes. The parent owns that shared fix.
+Schema version 1; UUIDs are stable full IDs. Strict validation rejects extra fields, duplicate IDs, bad civil dates, invalid revisions and malformed state without resetting it. There is no migration, eviction, expiry, background work or retained revision snapshot history. Help remains available if state needs maintainer repair. This checkout starts before the shared JSON-null read fix. The parent has integrated `6725cde`, which distinguishes corrupt/null data from absence and returns a scoped recovery diagnosis. No local store workaround is included.
 
 At most 20 applications and five observations per application. Lesson and source label: 120 UTF-8 bytes each; source excerpt: 600 JS units and 1,800 bytes; opportunity: 180 bytes; action: 300; prediction, report and adjustment: 240 each. Boundaries reject rather than clip. State is at most 49,152 serialized UTF-8 bytes; content admission is 32,768; each complete export envelope is at most 24,576. Bytes may bind before counts.
 
@@ -41,4 +41,6 @@ Zero generations, searches and context reads. Per-invocation logical store budge
 
 ## Local evidence
 
-Node 24.22.1, real runtime/scoped store with in-memory exact CAS and throwing services: `node --import tsx --test --test-concurrency=1 tests/agent-learning-transfer.test.ts`. Six tests cover the complete workflow, all edit/removal paths, stale assessment and safe unrelated CAS retries, corruption preservation, exact fields/date/tenant boundaries, and lifecycle saturation/full pagination/export. Fake-backed checks do not establish live Slack delivery or production performance.
+Node 24.22.1, real runtime/scoped store with in-memory exact CAS and throwing services: `node --import tsx --test --test-concurrency=1 tests/agent-learning-transfer.test.ts`. Eight tests cover the complete workflow, all edit/removal paths, stale assessment and safe unrelated CAS retries, corruption preservation, exact fields/date/tenant boundaries, and lifecycle saturation/full pagination/export and stale legacy-list continuations. Fake-backed checks do not establish live Slack delivery or production performance.
+
+Domain validation and quota failures return private actionable help text. Unknown backend errors expose no raw exception details and direct inspection before retry. Runtime cancellation still propagates.
