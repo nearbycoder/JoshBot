@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
 import test from "node:test";
 import defaultFeature, { feature } from "../lib/agent-features/relationships.js";
 import type { AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
@@ -28,6 +29,42 @@ async function add(context: AgentFeatureContext, value = "Maya Chen | 30 | Met a
 }
 function withDate(context: AgentFeatureContext, now: string, timezone = context.timezone): AgentFeatureContext {
   return { ...context, now: new Date(now), timezone };
+}
+
+const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+const fixtureId = (prefix: string, number: number) => `${prefix}_00000000-0000-0000-0000-${number.toString(16).padStart(12, "0")}`;
+const fixtureTime = "2026-10-22T15:00:00.000Z";
+
+/** Valid records with lots of Unicode and an exact serialized byte size. */
+function quotaFixture(targetBytes: number, contacts = 49, promises = 11): SavedState {
+  const value: SavedState = {
+    version: 1,
+    contacts: Array.from({ length: contacts }, (_, index) => ({
+      id: fixtureId("rel", index), name: `Contact ${index}`, cadenceDays: 1,
+      createdAt: fixtureTime, updatedAt: fixtureTime, notes: [], touches: [],
+      promises: Array.from({ length: promises }, (_, entry) => ({
+        id: fixtureId("promise", index * 12 + entry), text: "x", dueDate: null,
+        createdAt: fixtureTime, keptAt: null,
+      })),
+    })),
+  };
+  let remaining = targetBytes - bytes(value);
+  assert.ok(remaining >= 0);
+  for (const promise of value.contacts.flatMap((item) => item.promises)) {
+    const unicode = Math.min(Math.floor(remaining / 3), 400 - promise.text.length);
+    promise.text += "界".repeat(unicode);
+    remaining -= unicode * 3;
+    const ascii = Math.min(remaining, 400 - promise.text.length);
+    promise.text += "x".repeat(ascii);
+    remaining -= ascii;
+    if (remaining === 0) break;
+  }
+  assert.equal(remaining, 0, "fixture ran out of bounded text fields");
+  assert.equal(bytes(value), targetBytes);
+  return value;
+}
+async function seed(context: AgentFeatureContext, value: SavedState): Promise<void> {
+  await context.store.update<SavedState, void>(KEY, { version: 1, contacts: [] }, () => ({ value, result: undefined }));
 }
 
 test("complete private relationship workflow: history, cadence, promise, brief, draft, kept and confirmed delete", async () => {
@@ -438,4 +475,107 @@ test("independent runtime-scoped stores never share contacts even when names mat
   assert.match(await run(bob, "list"), /No contacts yet/);
   assert.match(await run(bob, `show ${id}`), /Contact not found/);
   assert.equal((await saved(alice)).contacts.length, 1);
+});
+
+test("quota uses serialized UTF-8 bytes including Unicode and JSON escapes, with exact boundary admission", async () => {
+  for (const input of ["界".repeat(500), "🌻".repeat(250), '"'.repeat(500), "\ud800".repeat(500)]) {
+    const context = createAgentTestContext();
+    const noteBytes = bytes({ id: fixtureId("note", 0), text: input, recordedAt: fixtureTime });
+    const fixture = quotaFixture(460_000 - noteBytes);
+    assert.ok(JSON.stringify(fixture).length < bytes(fixture), "fixture must exercise multibyte data");
+    await seed(context, fixture);
+    const id = fixture.contacts[0].id;
+    assert.match(await run(context, `log ${id} note | ${input}`), /Saved private context/);
+    const full = await saved(context);
+    assert.equal(bytes(full), 460_000);
+    assert.match(await run(context, "list"), /Storage: 460000 UTF-8 JSON bytes/);
+    for (const command of [
+      "add Overflow | 1", `log ${id} note | One more byte`,
+      `log ${id} | today | One more touchpoint`, `log ${id} promise | One more promise`,
+    ]) {
+      const output = await run(context, command);
+      assert.match(output, /Relationship storage quota reached/);
+      assert.match(output, /content limit is 460000/);
+      assert.match(output, /Nothing was changed/);
+      assert.match(output, /delete <contact-id> confirm/);
+      assert.deepEqual(await saved(context), full);
+    }
+    assert.match(await run(context, `draft ${id}`), /Private outreach draft/);
+    assert.match(await run(context, `brief ${id}`), /Relationship brief/);
+    assert.deepEqual(await saved(context), full);
+    assert.match(await run(context, `delete ${id} confirm`), /Deleted/);
+    assert.match(await run(context, "add Fits after deletion | 1"), /Added/);
+    assert.ok(bytes(await saved(context)) <= 460_000);
+  }
+});
+
+test("reserved bytes allow all 600 accepted promises to be kept and all 50 cadences to pause", async () => {
+  const base = createAgentTestStore();
+  let largestWrite = 0;
+  const store: AgentFeatureStore = {
+    read: base.read,
+    async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      return base.update(key, initial, (current) => {
+        const next = transform(current);
+        const size = bytes(next.value);
+        assert.ok(size <= 479_000, "feature exceeded its hard ceiling");
+        assert.ok(size <= 512_000, "runtime would reject the write");
+        largestWrite = Math.max(largestWrite, size);
+        return next;
+      });
+    },
+  };
+  const context = createAgentTestContext({ store });
+  const text = "Final accepted note";
+  const fixture = quotaFixture(460_000 - bytes({ id: fixtureId("note", 0), text, recordedAt: fixtureTime }), 50, 12);
+  await seed(context, fixture);
+  assert.match(await run(context, `log ${fixture.contacts[0].id} note | ${text}`), /Saved private context/);
+  assert.equal(bytes(await saved(context)), 460_000);
+  for (const item of fixture.contacts) {
+    for (const promise of item.promises) {
+      assert.match(await run(context, `log ${item.id} kept | ${promise.id}`), /Marked .* kept/);
+    }
+    assert.match(await run(context, `cadence ${item.id} pause`), /Cadence .* paused/);
+  }
+  const completed = await saved(context);
+  assert.equal(bytes(completed), 460_000 + 600 * 22 + 50 * 3);
+  assert.equal(largestWrite, 473_350);
+  assert.ok(completed.contacts.every((item) => item.cadenceDays === null && item.promises.every((promise) => promise.keptAt === fixtureTime)));
+  assert.match(await run(context, `log ${fixture.contacts[0].id} note | Additional content`), /storage quota reached/);
+  assert.deepEqual(await saved(context), completed);
+  assert.match(await run(context, `delete ${fixture.contacts[0].id} confirm`), /Deleted/);
+  assert.ok(bytes(await saved(context)) < largestWrite);
+});
+
+test("quota is rechecked inside retried transforms when another write consumes remaining space", async () => {
+  const base = createAgentTestStore();
+  let beforeCommit: (() => Promise<void>) | undefined;
+  const store: AgentFeatureStore = {
+    read: base.read,
+    async update<T, R>(key: string, initial: T, transform: (current: T) => { value: T; result: R }): Promise<R> {
+      transform(await base.read<T>(key) ?? structuredClone(initial));
+      const action = beforeCommit;
+      beforeCommit = undefined;
+      if (action) await action();
+      return base.update(key, initial, transform);
+    },
+  };
+  const context = createAgentTestContext({ store });
+  const text = "Room for only one";
+  const fixture = quotaFixture(460_000 - bytes({ id: fixtureId("note", 0), text, recordedAt: fixtureTime }));
+  await seed(context, fixture);
+  const id = fixture.contacts[0].id;
+  beforeCommit = async () => {
+    assert.match(await run(context, `log ${id} note | ${text}`), /Saved private context/);
+  };
+  assert.match(await run(context, `log ${id} note | ${text}`), /storage quota reached/);
+  const result = await saved(context);
+  assert.equal(result.contacts[0].notes.length, 1);
+  assert.equal(bytes(result), 460_000);
+});
+
+test("a request already cancelled by the runtime never starts a store mutation", async () => {
+  const context = createAgentTestContext({ signal: AbortSignal.abort() });
+  assert.match(await run(context, "add Cancelled | 1"), /cancelled before work began/);
+  assert.equal(await context.store.read(KEY), null);
 });

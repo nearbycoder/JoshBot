@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { Buffer } from "node:buffer";
 import type { AgentFeature, AgentFeatureContext } from "./types.js";
 
 const KEY = "relationships.v1";
 const LIMIT = { contacts: 50, notes: 8, touches: 20, promises: 12 };
 const DAY = 86_400_000;
 const MAX_REPLY = 27_500;
+const CONTENT_BYTES = 460_000;
+const STATE_BYTES = 479_000;
+// Completing 50 × 12 open promises adds at most 13,200 bytes (null → quoted
+// 24-character timestamp); pausing all 50 numeric cadences adds at most 150.
+// Reserve 19,000 bytes so these lifecycle changes cannot be blocked by new text.
 
 type Note = { id: string; text: string; recordedAt: string };
 type Touch = { id: string; date: string; text: string; recordedAt: string };
@@ -51,7 +57,8 @@ Then: log <contact-id> promise | Share my seed list | 2026-10-30
 Then: due, brief <contact-id>, or draft <contact-id> | Spring planting ideas
 
 Drafts are editable, fact-based templates; nothing is sent. Private notes stay outside the message text. Logging a note/promise or drafting does not count as a touchpoint. Cadence uses calendar days, not 24-hour timers. Pausing cadence still surfaces due promises.
-Limits: 50 contacts, 8 recent notes, 20 most recent dated touchpoints, 12 promises per contact. Open promises are never automatically removed. Names: 100 characters; notes: 500; touchpoints: 600; promises/topics: 400. Use | as a separator, not inside a field.`;
+Limits: 50 contacts, 8 recent notes, 20 most recent dated touchpoints, 12 promises per contact. Open promises are never automatically removed. Names: 100 characters; notes: 500; touchpoints: 600; promises/topics: 400. Use | as a separator, not inside a field.
+Storage: 460,000 UTF-8 JSON bytes for content, with 19,000 additional bytes reserved for marking promises kept and changing cadence. At quota, use shorter text or delete <contact-id> confirm to free space. List shows current usage; reads and drafts remain available.`;
 
 function fail(message: string): never { throw new InputError(message); }
 function empty(): State { return { version: 1, contacts: [] }; }
@@ -145,11 +152,23 @@ async function read(context: AgentFeatureContext): Promise<State> {
   const value = await context.store.read<unknown>(KEY);
   return value === null ? empty() : state(value);
 }
-async function edit(context: AgentFeatureContext, transform: (draft: State) => string): Promise<string> {
+function serializedBytes(value: State): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+async function edit(
+  context: AgentFeatureContext,
+  transform: (draft: State) => string,
+  mode: "content" | "lifecycle" = "content",
+): Promise<string> {
   return context.store.update<unknown, string>(KEY, empty(), (current) => {
     // Never mutate the caller's value: optimistic store adapters may retry this callback.
     const next = structuredClone(state(current));
     const result = transform(next);
+    const size = serializedBytes(next);
+    const limit = mode === "content" ? CONTENT_BYTES : STATE_BYTES;
+    if (size > limit) {
+      fail(`Relationship storage quota reached: this change would use ${size} UTF-8 JSON bytes; the ${mode} limit is ${limit}. Nothing was changed. Use shorter text or inspect list/show, then delete <contact-id> confirm to free space. Marking existing promises kept and changing cadence have reserved space; reads and drafts remain available.`);
+    }
     return { value: next, result };
   });
 }
@@ -325,7 +344,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         promise.keptAt = now;
         item.updatedAt = now;
         return `Marked ${promiseId} kept. Meaningful touchpoint unchanged; log a separate touchpoint if you connected.`;
-      });
+      }, "lifecycle");
     }
 
     if (verb === "cadence") {
@@ -338,7 +357,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         item.cadenceDays = days;
         item.updatedAt = now;
         return `Cadence for ${escaped(item.name)}: ${cadenceLabel(item)}. ${days === null ? "Due promises still appear in due." : status(item, today).reason}`;
-      });
+      }, "lifecycle");
     }
 
     if (verb === "delete") {
@@ -353,7 +372,7 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
         const item = contact(data, contactId);
         data.contacts = data.contacts.filter((entry) => entry.id !== contactId);
         return `Deleted ${escaped(item.name)} and all of that contact's notes, touchpoints and promises.`;
-      });
+      }, "lifecycle");
     }
 
     if (!["list", "due", "brief", "draft", "show"].includes(verb)) fail("Unknown relationships command. Use help for syntax and examples.");
@@ -361,9 +380,9 @@ async function execute(command: string, context: AgentFeatureContext): Promise<s
     const data = await read(context);
     if (verb === "list") {
       if (!data.contacts.length) return "No contacts yet. Start with add Maya Chen | 30 | Met at the neighborhood garden, then log a meaningful touchpoint.";
-      return bound([`Your contacts (${data.contacts.length}/50):`, ...data.contacts.map((item) =>
+      return bound([`Your contacts (${data.contacts.length}/50). Storage: ${serializedBytes(data)} UTF-8 JSON bytes; content limit ${CONTENT_BYTES}, lifecycle ceiling ${STATE_BYTES}.`, ...data.contacts.map((item) =>
         `- ${snippet(item.name, 100)} — ${item.id}; ${cadenceLabel(item)}; last ${latestTouches(item)[0]?.date ?? "not recorded"}; ${openPromises(item).length} open promises.`),
-      "Use due for reconnect suggestions, or brief/show <contact-id> for context."].join("\n"));
+      "Use due for reconnect suggestions, or brief/show <contact-id> for context. At quota, delete <contact-id> confirm to free space."].join("\n"));
     }
     if (verb === "due") {
       const date = args ? dateInput(args) : today;
