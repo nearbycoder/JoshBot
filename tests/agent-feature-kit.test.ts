@@ -50,8 +50,9 @@ test("plain and mrkdwn pages preserve exact text with escaped dynamic headers an
 test("maximum retained detail and final item remain reachable; atomic values never split", () => {
   const id = "item-11111111-1111-4111-8111-111111111111";
   const url = "https://example.com/a%2Fb?q=`raw`&next=%26&repeated=1&repeated=2#part";
-  const body = "😀界\"\\& ".repeat(1_200); // near a 24 KiB maximum record
-  assert.ok(serializedBytes({ id, body, url }) < 24_576);
+  let body = "😀界\"\\& ".repeat(1_200);
+  body += "x".repeat(24_576 - serializedBytes({ id, body, url }));
+  assert.equal(serializedBytes({ id, body, url }), 24_576, "The complete record occupies its exact maximum byte budget");
   const parts = Array.from({ length: 12 }, (_, index) => ({ text: `\n${id}-${index + 1}\n`, atomic: true }));
   const pages = paginateParts([{ text: body }, { text: url, atomic: true }, ...parts], { mode: "plain", command: page => `/nobo-help agent sample show ${id} page ${page}` });
   assert.equal(pages.map(page => page.body).join(""), body + url + parts.map(part => part.text).join(""));
