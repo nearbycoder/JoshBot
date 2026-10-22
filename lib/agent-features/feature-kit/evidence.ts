@@ -6,6 +6,16 @@ import { civilDate, normalizeInstant } from "./civil-time.js";
 
 const KINDS: readonly AgentContextKind[] = ["note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder", "monitor", "digest", "artifact", "memory", "event"];
 const FIELDS = new Set(["id", "kind", "title", "text", "updatedAt", "dueAt", "status", "sourceUrl", "metadata"]);
+const OPTIONAL = ["updatedAt", "dueAt", "status", "sourceUrl", "metadata"];
+// Only known optional fields emitted by the source adapters may represent absence
+// with an own undefined value. Arbitrary/nested metadata remains lossless JSON.
+const OPTIONAL_METADATA: Partial<Record<AgentContextKind, readonly string[]>> = {
+  note: ["createdAt"], goal: ["createdAt"], habit: ["createdAt"], journal: ["createdAt"], bookmark: ["createdAt"],
+  "follow-up": ["createdAt", "completedAt", "assigneeUserId", "scheduleId"],
+  reminder: ["createdAt", "nextRunAt", "schedule", "timezone", "cadence"],
+  digest: ["createdAt", "nextRunAt", "schedule", "timezone", "cadence"],
+  monitor: ["createdAt", "nextRunAt", "schedule", "timezone", "cadence", "monitorSource", "conditionType", "lastCheckedAt", "lastRunAt"],
+};
 const COVERAGE = ["coverage", "textTruncated", "titleTruncated"] as const;
 const READ_TIME = new Set(["readAt", "observedAt", "capturedAt", "enumerationIndex"]);
 export type EvidenceOptions = { kinds: readonly AgentContextKind[]; maxItems?: number; maxBytes?: number; metadataKeys?: readonly string[] };
@@ -19,6 +29,18 @@ function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (plain(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
+}
+
+function projectOptional(value: unknown, optional: readonly string[]): Record<string, unknown> {
+  if (!plain(value)) throw new Error("Unsupported source object; use the declared readContext contract.");
+  const projected: Record<string, unknown> = Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    if (typeof key !== "string" || !descriptor.enumerable || !("value" in descriptor)) throw new Error("Source contains unsupported JSON properties.");
+    if (descriptor.value === undefined && optional.includes(key)) continue;
+    projected[key] = descriptor.value;
+  }
+  return projected;
 }
 
 /**
@@ -38,11 +60,13 @@ export function captureEvidence(items: readonly unknown[], options: EvidenceOpti
   const selectedKeys = [...new Set([...COVERAGE, ...keys])].sort();
   const seen = new Set<string>();
   const referenceKinds = new Map<string, AgentContextKind>();
-  const sources = items.map(item => {
-    // Validate before copying: JSON would otherwise discard undefined/NaN, call
-    // getters/toJSON, or let unselected cyclic metadata conceal malformed input.
-    if (!plain(item) || serializedBytes(item) > 65_536 || Object.keys(item).some(key => !FIELDS.has(key))) throw new Error("Unsupported or oversized source shape; use the declared readContext contract.");
-    if (!KINDS.includes(item.kind as AgentContextKind) || !options.kinds.includes(item.kind as AgentContextKind)) throw new Error("Source kind is outside this feature's declared scope.");
+  const sources = items.map(input => {
+    // Inspect descriptors without invoking accessors. Project only documented
+    // optional absence before strict validation of the ENTIRE remaining shape.
+    const item = projectOptional(input, OPTIONAL);
+    if (typeof item.kind !== "string" || !KINDS.includes(item.kind as AgentContextKind) || !options.kinds.includes(item.kind as AgentContextKind)) throw new Error("Source kind is outside this feature's declared scope.");
+    if (item.metadata !== undefined) item.metadata = projectOptional(item.metadata, OPTIONAL_METADATA[item.kind as AgentContextKind] ?? []);
+    if (serializedBytes(item) > 65_536 || Object.keys(item).some(key => !FIELDS.has(key))) throw new Error("Unsupported or oversized source shape; use the declared readContext contract.");
     const id = boundedText(item.id, { label: "Source ID", maxBytes: 256, trim: false });
     if (!/^[A-Za-z0-9][A-Za-z0-9:._/-]*$/.test(id)) throw new Error("Source ID is ambiguous or malformed; preserve the adapter's exact identifier.");
     const identity = `${item.kind}\u0000${id}`;

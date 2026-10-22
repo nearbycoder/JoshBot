@@ -284,3 +284,56 @@ test("offset instants normalize strictly; caller dates, point events and exclusi
   assert.equal(instantRange("2026-10-22T15:00Z", "2026-10-22T15:30Z").point, false);
   assert.throws(() => instantRange("2026-10-22T15:00Z", "2026-10-22T14:00Z"), /precede/);
 });
+
+test("production adapter evidence accepts absent optional fields through the real runtime", async () => {
+  const { createAgentFeatureServices, createProductionContextAdapters } = await import("../lib/agent-features/services.js");
+  const { runAgentFeature } = await import("../lib/agent-features/runtime.js");
+  const backend = createMemoryAgentBackend();
+  const owner = { teamId: "TEVIDENCE", userId: "UEVIDENCE", channelId: "CEVIDENCE" };
+  const now = new Date("2026-10-22T15:00:00Z"), at = now.toISOString();
+  for (const [tool, data] of [["notes", {}], ["goals", { current: 1, target: 2, due: "2026-10-23" }], ["bookmarks", { url: "https://example.com/a%2Fb?q=1&q=2#part" }]] as const) {
+    backend.data.set(`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:${tool}`, JSON.stringify({ entries: [{ id: "one", title: "Atlas", body: "Launch details", createdAt: at, updatedAt: at, data }] }));
+  }
+  const indexes: Record<string, string[]> = {};
+  for (const [kind, prefix, index, field] of [["follow-up", "follow-ups:record:", "follow-ups:user:", "task"], ["reminder", "schedules:job:", "schedules:user:", "task"], ["monitor", "monitors:job:", "monitors:user:", "query"], ["digest", "channel-digests:subscription:", "channel-digests:user:", "focus"]] as const) {
+    indexes[index + owner.userId] = [kind];
+    backend.data.set(prefix + kind, JSON.stringify({ id: kind, ownerUserId: owner.userId, createdByUserId: owner.userId, channel: owner.channelId, createdAt: at, [field]: "Atlas launch" }));
+  }
+  const adapters = createProductionContextAdapters({ redis: async () => ({ eval: async (_, options) => indexes[options.keys[0]] ?? [] }), evaluateAccess: async () => ({ allowed: true }) });
+  const services = createAgentFeatureServices(backend, owner, new AbortController().signal, { now, timezone: "UTC" }, adapters);
+  const kinds = ["note", "goal", "bookmark", "follow-up", "reminder", "monitor", "digest"] as const;
+  const before = new Map(backend.data);
+  const probe: AgentFeature = { ...feature, async execute(_, context) {
+    const items = await context.services.readContext([...kinds]);
+    const note = items.find(item => item.kind === "note")!;
+    assert.ok(Object.hasOwn(note, "dueAt") && note.dueAt === undefined);
+    const snapshot = captureEvidence(items, { kinds, metadataKeys: ["current", "target", "createdAt", "nextRunAt", "schedule", "monitorSource"] });
+    assert.equal(snapshot.sources.length, 7);
+    assert.equal(snapshot.fingerprint, captureEvidence(JSON.parse(JSON.stringify(items)), { kinds, metadataKeys: ["current", "target", "createdAt", "nextRunAt", "schedule", "monitorSource"] }).fingerprint);
+    assert.equal(snapshot.sources.find(item => item.kind === "note")?.text, "Launch details\n{}");
+    assert.equal(snapshot.sources.find(item => item.kind === "goal")?.dueAt, "2026-10-23");
+    assert.equal(snapshot.sources.find(item => item.kind === "goal")?.status, "open");
+    assert.equal(snapshot.sources.find(item => item.kind === "bookmark")?.sourceUrl, "https://example.com/a%2Fb?q=1&q=2#part");
+    assert.equal(snapshot.sources.find(item => item.kind === "monitor")?.metadata?.coverage, "owner/current-channel");
+    return context.store.update("evidence", null, () => ({ value: snapshot, result: snapshot.fingerprint }));
+  } };
+  assert.match(await runAgentFeature(probe, "capture", owner, { backend, services, now, timezone: "UTC" }), /^e1:/);
+  for (const [key, raw] of before) assert.equal(backend.data.get(key), raw);
+  assert.equal(backend.calls.writes, 1);
+});
+
+test("source optional projection never invokes accessors or hides malformed/unsupported values", () => {
+  const absent = { ...source, updatedAt: undefined, dueAt: undefined, status: undefined, sourceUrl: undefined, metadata: undefined };
+  assert.doesNotThrow(() => captureEvidence([absent], evidenceOptions));
+  assert.throws(() => serializedBytes(absent), /lossless JSON/, "stored-state validation remains strict");
+  for (const key of ["updatedAt", "dueAt", "status", "sourceUrl", "metadata"]) {
+    const accessor = Object.defineProperty({ ...source }, key, { enumerable: true, get() { assert.fail("Optional getters must not execute"); } });
+    assert.throws(() => captureEvidence([accessor], evidenceOptions), /properties/);
+    for (const invalid of [NaN, Infinity, () => "value", 1n]) assert.throws(() => captureEvidence([{ ...source, [key]: invalid }], evidenceOptions));
+  }
+  const metadata = Object.defineProperty({}, "createdAt", { enumerable: true, get() { assert.fail("Metadata getters must not execute"); } });
+  assert.throws(() => captureEvidence([{ ...source, metadata }], evidenceOptions), /properties/);
+  assert.throws(() => captureEvidence([{ ...source, text: undefined }], evidenceOptions));
+  assert.throws(() => captureEvidence([{ ...source, metadata: { current: undefined } }], evidenceOptions));
+  assert.throws(() => captureEvidence([{ ...source, metadata: { createdAt: NaN } }], evidenceOptions));
+});
