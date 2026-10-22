@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import feature, { feature as namedFeature } from "../lib/agent-features/handoffs.js";
-import type { AgentContextItem, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
+import type { AgentContextItem, AgentContextKind, AgentFeatureContext, AgentFeatureStore } from "../lib/agent-features/types.js";
+import { execute as executeToolbox, type Entry } from "../lib/toolbox/core.js";
+import { goals } from "../lib/toolbox/goals.js";
 import { createAgentTestContext, createAgentTestStore } from "./agent-feature-test-utils.js";
 
 const KEY = "packets-v1";
@@ -208,6 +211,100 @@ test("source fingerprints include content beyond the bounded excerpt and metadat
   await h.run(`update ${id} | sources: note:login`);
   items[0] = { ...items[0], status: "archived" };
   assert.match(await h.run(`resume ${id}`), /STALE — source changed/);
+});
+
+test("real goal commands through the actual toolbox adapter remain selectable with calendar deadlines", async () => {
+  // The adapter is parent-owned and absent from the isolated feature base. The
+  // override imports that real module without copying/changing shared files;
+  // after integration the normal local context.js import is used automatically.
+  const adapterUrl = process.env.HANDOFF_TEST_CONTEXT_ADAPTER
+    ? pathToFileURL(process.env.HANDOFF_TEST_CONTEXT_ADAPTER)
+    : new URL("../lib/agent-features/context.js", import.meta.url);
+  const { readAgentToolboxContext } = await import(adapterUrl.href) as {
+    readAgentToolboxContext: (
+      backend: { get(key: string): Promise<string | null>; compareSet(key: string, previous: string | null, next: string, ttlSeconds?: number): Promise<boolean> },
+      owner: { teamId: string; userId: string }, kinds?: AgentContextKind[],
+    ) => Promise<AgentContextItem[]>;
+  };
+  const h = setup();
+  const entries: Entry[] = [];
+  executeToolbox(goals, entries, "create Read books | 12 | books | 2026-12-31", h.ctx.now);
+  executeToolbox(goals, entries, `progress ${entries[0].id} | 3 | Finished three books`, h.ctx.now);
+  const backend = {
+    async get(key: string) {
+      assert.match(key, /^nobo:toolbox:v1:TTEST:UTEST:(notes|goals|habits|journal|bookmarks)$/);
+      return key.endsWith(":goals") ? JSON.stringify({ entries, receipts: [] }) : null;
+    },
+    async compareSet(): Promise<boolean> { assert.fail("The owner-context adapter must only read this fake backend"); },
+  };
+  h.ctx.services.readContext = kinds => readAgentToolboxContext(backend, h.ctx, kinds);
+  const [goal] = await h.ctx.services.readContext(["goal"]);
+  assert.equal(goal.id, `toolbox:goals:${entries[0].id}`);
+  assert.equal(goal.kind, "goal");
+  assert.equal(goal.dueAt, "2026-12-31");
+  assert.equal(goal.updatedAt, h.ctx.now.toISOString());
+  assert.ok((await h.run("sources books")).includes(goal.id));
+  const id = capturedId(await h.run(`capture Finish the reading goal | done: Read three books | next: Pick the fourth | sources: ${goal.id}`));
+  assert.match(await h.run(`resume ${id}`), /unchanged since this revision/);
+  assert.match(await h.run(`show ${id}`), /2026-12-31/);
+  const before = await raw(h.ctx);
+
+  // A real goal deadline edit must invalidate the saved reference. Keep the
+  // supplied clock unchanged so this cannot rely on an updatedAt difference.
+  executeToolbox(goals, entries, `due ${entries[0].id} | 2027-01-31`, h.ctx.now);
+  assert.equal(entries[0].updatedAt, goal.updatedAt);
+  assert.match(await h.run(`resume ${id}`), /STALE — source changed/);
+  assert.equal(await raw(h.ctx), before);
+  assert.match(await h.run(`update ${id} | sources: ${goal.id}`), /r2.*Changed: sources/);
+  assert.match(await h.run(`resume ${id}`), /unchanged since this revision/);
+  assert.match(await h.run(`show ${id}`), /2027-01-31/);
+  assert.match(await h.run(`show ${id} r1`), /2026-12-31/);
+  assert.equal(h.forbidden(), 0);
+});
+
+test("deadline-only changes are stale and calendar dates are never conflated with zoned instants", async () => {
+  const items: AgentContextItem[] = [{ ...source, dueAt: "2026-12-31" }];
+  const h = setup(items);
+  const id = capturedId(await h.run(`${capture} | sources: note:login`));
+  for (const timezone of ["Pacific/Kiritimati", "America/Los_Angeles"]) {
+    h.ctx.timezone = timezone;
+    assert.match(await h.run(`resume ${id}`), /unchanged since this revision/);
+  }
+  const before = await raw(h.ctx);
+  // Only dueAt changes: title, text, status, and updatedAt stay identical.
+  items[0] = { ...items[0], dueAt: "2027-01-01" };
+  assert.match(await h.run(`resume ${id}`), /STALE — source changed/);
+  assert.equal(await raw(h.ctx), before);
+  assert.match(await h.run(`update ${id} | sources: note:login`), /r2/);
+  items[0] = { ...items[0], dueAt: "2027-01-01T00:00:00Z" };
+  assert.match(await h.run(`resume ${id}`), /STALE — source changed/);
+  assert.match(await h.run(`update ${id} | sources: note:login`), /r3/);
+  items[0] = { ...items[0], dueAt: "2027-01-01T14:00:00+14:00" };
+  assert.match(await h.run(`resume ${id}`), /unchanged since this revision/, "equivalent explicit instants still normalize consistently");
+});
+
+test("calendar deadlines validate real days and leap years while rejecting malformed source dates without writes", async () => {
+  const items: AgentContextItem[] = [{ ...source, dueAt: "2026-12-31" }];
+  const h = setup(items);
+  const id = capturedId(await h.run(`${capture} | sources: note:login`));
+  for (const dueAt of ["2026-04-30", "2028-02-29", "2000-02-29", "2026-12-31"]) {
+    items[0] = { ...source, dueAt };
+    assert.match(await h.run("sources"), /note:login/);
+    assert.match(await h.run(`update ${id} | sources: note:login`), /Updated/);
+    assert.match(await h.run(`resume ${id}`), /unchanged since this revision/);
+  }
+  const before = await raw(h.ctx);
+  for (const dueAt of ["2026-02-29", "1900-02-29", "2100-02-29", "2026-04-31", "2026-00-01", "2026-13-01", "2026-12-00", "2026-12-32", "2026-2-28", "2026-12-31Z", "2026-12-31T00:00:00", "2026-02-30T00:00:00Z", "tomorrow"]) {
+    items[0] = { ...source, dueAt };
+    assert.match(await h.run("sources"), /No selectable owner sources/, dueAt);
+    assert.match(await h.run(`${capture} | sources: note:login`), /invalid or oversized/, dueAt);
+    assert.match(await h.run(`update ${id} | sources: note:login`), /invalid or oversized/, dueAt);
+    assert.match(await h.run(`resume ${id}`), /UNVERIFIABLE/, dueAt);
+    assert.equal(await raw(h.ctx), before, dueAt);
+  }
+  items[0] = { ...source, updatedAt: "2026-12-31", dueAt: "2026-12-31" };
+  assert.match(await h.run(`update ${id} | sources: note:login`), /invalid or oversized/, "updatedAt still requires an explicit instant");
+  assert.equal(await raw(h.ctx), before);
 });
 
 test("context failures preserve state; resume degrades to clearly unverified saved context", async () => {

@@ -166,23 +166,34 @@ function display(value: string, max = 2000): string {
 function quote(value: string, max: number): string {
   return display(value || "None supplied.", max).split("\n").map(line => `> ${line}`).join("\n");
 }
+function calendarDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\d$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1];
+}
 function providerDate(value: unknown): string | null | undefined {
   if (value === undefined) return null;
   if (typeof value !== "string" || value.length > 40
     || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,3})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value)
     || !Number.isFinite(Date.parse(value))) return undefined;
   // Reject rollover dates such as February 30, while accepting explicit offsets.
-  const day = value.slice(0, 10);
-  if (new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) return undefined;
+  if (!calendarDate(value.slice(0, 10))) return undefined;
   const instant = new Date(value).toISOString();
   return iso(instant) ? instant : undefined;
+}
+function providerDeadline(value: unknown): string | null | undefined {
+  // Goal deadlines are calendar dates, not midnight instants in an inferred zone.
+  // Keep them distinct from normalized timestamps when fingerprinting references.
+  return calendarDate(value) ? value : providerDate(value);
 }
 function snapshot(raw: unknown): Source | null {
   if (!record(raw) || typeof raw.id !== "string" || !SOURCE_ID.test(raw.id)
     || !KINDS.includes(raw.kind as AgentContextKind) || !text(raw.title, 2000) || !text(raw.text, 100_000)
     || (raw.status !== undefined && !text(raw.status, 200))) return null;
   const updatedAt = providerDate(raw.updatedAt);
-  const dueAt = providerDate(raw.dueAt);
+  const dueAt = providerDeadline(raw.dueAt);
   if (updatedAt === undefined || dueAt === undefined || (raw.sourceUrl !== undefined && !safeUrl(raw.sourceUrl))) return null;
   const sourceUrl = typeof raw.sourceUrl === "string" ? raw.sourceUrl : null;
   return {
