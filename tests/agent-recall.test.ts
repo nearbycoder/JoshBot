@@ -515,6 +515,69 @@ async function productionFixture() {
   return { owner, data, reads, writes, requestedKinds, run, services, capture, fillCapacity };
 }
 
+test("advertised capacity recovery reopens the exact emitted note reference through production adapters without broad reads", async () => {
+  const [{ handleAgentCommand }, { createAgentFeatureServices, createProductionContextAdapters }, { createMemoryAgentBackend }, { runFeature }, { notes }] = await Promise.all([
+    import("../lib/agent-features/index.js"), import("../lib/agent-features/services.js"),
+    import("./helpers/agent-feature-fixture.js"), import("../lib/toolbox/core.js"), import("../lib/toolbox/notes.js"),
+  ]);
+  const owner = { teamId: "TRECALL", userId: "URECALL", channelId: "CRECALL" };
+  const others = [{ ...owner, userId: "UPRIVATE" }, { ...owner, teamId: "TPRIVATE" }];
+  const now = new Date("2026-10-22T15:00:00Z"), reads: string[] = [], indexes: string[] = [];
+  const backend = createMemoryAgentBackend({ beforeGet: key => { reads.push(key); } });
+  const requested: AgentContextKind[][] = [];
+  const calls = { authorize: 0, generate: 0, search: 0 };
+  const adapters = createProductionContextAdapters({
+    // Model an oversized owner index at the production adapter boundary. No Redis
+    // connection is created; the real adapter turns false into a capacity error.
+    redis: async () => ({ eval: async (_script, options) => { indexes.push(...options.keys); return false; } }),
+    evaluateAccess: async () => { calls.authorize++; return { allowed: true }; },
+  });
+  const run = (command: string, who = owner) => {
+    const real = createAgentFeatureServices(backend, who, new AbortController().signal, {
+      now, timezone: "America/Chicago", featureId: "recall",
+    }, adapters);
+    return handleAgentCommand(`recall ${command}`, who, { backend, now, timezone: "America/Chicago", services: {
+      ...real,
+      readContext: kinds => { requested.push(kinds ?? []); return real.readContext(kinds); },
+      generate: async () => { calls.generate++; assert.fail("Recovery must not generate"); },
+      search: async () => { calls.search++; assert.fail("Recovery must not search the web"); },
+    } });
+  };
+  assert.match(await runFeature(notes, "add Atlas decision | OWNER_ONLY Atlas rollback decision", owner, undefined, backend, now), /Updated:/);
+  for (const who of others) assert.match(await runFeature(notes, "add Atlas private | OTHER_ONLY Atlas private decision", who, undefined, backend, now), /Updated:/);
+  const sourceBytes = [...backend.data], writes = backend.calls.writes;
+  const recovery = await run("search Atlas");
+  assert.match(recovery, /No source data was truncated/);
+  assert.match(recovery, /copy the exact Open a source command printed by search/);
+  assert.doesNotMatch(recovery, /source note\/toolbox:notes:/);
+  const route = "/nobo-help agent recall ";
+  const narrow = recovery.match(/Narrow with (\/nobo-help agent recall search [^,]+), then/)?.[1];
+  assert.ok(narrow, recovery);
+  const found = await run(narrow.slice(route.length));
+  const open = found.match(/^Open a source: (\/nobo-help agent recall source (\S+))$/m);
+  assert.ok(open, found);
+  assert.match(open[2], /^note\/toolbox%3Anotes%3A[0-9a-f-]{36}$/);
+  assert.doesNotMatch(found, /OTHER_ONLY/);
+  requested.length = 0; reads.length = 0; indexes.length = 0; calls.authorize = 0;
+  const opened = await run(open[1].slice(route.length));
+  assert.match(opened, /OWNER_ONLY Atlas rollback decision/);
+  assert.deepEqual(requested, [["note"]]);
+  assert.deepEqual(reads, [`nobo:toolbox:v1:${owner.teamId}:${owner.userId}:notes`]);
+  assert.deepEqual(indexes, []);
+  assert.equal(calls.authorize, 0, "successful note reopening must not enter legacy channel policy/index reads");
+  for (const who of others) {
+    const privateSearch = await run(narrow.slice(route.length), who);
+    assert.match(privateSearch, /OTHER_ONLY/);
+    assert.doesNotMatch(privateSearch, /OWNER_ONLY/);
+    const crossTenant = await run(open[1].slice(route.length), who);
+    assert.doesNotMatch(crossTenant, /OWNER_ONLY|Original ID:/);
+  }
+  assert.deepEqual([...backend.data], sourceBytes);
+  assert.equal(backend.calls.writes, writes);
+  assert.equal(calls.generate, 0);
+  assert.equal(calls.search, 0);
+});
+
 test("production context/runtime/store reopen qualified sources at valid toolbox capacity", async (t) => {
   const f = await productionFixture();
   const memoryId = await f.capture();
