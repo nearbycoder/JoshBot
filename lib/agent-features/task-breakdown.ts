@@ -38,6 +38,8 @@ function issues(step: Pick<Step, "action" | "minutes" | "proof">, session: numbe
 function getStep(record: RecordData, id: string): Step {
   const step = record.steps.find(s => s.id === id); if (!step) fail("Step ID not found in this workspace."); return step;
 }
+const EMPTY_STEPS = "No steps yet. Replace ACTION, MINUTES and PROOF with your first action, whole minutes and observable proof.";
+const firstStepCommand = (id: string) => `step ${id} add ACTION | MINUTES | PROOF`;
 function check(record: RecordData, page: number): string {
   const remaining = record.steps.filter(s => s.status === "pending").reduce((sum, s) => sum + s.minutes, 0);
   return report([
@@ -45,7 +47,8 @@ function check(record: RecordData, page: number): string {
     `Completion: ${record.steps.filter(s => s.status === "completed").length}/${record.steps.length} explicitly user-reported; success is not independently verified.`,
     "Verb check is a disclosed English leading-verb heuristic, not a language understanding guarantee. Use a verb such as Draft, Test, Review, or Write.",
     ...record.steps.flatMap(s => [`${s.id} · ${s.status} · ${s.minutes} minutes`, s.action, `Proof: ${s.proof || "(missing)"}`, `Check: ${issues(s, record.sessionMinutes).join("; ") || "executable within this session"}`]),
-    `Next: ${ROUTE} next ${record.id}`,
+    ...(!record.steps.length ? [EMPTY_STEPS] : []),
+    `Next: ${ROUTE} ${record.steps.length ? `next ${record.id}` : firstStepCommand(record.id)}`,
   ], `check ${record.id}`, page, `Private · current check · ${record.id} · revision ${record.revision}`);
 }
 async function suggest(record: RecordData, context: AgentFeatureContext): Promise<string> {
@@ -80,7 +83,7 @@ async function suggest(record: RecordData, context: AgentFeatureContext): Promis
 async function executeDomain(verb: string, rest: string, context: AgentFeatureContext): Promise<string> {
   if (verb === "create") {
     const [title, success, session] = fields(rest, 162, 1202, 16), record: RecordData = { ...base(context, "work", text(title, "Outcome", 160)), success: text(success, "Success definition", 1200), sessionMinutes: integer(session, 1, 480, "Session minutes"), steps: [] };
-    return mutate(context, undefined, state => { state.records.push(record); return saved(record.id, "Outcome saved. Add effort-sized steps and observable proof using help.", `check ${record.id}`); });
+    return mutate(context, undefined, state => { state.records.push(record); return saved(record.id, `Outcome saved. ${EMPTY_STEPS}`, firstStepCommand(record.id)); });
   }
   if (verb === "edit") {
     const [id, title, success, session] = fields(rest, 80, 162, 1202, 16), name = text(title, "Outcome", 160), definition = text(success, "Success definition", 1200), minutes = integer(session, 1, 480, "Session minutes");
@@ -126,7 +129,8 @@ async function executeDomain(verb: string, rest: string, context: AgentFeatureCo
     if (verb === "check") return check(record, checked(() => parsePage(page)));
     if (verb === "suggest") return suggest(record, context);
     const pending = record.steps.filter(s => s.status === "pending"), step = pending.find(s => issues(s, record.sessionMinutes).length === 0);
-    if (!step) return `${pending.length ? `No executable unfinished step; ${pending.length} pending step(s) need editing.` : record.steps.length ? "All steps are explicitly reported complete; review the success definition before declaring the outcome achieved." : "No steps yet. Add a step with action, minutes and proof."}\nNext: ${ROUTE} check ${id}`;
+    if (!record.steps.length) return `${EMPTY_STEPS}\nNext: ${ROUTE} ${firstStepCommand(id)}`;
+    if (!step) return `${pending.length ? `No executable unfinished step; ${pending.length} pending step(s) need editing.` : "All steps are explicitly reported complete; review the success definition before declaring the outcome achieved."}\nNext: ${ROUTE} check ${id}`;
     return `Private · next unfinished executable action · ${step.id}\n${step.action}\nEffort: ${step.minutes} minutes\nProof to collect: ${step.proof}\n${pending.indexOf(step)} earlier pending step(s) need editing; see check. Nothing was completed automatically.\nReport evidence with complete ${id} ${step.id} | REPORT.\nNext: ${ROUTE} show ${id}`;
   }
   fail("Unknown command. Use help for supported syntax.");

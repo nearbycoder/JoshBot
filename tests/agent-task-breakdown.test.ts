@@ -1,9 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import feature from "../lib/agent-features/task-breakdown.js";
+import { handleAgentCommand } from "../lib/agent-features/index.js";
 import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
 const idFrom = (reply: string, prefix: string) => { const id = reply.match(new RegExp(`${prefix}-[0-9a-f-]{36}`))?.[0]; assert.ok(id, reply); return id; };
 const record = async (f: ReturnType<typeof createAgentFeatureFixture>, id: string) => JSON.parse(await f.run(`export ${id}`)).record;
+
+test("dispatcher empty workspace guidance leads through explicit add, next and reported completion without services", async () => {
+  const f = createAgentFeatureFixture(feature);
+  const run = (command: string) => handleAgentCommand(`task-breakdown ${command}`, f.owner, {
+    backend: f.backend, services: f.services, timezone: "America/Chicago", now: new Date("2026-10-22T15:00:00Z"),
+  });
+  const created = await run("create Publish a short guide | Readers can install the app | 30");
+  const work = idFrom(created, "work"), route = "/nobo-help agent task-breakdown ";
+  const template = `${route}step ${work} add ACTION | MINUTES | PROOF`;
+  const continuation = created.match(/^Next: (.+)$/m)?.[1];
+  assert.equal(continuation, template);
+  const saved = f.backend.data.get(f.key("state")), writes = f.backend.calls.writes;
+  for (const reply of [created, await run(`next ${work}`), await run(`check ${work}`)]) {
+    assert.ok(reply.includes(`Next: ${template}`), reply);
+    assert.match(reply, /No steps yet/);
+    assert.ok(reply.length <= 3_500);
+  }
+  assert.equal(f.backend.data.get(f.key("state")), saved);
+  assert.equal(f.backend.calls.writes, writes, "empty-state reads must not add a step or write state");
+  const command = continuation.slice(route.length).replace("ACTION", "Draft installation steps").replace("MINUTES", "20").replace("PROOF", "A new user can follow all five steps");
+  const step = idFrom(await run(command), "step");
+  const next = await run(`next ${work}`);
+  assert.ok(next.includes(step)); assert.match(next, /Draft installation steps/);
+  assert.match(next, /Proof to collect: A new user can follow all five steps/);
+  assert.equal((await record(f, work)).steps[0].status, "pending");
+  assert.match(await run(`complete ${work} ${step} | A new user followed the guide`), /user-reported completion recorded/);
+  assert.match(await run(`next ${work}`), /All steps are explicitly reported complete/);
+  assert.equal((await record(f, work)).steps[0].completion, "A new user followed the guide");
+  assert.deepEqual(f.calls, { generate: 0, search: 0, readContext: 0 });
+});
 
 for (const scenario of [
   { name: "completion versus edited work", completed: false,
