@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readAgentOwnedContext, readAgentToolboxContext, type AgentContextAdapters, type AgentContextRequest } from "../lib/agent-features/context.js";
-import { LEGACY_INDEX_LIMIT, LEGACY_SOURCES, type LegacyContextKind } from "../lib/agent-features/context/legacy.js";
+import { LEGACY_INDEX_LIMIT, LEGACY_SOURCES, readLegacyContext, type LegacyContextKind } from "../lib/agent-features/context/legacy.js";
+import { AgentContextCapacityError } from "../lib/agent-features/budgets.js";
 import { createAgentFeatureServices, createProductionContextAdapters } from "../lib/agent-features/services.js";
 import { createAgentFeatureStore, type AgentStateBackend } from "../lib/agent-features/store.js";
 import type { AgentContextKind, AgentFeatureContext } from "../lib/agent-features/types.js";
@@ -351,4 +352,124 @@ test("production services use injected source IO and bounded read-only Redis ind
   await assert.rejects(() => oversized.readOwnerIndex(`schedules:user:${owner.userId}`, 200), /complete-read limit/);
   const denied = createProductionContextAdapters({ evaluateAccess: async () => ({ allowed: false }) });
   await assert.rejects(() => denied.authorizeChannel(owner), /denied/);
+});
+
+function batchFixture(f: ReturnType<typeof fixture>, failures = new Map<string, Error>()) {
+  const batches: string[][] = [];
+  f.backend.getMany = async (keys, maxBytes) => {
+    assert.ok(keys.length > 0 && keys.length <= 16); assert.equal(maxBytes, 64_000);
+    batches.push([...keys]);
+    return keys.map(key => {
+      const value = f.data.get(key) ?? null;
+      const error = failures.get(key) ?? (value !== null && Buffer.byteLength(value) > maxBytes
+        ? new AgentContextCapacityError("Personal context is too large to load completely.") : undefined);
+      return error ? { status: "rejected", reason: error } : { status: "fulfilled", value };
+    });
+  };
+  return batches;
+}
+
+test("bounded legacy batches preserve every kind, sorted source order, missing records and provenance", async () => {
+  const f = fixture();
+  for (const kind of Object.keys(LEGACY_SOURCES) as LegacyContextKind[]) {
+    for (let i = 0; i < 35; i++) f.legacy(kind, `id-${String(i).padStart(2, "0")}`);
+    f.legacy(kind, "other-team", { teamId: "TOTHER" });
+    f.legacy(kind, "other-owner", { ownerUserId: "UOTHER", createdByUserId: "UOTHER" });
+    f.legacy(kind, "other-channel", { channel: "COTHER" });
+    f.legacy(kind, "bad-team", { teamId: null });
+    f.legacy(kind, "missing"); f.data.delete(LEGACY_SOURCES[kind].record + "missing");
+  }
+  const serial = await f.read();
+  f.reads.length = 0; f.indexReads.length = 0; f.policies.length = 0;
+  for (const ids of f.indexes.values()) ids.reverse();
+  const batches = batchFixture(f);
+  assert.deepEqual(await f.read(), serial);
+  assert.equal(serial.length, 140); assert.equal(batches.length, 12);
+  assert.ok(batches.every(keys => keys.length <= 16 && keys.every(key => key.startsWith(keys[0].split(":").slice(0, 2).join(":") + ":"))));
+  assert.equal(f.reads.filter(key => /^(follow-ups|schedules|monitors|channel-digests):/.test(key)).length, 0);
+  assert.equal(f.indexReads.length, 4); assert.equal(f.policies.length, 1); assert.equal(f.writes(), 0);
+});
+
+test("absent batch method keeps exact serial stop-on-first-error behavior", async () => {
+  const f = fixture(); f.legacy("reminder", "b"); f.legacy("reminder", "a");
+  f.data.set("schedules:job:a", "{");
+  assert.equal(f.backend.getMany, undefined);
+  await assert.rejects(readLegacyContext(f.backend, owner, ["reminder"], f.adapters), SyntaxError);
+  assert.deepEqual(f.reads, ["schedules:job:a"]);
+});
+
+for (const early of ["json", "id", "date", "type", "size"] as const) {
+  for (const late of ["json", "id", "type", "size"] as const) {
+    test(`settled batches retain sorted first-error precedence: ${early} before ${late}`, async () => {
+      const f = fixture(), failures = new Map<string, Error>();
+      f.legacy("reminder", "b"); f.legacy("reminder", "a");
+      const inject = (id: string, type: string) => {
+        const key = `schedules:job:${id}`, value = JSON.parse(f.data.get(key)!);
+        if (type === "json") f.data.set(key, "{");
+        if (type === "id") f.put(key, { ...value, id: "contradiction" });
+        if (type === "date") f.put(key, { ...value, createdAt: "2026-02-30T12:00:00Z" });
+        if (type === "type") failures.set(key, new Error("WRONGTYPE Operation against a key holding the wrong kind of value"));
+        if (type === "size") f.data.set(key, "x".repeat(64_001));
+      };
+      inject("a", early); inject("b", late);
+      const old = f.backend.get;
+      f.backend.get = async key => { if (failures.has(key)) throw failures.get(key); return old(key); };
+      let expected: Error | undefined;
+      await assert.rejects(readLegacyContext(f.backend, owner, ["reminder"], f.adapters), error => { expected = error as Error; return true; });
+      batchFixture(f, failures);
+      await assert.rejects(readLegacyContext(f.backend, owner, ["reminder"], f.adapters), error => {
+        assert.equal((error as Error).constructor, expected!.constructor);
+        assert.equal((error as Error).message, expected!.message); return true;
+      });
+      assert.equal(f.writes(), 0);
+    });
+  }
+}
+
+test("invalid complete indexes and denied access dispatch no batch and never fall back", async () => {
+  const f = fixture(); f.legacy("reminder", "a"); const batches = batchFixture(f);
+  const index = "schedules:user:" + owner.userId;
+  for (const ids of [["a", "a"], ["a", "../bad"], ["a", 1], Array.from({ length: 201 }, (_, i) => `id-${i}`)]) {
+    f.indexes.set(index, ids as string[]);
+    await assert.rejects(f.read(["reminder"]), /could not be read completely/);
+  }
+  assert.deepEqual(batches, []); assert.deepEqual(f.reads, []);
+  f.indexes.set(index, ["a"]); f.adapters.authorizeChannel = async () => { throw new Error("denied"); };
+  const indexReads = f.indexReads.length;
+  await assert.rejects(f.read(["reminder"]), /could not be read completely/);
+  assert.equal(f.indexReads.length, indexReads); assert.deepEqual(batches, []);
+  f.adapters.authorizeChannel = async () => {};
+  f.backend.getMany = async () => { throw new Error("transport failed"); };
+  await assert.rejects(f.read(["reminder"]), /could not be read completely/);
+  assert.deepEqual(f.reads, []); assert.equal(f.writes(), 0);
+});
+
+test("invalid settled outcomes reject instead of inventing missing records or retrying", async () => {
+  const f = fixture(); f.legacy("reminder", "a");
+  for (const reply of [null, [], Array(1), [undefined], [{ status: "fulfilled", value: undefined }], [{ status: "fulfilled", value: 7 }], [{ status: "pending" }], [{ status: "rejected", reason: "string failure" }]]) {
+    f.backend.getMany = async () => reply as unknown as PromiseSettledResult<string | null>[];
+    await assert.rejects(readLegacyContext(f.backend, owner, ["reminder"], f.adapters), /Invalid bounded.*outcomes/);
+  }
+  assert.deepEqual(f.reads, []); assert.equal(f.writes(), 0);
+});
+
+test("later chunks and later context calls see intervening writes and deletions", async () => {
+  const f = fixture();
+  for (let i = 0; i < 17; i++) f.legacy("reminder", `id-${String(i).padStart(2, "0")}`);
+  const batches = batchFixture(f), read = f.backend.getMany!;
+  f.backend.getMany = async (keys, max) => {
+    const result = await read(keys, max);
+    if (batches.length === 1) {
+      const key = "schedules:job:id-16";
+      f.put(key, { ...JSON.parse(f.data.get(key)!), task: "Changed after first chunk" });
+    }
+    return result;
+  };
+  assert.equal((await f.read(["reminder"])).find(item => item.id === "reminder:id-16")?.text, "Changed after first chunk");
+  f.data.delete("schedules:job:id-00");
+  f.legacy("reminder", "new", { task: "Fresh insert" });
+  const later = await f.read(["reminder"]);
+  assert.equal(later.length, 17); assert.ok(!later.some(item => item.id === "reminder:id-00"));
+  assert.equal(later.find(item => item.id === "reminder:new")?.text, "Fresh insert");
+  assert.equal(f.writes(), 0);
 });

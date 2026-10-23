@@ -7,6 +7,7 @@ import { runAgentFeature } from "../lib/agent-features/runtime.js";
 import { handleAgentCommand } from "../lib/agent-features/index.js";
 import { createAgentTestContext } from "./agent-feature-test-utils.js";
 import type { AgentFeature } from "../lib/agent-features/types.js";
+import type { AgentStateBackend } from "../lib/agent-features/store.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -473,4 +474,151 @@ test("wrapped production owner-index capacity stays actionable and preserves sav
   const reply = await runAgentFeature(audit, "review --kind monitor", caller, { ...f.options, services, now });
   assert.match(reply, /owner index exceeds.*200/); assert.match(reply, /original automation tool/);
   assert.doesNotMatch(reply, /again later/); assert.deepEqual(f.data, before); assert.equal(f.writes, writes);
+});
+
+/** Fake the optional transport contract, never the source mapper or runtime. */
+function addBoundedBatch(backend: AgentStateBackend, data: Map<string, string>) {
+  const batches: string[][] = [];
+  backend.getMany = async (keys, maxBytes) => {
+    assert.ok(keys.length > 0 && keys.length <= 16); assert.equal(maxBytes, 64_000);
+    batches.push([...keys]);
+    const { AgentContextCapacityError } = await import("../lib/agent-features/budgets.js");
+    return keys.map(key => {
+      const value = data.get(key) ?? null;
+      return value !== null && Buffer.byteLength(value) > maxBytes
+        ? { status: "rejected", reason: new AgentContextCapacityError("Personal context is too large to load completely.") }
+        : { status: "fulfilled", value };
+    });
+  };
+  return batches;
+}
+
+test("settled batches retain complete 1500-record and actual consumer evidence parity", async () => {
+  const harness = await import(new URL("../scripts/bench-agent-release.mjs", import.meta.url).href);
+  const api = { ...await import("../lib/agent-features/services.js"), ...await import("../lib/agent-features/calendar/ics.js") };
+  const { readBoundedContext } = await import("../lib/agent-features/bounded-context.js");
+  const { measureAgentContext } = await import("../lib/agent-features/budgets.js");
+  const caller = { teamId: "TBENCH", userId: "UBENCH", channelId: "CBENCH" }, now = new Date("2026-10-22T12:00:00Z");
+  const all = ["note", "goal", "habit", "journal", "bookmark", "follow-up", "reminder", "monitor", "digest", "artifact", "memory", "event"] as const;
+  const normalize = (raw: string) => raw.replace(/\b(?:mp|wr)-[0-9a-f-]{36}\b/g, "<generated-id>");
+  for (const mode of ["adapter-six", "meeting-prep", "morning-brief", "weekly-review"]) {
+    const results = [];
+    for (const batched of [false, true]) {
+      const f = harness.sourceFixture(api, mode === "adapter-six" ? mode : "consumer");
+      const batches = batched ? addBoundedBatch(f.backend, f.backend.data) : [];
+      const target: AgentFeature = mode === "adapter-six" ? { ...feature, execute: async (_, ctx) => {
+        assert.equal((await readBoundedContext(ctx, all)).length, 1500); return "1500 complete";
+      } } : (await import(`../lib/agent-features/${mode}.js`)).default;
+      const controller = new AbortController(), services = f.services(target.id, controller.signal);
+      const read = services.readContext, captured: Awaited<ReturnType<typeof services.readContext>>[] = [];
+      services.readContext = async (kinds: Parameters<typeof services.readContext>[0]) => { const items = await read(kinds); captured.push(items); return items; };
+      const reply = await runAgentFeature(target, mode === "meeting-prep" ? "prepare Atlas | purpose: Review launch" : mode === "morning-brief" ? "brief" : "review",
+        caller, { backend: f.backend, now, timezone: "UTC", signal: controller.signal, services });
+      assert.match(reply, mode === "adapter-six" ? /^1500 complete/ : mode === "meeting-prep" ? /mp-/ : mode === "morning-brief" ? /Morning brief/i : /wr-/);
+      const bytes = captured.map(items => measureAgentContext(items));
+      assert.ok(bytes.every(value => value <= 16 * 1024 ** 2));
+      const total = bytes.reduce((sum, value) => sum + value, 0);
+      assert.equal(total, mode === "adapter-six" ? 23_575_616 : mode === "weekly-review" ? 21_945_013 : 29_339_745);
+      assert.equal(f.counts.generate, 0); assert.equal(f.counts.search, 0);
+      assert.equal(f.counts.eval, mode === "adapter-six" ? 4 : mode === "weekly-review" ? 1 : 2);
+      assert.equal(f.counts.policy, f.counts.eval);
+      assert.equal(f.backend.calls.writes, mode === "meeting-prep" || mode === "weekly-review" ? 1 : 0);
+      const logicalGets = f.backend.calls.reads + batches.reduce((sum, keys) => sum + keys.length, 0);
+      assert.equal(logicalGets, mode === "adapter-six" ? 807 : mode === "meeting-prep" ? 406 : mode === "morning-brief" ? 404 : 206);
+      if (batched) assert.equal(batches.length, mode === "adapter-six" ? 52 : mode === "weekly-review" ? 13 : 26);
+      const saved = [...f.backend.data as Map<string, string>].filter(([key]) => key.startsWith("nobo:agents:")).map(([key, raw]) => [key, normalize(raw)]);
+      results.push({ reply: normalize(reply), captured, bytes, saved });
+    }
+    assert.deepEqual(results[1], results[0], `${mode}: full source arrays and saved evidence differ`);
+  }
+});
+
+for (const stage of ["before", "during", "between"] as const) {
+  test(`original deadline ${stage} a legacy batch prevents later reads and saves`, async t => {
+    const { createAgentFeatureServices } = await import("../lib/agent-features/services.js");
+    const f = fixture(), caller = { ...owner, channelId: "CPERF" }, controller = new AbortController();
+    const entered = gate<void>(), late = gate<readonly PromiseSettledResult<string | null>[]>();
+    let calls = 0, deadlines = 0, authorized = 0;
+    t.mock.method(AbortSignal, "timeout", (ms: number) => { deadlines++; assert.equal(ms, 120_000); return controller.signal; });
+    const backend: AgentStateBackend = { ...f.options.backend, getMany: async keys => {
+      calls++; if (stage === "during") { entered.resolve(); return late.promise; }
+      const outcomes = keys.map(() => ({ status: "fulfilled" as const, value: null }));
+      if (stage === "between") controller.abort(new Error("original deadline"));
+      return outcomes;
+    } };
+    const services = createAgentFeatureServices(backend, caller, controller.signal, { now: new Date(), timezone: "UTC" }, {
+      readOwnerIndex: async () => Array.from({ length: 17 }, (_, i) => `job-${i}`),
+      authorizeChannel: async () => { authorized++; if (stage === "before") controller.abort(new Error("original deadline")); },
+    });
+    const reading: AgentFeature = { ...feature, execute: async (_, ctx) => {
+      await ctx.services.readContext(["reminder", "monitor"]);
+      return ctx.store.update("state", null, () => ({ value: "partial", result: "saved" }));
+    } };
+    const running = runAgentFeature(reading, "read", caller, { ...f.options, backend, services });
+    const stopped = assert.rejects(running, /original deadline/);
+    if (stage === "during") { await entered.promise; controller.abort(new Error("original deadline")); }
+    await stopped; late.resolve([]); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(deadlines, 1); assert.equal(authorized, 1); assert.equal(calls, stage === "before" ? 0 : 1);
+    assert.equal(f.writes, 0); assert.equal(f.data.size, 0);
+  });
+}
+
+for (const settlement of ["success", "failure"] as const) {
+  test(`two aborted legacy batches keep physical permits through late ${settlement}`, async () => {
+    const { createAgentFeatureServices } = await import("../lib/agent-features/services.js");
+    const f = fixture(), caller = { ...owner, channelId: "CPERF" }, entered = gate<void>();
+    const first = gate<readonly PromiseSettledResult<string | null>[]>(), second = gate<void>();
+    let calls = 0;
+    const backend: AgentStateBackend = { ...f.options.backend, getMany: async () => {
+      if (++calls === 2) entered.resolve();
+      if (calls === 1) return first.promise;
+      await second.promise;
+      if (settlement === "failure") throw new Error("late physical error");
+      return [{ status: "fulfilled", value: null }];
+    } };
+    const reading: AgentFeature = { ...feature, execute: async (_, ctx) => { await ctx.services.readContext(["reminder"]); return "read"; } };
+    const controllers = [new AbortController(), new AbortController()];
+    const running = controllers.map(controller => runAgentFeature(reading, "read", caller, { ...f.options, backend, signal: controller.signal,
+      services: createAgentFeatureServices(backend, caller, controller.signal, { now: new Date(), timezone: "UTC" }, {
+        readOwnerIndex: async () => ["a"], authorizeChannel: async () => {},
+      }),
+    }));
+    const stopped = running.map(promise => assert.rejects(promise, /abort/i));
+    try {
+      await entered.promise; controllers.forEach(controller => controller.abort()); await Promise.all(stopped);
+      assert.match(await runAgentFeature(feature, "run", caller, f.options), /busy/);
+      first.resolve([{ status: "rejected", reason: new Error("one settled slot failure") }]);
+      await new Promise(resolve => setImmediate(resolve));
+      // First physical batch releases just its own permit; the other remains held.
+      const held = gate<void>(), holding = gate<void>();
+      const third = runAgentFeature({ ...feature, execute: async () => { holding.resolve(); await held.promise; return "done"; } }, "run", caller, f.options);
+      await holding.promise;
+      assert.match(await runAgentFeature(feature, "run", caller, f.options), /busy/);
+      second.resolve(); await new Promise(resolve => setImmediate(resolve));
+      assert.equal(await runAgentFeature(feature, "run", caller, f.options), "done");
+      held.resolve(); await third;
+      assert.equal(calls, 2); assert.equal(f.writes, 0);
+    } finally { first.resolve([]); second.resolve(); controllers.forEach(controller => controller.abort()); await Promise.allSettled(running); }
+  });
+}
+
+test("batch revocation and over-total capacity preserve actual saved automation snapshots", async () => {
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = await capacityFixture();
+  addBoundedBatch(f.backend, f.backend.data);
+  assert.match(await f.run(audit, "review"), /Personal automation review/);
+  f.seed(180, true);
+  const before = new Map(f.backend.data), writes = f.backend.calls.writes;
+  assert.match(await f.run(audit, "review"), /total context byte budget/);
+  assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+  f.seed(1, true); f.requests.length = 0;
+  const retained = new Map(f.backend.data), read = f.services.readContext;
+  f.services.readContext = async kinds => {
+    const items = await read(kinds);
+    if (f.requests.length === 1) f.revoke();
+    return items;
+  };
+  assert.doesNotMatch(await f.run(audit, "review"), /Personal automation review audit-/);
+  assert.deepEqual(f.requests, [["reminder"], ["monitor"]]);
+  assert.deepEqual(f.backend.data, retained); assert.equal(f.backend.calls.writes, writes);
 });
