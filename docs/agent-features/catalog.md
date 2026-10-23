@@ -11,13 +11,15 @@ Start privately in your Slack channel or DM composer:
 /nobo-help agent catalog group plan
 /nobo-help agent catalog group capture page 2
 /nobo-help agent search meeting
+/nobo-help agent search plan my day
+/nobo-help agent search review my week
 /nobo-help agent search private page 2
 /nobo-help agent meeting-prep help
 ```
 
 Each catalog page shows at most ten agent IDs and one-line purposes, its range, total, page count, and copyable navigation. Group order is fixed; agents within each group sort by ID. The aliases are `plan` (Plan & prioritize), `capture` (Capture & recall), `write` (Write & communicate), `decide` (Decide & analyze), `learn` (Learn & improve), `life` (Organize life), and `review` (Review & maintain).
 
-Search matches every case-insensitive query token against IDs, titles, descriptions and keywords. An exact ID ranks first, then ID/title matches, then other matches; ID breaks ties. Spaces collapse and queries may contain up to 100 JavaScript string units. Only a terminal `page <integer>` is pagination: `search page design` searches those words. Page numbers must be positive and within the displayed range. Invalid filters or an empty result give a working catalog reset. No text is silently truncated to make a search or page fit.
+Search matches every meaningful case-insensitive query token against IDs, titles, descriptions and keywords. The conversational words `a`, `an`, `the`, `i`, `me`, `my`, `please`, `for`, and `to` are ignored for matching only: `plan my day` finds the day planner, and `review my week` finds the weekly review. Every remaining token must match; this is literal search without inference or synonyms. A query containing only those conversational words returns no matches with a catalog reset. An exact ID ranks first, then ID/title matches, then other matches; ID breaks ties. The displayed query and navigation retain your words. Spaces collapse and queries may contain up to 100 JavaScript string units. Only a terminal `page <integer>` is pagination: `search page design` searches those words. Page numbers must be positive and within the displayed range. Invalid filters or an empty result give a working catalog reset. No text is silently truncated to make a search or page fit. Only reserved catalog commands are normalized; ordinary feature payloads retain their original whitespace.
 
 On **Home → More → Personal agents**, choose All or a group, use Previous/Next, or enter a query and press **Search**. Search stays within the selected Home group. Each row’s **Help** shows the agent’s actual commands and a concrete example. **Back to results** restores group, query and page. Browsing and help update the same private modal and never execute an agent. Copy a command into your Slack composer to start a workflow. The copyable slash search is global; the modal labels that distinction when a group is selected.
 

@@ -9,6 +9,7 @@ import { agentFeatures, formatAgentFeatureHelp, formatAgentHelp } from "../lib/a
 import { existingAgentMetadata } from "../lib/agent-features/catalog-metadata.js";
 import { handleAgentCommand } from "../lib/agent-features/index.js";
 import type { AgentFeatureMetadata } from "../lib/agent-features/types.js";
+import { buildSlackAgentCatalogView } from "../src/slack-agent-catalog.js";
 
 const owner = { teamId: "TCATALOG", userId: "UCATALOG", requestId: "never-written" };
 const noStartup = {
@@ -114,6 +115,59 @@ test("navigation grammar accepts only terminal numeric page suffixes and never t
   assert.match(escaped, /&lt;@UOTHER&gt; &amp; `test` 漢/);
   assert.doesNotMatch(escaped, /<@UOTHER>|&amp;lt;/);
   for (const command of ["", "catalog", "search meeting", "inbox help"]) await assert.rejects(() => handleAgentCommand(command, { userId: "foreign:owner", teamId: "TCATALOG" }, undefined, noStartup), /signed Slack/);
+});
+
+test("conversational core queries discover real workflows without startup and retain meaningful-token AND matching", async () => {
+  for (const [query, expected] of [
+    ["plan my day", "day-planner"], ["review my week", "weekly-review"],
+    ["prepare for a meeting", "meeting-prep"], ["clean CSV", "data-cleanroom"],
+    ["capture a task", "inbox"], ["Please plan MY day", "day-planner"],
+  ]) {
+    const state = { query, page: 1 };
+    const page = getAgentCatalogPage(agentFeatures, state);
+    assert.ok(page.entries.some(entry => entry.id === expected), query);
+    assert.deepEqual(page.state, state);
+    const reply = await handleAgentCommand(`search ${query}`, owner, undefined, noStartup);
+    assert.equal(reply, page.text);
+    assert.ok(reply.includes(`Search: ${query}`));
+    assert.ok(reply.length <= 3_500);
+    const view = buildSlackAgentCatalogView(state);
+    assert.deepEqual(JSON.parse(view.private_metadata!), state);
+    assert.ok(JSON.stringify(view.blocks).includes(`${expected} —`));
+    const help = buildSlackAgentCatalogView({ ...state, featureId: expected });
+    assert.deepEqual(JSON.parse(help.private_metadata!), { ...state, featureId: expected });
+    assert.ok(JSON.stringify(help.blocks).includes("Back to results"));
+  }
+  const base = agentFeatures[0];
+  const entries = [
+    { ...base, id: "plan-day", title: "Plan day", description: "", keywords: [] },
+    { ...base, id: "plan", title: "Plan", description: "", keywords: [] },
+    { ...base, id: "other", title: "Other", description: "plan day", keywords: [] },
+  ];
+  assert.deepEqual(findAgentCatalogEntries(entries, { query: "please plan my day", page: 1 }).map(entry => entry.id), ["plan-day", "other"]);
+  assert.deepEqual(findAgentCatalogEntries(entries, { query: "plan-day", page: 1 }).map(entry => entry.id), ["plan-day"]);
+  for (const query of ["my", "please for a me to the an i", "plan my impossible-xyz"]) {
+    const reply = await handleAgentCommand(`search ${query}`, owner, undefined, noStartup);
+    assert.match(reply, /No agents match/);
+    assert.match(reply, /Open the catalog: \/nobo-help agent catalog/);
+    assert.ok(reply.length <= 3_500);
+  }
+  const group = getAgentCatalogPage(agentFeatures, { group: "capture", query: "plan my day", page: 1 });
+  assert.equal(group.total, 0);
+  const paged = getAgentCatalogPage(agentFeatures, { query: "please private", page: 2 });
+  assert.ok(paged.text.includes("Search: please private"));
+  assert.ok(paged.text.includes("search please private page 1"));
+});
+
+test("catalog parsing leaves ordinary feature payloads outside navigation normalization", () => {
+  for (const payload of [
+    "data-cleanroom create Exact | name\r\n  tail  \r\n\r\n",
+    " \tDATA-CLEANROOM \tcreate Exact | name\nsearch meeting\n  tail  ",
+    "inbox capture " + " \n\t".repeat(16_000),
+    "catalogue help", "searching meeting", "\u00a0task-breakdown\ncreate X | Y | 30",
+  ]) assert.equal(parseAgentCatalogCommand(payload), null);
+  assert.deepEqual(parseAgentCatalogCommand("\t \r\n"), { state: { page: 1 } });
+  assert.deepEqual(parseAgentCatalogCommand("\u00a0SEARCH\tplan\n my  day page 2  "), { state: { query: "plan my day", page: 2 } });
 });
 
 test("packing reduces row count after escaping without losing Unicode, commands or accurate ranges", () => {
