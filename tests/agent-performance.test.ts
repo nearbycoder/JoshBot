@@ -622,3 +622,39 @@ test("batch revocation and over-total capacity preserve actual saved automation 
   assert.deepEqual(f.requests, [["reminder"], ["monitor"]]);
   assert.deepEqual(f.backend.data, retained); assert.equal(f.backend.calls.writes, writes);
 });
+
+test("late batch transport failure and lower read budgets preserve prior consumer state", async () => {
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = await capacityFixture(), batches = addBoundedBatch(f.backend, f.backend.data);
+  assert.match(await f.run(audit, "review"), /Personal automation review/);
+  f.seed(17, true); f.requests.length = 0;
+  const before = new Map(f.backend.data), writes = f.backend.calls.writes, read = f.backend.getMany!;
+  let calls = 0;
+  f.backend.getMany = async (keys, max) => {
+    if (++calls === 2) throw new Error("transport failed in later chunk");
+    return read(keys, max);
+  };
+  assert.doesNotMatch(await f.run(audit, "review"), /Personal automation review audit-/);
+  assert.equal(calls, 2); assert.deepEqual(f.requests, [["reminder"]]);
+  assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+  f.backend.getMany = read; batches.length = 0; f.requests.length = 0;
+  assert.doesNotMatch(await f.run({ ...audit, resourceBudgets: { contextReads: 1 } }, "review"), /Personal automation review audit-/);
+  assert.deepEqual(f.requests, [["reminder"]]); assert.equal(batches.length, 2);
+  assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+});
+
+test("valid raw batch slots still obey the unchanged 16 MiB projected response budget", async () => {
+  const { default: audit } = await import("../lib/agent-features/automation-audit.js");
+  const f = await capacityFixture(), batches = addBoundedBatch(f.backend, f.backend.data);
+  assert.match(await f.run(audit, "review"), /Personal automation review/);
+  f.seed(200, true);
+  for (const [key, raw] of f.backend.data) if (key.startsWith("schedules:job:")) {
+    const value = JSON.stringify({ ...JSON.parse(raw), task: "\u0000".repeat(10_000) });
+    assert.ok(Buffer.byteLength(value) <= 64_000); f.backend.data.set(key, value);
+  }
+  const before = new Map(f.backend.data), writes = f.backend.calls.writes;
+  batches.length = 0; f.requests.length = 0;
+  assert.match(await f.run(audit, "review --kind reminder"), /complete-read budget/);
+  assert.equal(batches.length, 13); assert.deepEqual(f.requests, [["reminder"]]);
+  assert.deepEqual(f.backend.data, before); assert.equal(f.backend.calls.writes, writes);
+});
