@@ -93,7 +93,8 @@ test("default Redis bounded batches preserve bytes, slots, errors and physical s
     const entered = new Promise<void>(yes => { started = yes; });
     t.mock.method(redis, "eval", () => { started(); return pending; });
     const owner = { teamId: "TBATCH", userId: "UBATCH" }, controller = new AbortController();
-    const running = withAgentAdmission(owner, () => contextRead(controller.signal, () => read([exact], 64_000)), () => AGENT_BUSY_MESSAGE);
+    const running = withAgentAdmission<readonly PromiseSettledResult<string | null>[] | string>(owner,
+      () => contextRead(controller.signal, () => read([exact], 64_000)), () => AGENT_BUSY_MESSAGE);
     const stopped = assert.rejects(running, /original stop/);
     await entered; controller.abort(new Error("original stop")); await stopped;
     let release!: () => void, holdStarted!: () => void;
