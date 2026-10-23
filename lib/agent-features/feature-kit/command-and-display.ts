@@ -77,47 +77,83 @@ export function paginateParts(parts: readonly DisplayPart[], options: Pagination
   }
   const title = options.title ?? "";
   const escapedTitle = renderText(title, options.mode);
-  const units: DisplayPart[] = [];
-  let inputUnits = 0;
+  // Keep prose as spans, not a match/object/escaped string for every code point.
+  // Count the original tokens exactly: their count reserves the header digits.
+  const spans: { text: string; atomic: boolean; units: number }[] = [];
+  const mrkdwn = options.mode === "mrkdwn";
+  const width = (code: number) => mrkdwn && code === 38 ? 5 : mrkdwn && (code === 60 || code === 62) ? 4 : code >= 0xd800 && code <= 0xdbff ? 2 : 1;
+  let inputUnits = 0, tokenCount = 0, remaining = 0;
+  const span = (text: string, atomic: boolean) => {
+    if (!atomic && !text.length) return;
+    let units = 0, points = 0;
+    for (let at = 0; at < text.length; at++) {
+      const code = text.charCodeAt(at);
+      units += width(code); points++;
+      if (code >= 0xd800 && code <= 0xdbff) at++; // already validated as a pair
+    }
+    tokenCount += atomic ? 1 : points;
+    remaining += units;
+    spans.push({ text, atomic, units });
+  };
   for (const part of parts) {
     if (typeof part.text !== "string" || !part.text.isWellFormed()) throw new Error("Display text must have valid Unicode boundaries.");
     inputUnits += part.text.length;
     if (inputUnits > 262_144) throw new Error("Too much detail for one pagination operation; select one record or a smaller evidence scope.");
-    if (part.atomic) units.push(part);
+    if (part.atomic) span(part.text, true);
     else {
       // Exact text survives; do not alter URL query strings or split a copied command.
-      for (const match of part.text.matchAll(/https?:\/\/[^\s]+|\/nobo-help[^\r\n]*|[\s\S]/gu)) {
-        units.push({ text: match[0], atomic: match[0].length > 2 });
+      let end = 0;
+      for (const match of part.text.matchAll(/https?:\/\/[^\s]+|\/nobo-help[^\r\n]*/gu)) {
+        span(part.text.slice(end, match.index), false);
+        span(match[0], true);
+        end = match.index + match[0].length;
       }
+      span(part.text.slice(end), false);
     }
   }
-  const encoded = units.map(part => renderText(part.text, options.mode));
-  let remaining = encoded.reduce((sum, value) => sum + value.length, 0);
   // At least one code point per nonempty page. This upper bound reserves total digits
   // without repeatedly repaginating as the actual page count changes.
-  const totalBound = Math.min(10_000, Math.max(1, units.length));
+  const totalBound = Math.min(10_000, Math.max(1, tokenCount));
   const header = (page: number, total: number) => `${escapedTitle ? `${escapedTitle}\n` : ""}Page ${page}/${total}\n`;
   const bodies: { body: string; nextCommand?: string }[] = [];
-  let cursor = 0;
+  let cursor = 0, offset = 0;
   do {
     const page = bodies.length + 1;
     if (page > 10_000) throw new Error("Too many detail pages; use a larger reply budget or select a smaller scope.");
     const reservedHeader = header(page, totalBound).length;
     if (remaining <= max - reservedHeader) {
-      bodies.push({ body: units.slice(cursor).map(part => part.text).join("") });
+      bodies.push({ body: spans.slice(cursor).map((part, index) => index === 0 ? part.text.slice(offset) : part.text).join("") });
       break;
     }
     const nextCommand = boundedText(options.command(page + 1), { label: "Next command", maxBytes: 12_000, trim: false });
     if (/[\r\n]/u.test(nextCommand)) throw new Error("Next command must be one complete line.");
     const capacity = max - reservedHeader - renderText(`\nNext: ${nextCommand}`, options.mode).length;
     if (capacity < 2) throw new Error("Reply budget leaves no detail space after the title and next command; shorten the title/command or increase maxUnits.");
-    const start = cursor;
+    const start = cursor, startOffset = offset;
+    const chunks: string[] = [];
     let used = 0;
-    while (cursor < units.length && used + encoded[cursor].length <= capacity) used += encoded[cursor++].length;
-    if (start === cursor) throw new Error("An atomic URL, identifier, command, or Unicode character cannot fit this page. Shorten the title/command, increase maxUnits up to 3500, or reject the value before saving; it was not split or dropped.");
-    bodies.push({ body: units.slice(start, cursor).map(part => part.text).join(""), nextCommand });
+    while (cursor < spans.length) {
+      const part = spans[cursor];
+      if (part.atomic) {
+        if (used + part.units > capacity) break;
+        used += part.units; chunks.push(part.text); cursor++;
+      } else {
+        const from = offset;
+        while (offset < part.text.length) {
+          const code = part.text.charCodeAt(offset), size = width(code);
+          if (used + size > capacity) break;
+          used += size;
+          offset += code >= 0xd800 && code <= 0xdbff ? 2 : 1;
+        }
+        if (offset > from) chunks.push(part.text.slice(from, offset));
+        if (offset < part.text.length) break;
+        cursor++; offset = 0;
+      }
+    }
+    if (start === cursor && startOffset === offset) throw new Error("An atomic URL, identifier, command, or Unicode character cannot fit this page. Shorten the title/command, increase maxUnits up to 3500, or reject the value before saving; it was not split or dropped.");
+    bodies.push({ body: chunks.join(""), nextCommand });
     remaining -= used;
-  } while (cursor < units.length);
+  } while (cursor < spans.length);
   return bodies.map(({ body, nextCommand }, index) => ({
     body, page: index + 1, total: bodies.length, ...(nextCommand === undefined ? {} : { nextCommand }),
     text: header(index + 1, bodies.length) + renderText(body, options.mode) +

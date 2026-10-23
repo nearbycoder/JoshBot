@@ -1,0 +1,2313 @@
+{
+  "evidenceVersion": 1,
+  "scope": "Focused shared-host diagnostic, not a production release gate, isolated-host benchmark or cloud cost claim",
+  "localArtifactWarning": "Comparison script and exported research harness require author-specific /tmp and worktree paths; retained local diagnostic artifacts, not repository-portable reproduction",
+  "implementationCommits": [
+    "31fbae4c73cab2eff801ac0f4d7439a2f2961f54",
+    "8532acaef2079887258f7dda246bee12222291b3"
+  ],
+  "startedAt": "2026-10-23T07:41:00.701Z",
+  "endedAt": "2026-10-23T07:41:09.974Z",
+  "manifest": {
+    "createdAt": "2026-10-23T07:40:38.924Z",
+    "node": "v24.22.1",
+    "heapMiB": 1024,
+    "before": {
+      "directory": "/tmp/joshbot-release-5A6pQX",
+      "source": {
+        "files": {
+          "lib/access-controls.ts": "81a13582298ff321c2a469664f08a377dd6ba4758584d7ca804902f6cd47ed5b",
+          "lib/agent-features/achievement-portfolio.metadata.ts": "b8635f1bd65e2bdc15d8c876ce57f76f64cdb5ad62b79787a7cfaf15c4d88913",
+          "lib/agent-features/achievement-portfolio.ts": "2602190dedfa4c494d6412e9f35981941d6305a45ed25083a0080b16690c3a0f",
+          "lib/agent-features/admission.ts": "50d6bb5ceb495d264f0c8456d69ac7f6e1368bfa9277ccff2e751db01f7dd76f",
+          "lib/agent-features/argument-map.metadata.ts": "b977acf6ebe81a122265ffb180dd34d0504c6aba472883aead1636836e3c2a6e",
+          "lib/agent-features/argument-map.ts": "b695df6426ef4036cbce172ed1e55aa2cce5a84cf4551300f353db4b2f8ad814",
+          "lib/agent-features/assumption-tests.metadata.ts": "3ffa2dca4b5a7a7285311a8b656d567ab944b1fc832fc27bf3e193d650e41785",
+          "lib/agent-features/assumption-tests.ts": "e3ff118fd6109f022e1dfeb79a87ca9a1f257916cbd42b83b74c4f24b199c757",
+          "lib/agent-features/audience-brief.metadata.ts": "22f80babfbfd27d8db3b6679840977d4643cf03bdef8ad35774c1f7aa8a62fdc",
+          "lib/agent-features/audience-brief.ts": "0c282be235c2dcf7a83ffe0e4b8ad8837f853714321e0d8cef31b081af4d4b18",
+          "lib/agent-features/automation-audit.ts": "6edc6f672027b38b1a52458323580c8c7813f148ce3a05ba0f4a42094ac1836a",
+          "lib/agent-features/blocker-lab.metadata.ts": "aba0e033632f711e5a783eaf52a4adbe5640eb665a0b6c95b2237b8a34707e13",
+          "lib/agent-features/blocker-lab.ts": "93db3887277b2cd8afa2510cf58e6114fb1a53881426b8a21ae4b2d1f6b1fbad",
+          "lib/agent-features/boundary-script.metadata.ts": "322773a6393c4b53c7685d5bdadd31ca3f21fe90e31b1b47636290eaacb31aa5",
+          "lib/agent-features/boundary-script.ts": "a0c44346a03136551946953e264afd19e6cc79c6b277bb03e10a7a78013bbc64",
+          "lib/agent-features/bounded-context.ts": "4487eaf582b349abb4dd4e80d315df8bd94573883bb290bd93b43a40ea71486a",
+          "lib/agent-features/budgets.ts": "002840187cb16b6cafc022f097c0bf45f02ffe03e759a9701c61d0366f610226",
+          "lib/agent-features/calendar.ts": "c7c261abf7c90314b8ac23e2b21eb666640eb6f549864e5be678f88116ec97b4",
+          "lib/agent-features/calendar/ics.ts": "95d9768b11b547cd41702f2af463af8fcb6f28a1268d81cda84276074a6b1643",
+          "lib/agent-features/calendar/state.ts": "c35f2f6c7529b9e4bba25a3b8a79410c89d198915f454f42e0dbc54b7ed85269",
+          "lib/agent-features/calendar/time.ts": "1c893ddb6df4699bf0f7946e8201b66fea7fd66589cd4681d180bb63dda92ea5",
+          "lib/agent-features/capacity-forecast.metadata.ts": "fd6cad0c0cf29630dc0a5252de70fe26cf9dd28ee0e0085f58cb5a7cd4dd2b7a",
+          "lib/agent-features/capacity-forecast.ts": "cef71af04319142ae08dde0248f985c180b542b27a59851cd4fba0f709622280",
+          "lib/agent-features/catalog-metadata.ts": "6eb22b0b3cd30ccd8cdd0e7a45b715298e06b8e47992a261dce710599d9443c1",
+          "lib/agent-features/catalog.ts": "0132fd4fc8c842fecfce8abf192095fe5739784b8b0d48a76cff554dc3879d70",
+          "lib/agent-features/change-digest.metadata.ts": "8199ef82e96b18655dd54828b6a576e18eddfa247f31692bb6a1f31a7a9ce78e",
+          "lib/agent-features/change-digest.ts": "dfc9380e265dc859c8e09a6c549085c59d433e476ee63c7984117a2d10327482",
+          "lib/agent-features/change-impact.metadata.ts": "198768cf03d637d468e2c3e082cf065a445b093fca174c35b961aec497ac2c90",
+          "lib/agent-features/change-impact.ts": "4ac35f9a6bfbbbe691e68662634789a8907fa439eaa4493f4e795892d278a5ac",
+          "lib/agent-features/checklist-lint.metadata.ts": "385c0b83afa3032fec8db547181ae6472b9f2548ecf89a860f857598009747c7",
+          "lib/agent-features/checklist-lint.ts": "6afddeb4e9c6598de28c05d70f5aab530719dbc04dd81da3d5ea6a5d88140816",
+          "lib/agent-features/claim-check.metadata.ts": "f58465aa621a9ec68325579b4db442856ec7d694f007867cfc1d5e29f11653d2",
+          "lib/agent-features/claim-check.ts": "a2f1638f23c2b9f564848e10a5fc6c6108ddec2ba13eb6b4eaaaa29c63798d2f",
+          "lib/agent-features/concept-links.metadata.ts": "988d2aa8e8027117eeccce59f9a0729db5a46895c1d06b0686c1320f125bc928",
+          "lib/agent-features/concept-links.ts": "7033095eb8449e87e195258f2e69c2120f4522cd7ab07388ec243e28e7851d76",
+          "lib/agent-features/context-batch.metadata.ts": "cdc11cdbb3845baac4d0cec941b55b92950f0b3360cc443c3839f660887f1d46",
+          "lib/agent-features/context-batch.ts": "f6b8e921e4aea247daaab3a610f01b5b04462b2122978535176c64d7cffd0042",
+          "lib/agent-features/context.ts": "24b54af920f61da37274719812989b4498bccf3c4b12f2a755a15e2d2fdd7afe",
+          "lib/agent-features/context/legacy.ts": "5a9e91cb0531cb4f83d18c5f944ff377ab15586887a15f6f4c8c794789ecd103",
+          "lib/agent-features/context/shared.ts": "662f574b104abc682c5fbdaa93ff08ba4561159613a0bfdda019da36ae1e7bd9",
+          "lib/agent-features/cooperative-yield.ts": "b51cc00189a1389290f03abbd49a20b3cd166c3d2c8a6b7a7b3445078a825709",
+          "lib/agent-features/curriculum.metadata.ts": "4d300f186695aaa109f09d7f4f98beaea92330631b8ff40b5cd49c243e5e0f98",
+          "lib/agent-features/curriculum.ts": "3d90e20836e6970156fee2d1660847d5cfaa6e935ca908f6bff9a1f015784797",
+          "lib/agent-features/data-cleanroom.metadata.ts": "3bfd090cd51a91d55d2665e71747e288a6101ea2d368484409ee6b206757f96e",
+          "lib/agent-features/data-cleanroom.ts": "2a375cc523d5c39d73b3040ed0b6b9a2afaa4aa698fdc2913e44b470da89943f",
+          "lib/agent-features/day-planner.ts": "b23887f0bd38ce6c4690386bc3658ede0db80a582051a296e2497ee1a4b8563c",
+          "lib/agent-features/day-planner/time.ts": "9b27d847ee40fcb49c79bb3293e5719406252531a45222984b834d38d3b37dd0",
+          "lib/agent-features/deadline-backplan.metadata.ts": "2037eea1d25d68c6ce4ef02298fcffd8a8d3cc81c28eb49b7acabc5b9f5aa2b3",
+          "lib/agent-features/deadline-backplan.ts": "6d2cff012073c0c079271149993da2dac33b646d1be7e375c4c391f053f35021",
+          "lib/agent-features/decision-coach.ts": "2b623dbd6643b5300ee48b67d12bed5ea59a11e7425f06d5b732087532144d39",
+          "lib/agent-features/decision-journal.metadata.ts": "68bde182bfea01d14e8fecb3408ea4e596aab9e0c674ececca2c21a98e449a0b",
+          "lib/agent-features/decision-journal.ts": "c10747ec55d345f6483703421995c823570319a41e4d5a41a633338629f4342e",
+          "lib/agent-features/delegation-brief.metadata.ts": "9f4f71706c85a2d5165b6825637da4c7cc8d392fd74522de3fde6c367ccef164",
+          "lib/agent-features/delegation-brief.ts": "6e06f11b839d1862190bf251cce8b63b918f0ca36f891fd82b6f10008892fade",
+          "lib/agent-features/difficult-conversation.metadata.ts": "9c0179e2aa27d07078f5e72a8d6d0e313f8cf317ecb7cf790e897a4d98b92ae5",
+          "lib/agent-features/difficult-conversation.ts": "d36718502a989410c61e54bdc387935407c6c660afcf3e10214a7194b8821cb0",
+          "lib/agent-features/document-critic.metadata.ts": "82471ec8b26ac9fe589caedb0f0db6c9751b8960956529209f59ee10d93cb9ab",
+          "lib/agent-features/document-critic.ts": "e0bd9677e67646bd3577c2321a4cb4bb3c34c0a19c3d7271862fdcf4bf1410c2",
+          "lib/agent-features/energy-patterns.metadata.ts": "035dff4b45fe33d6b1cb1647736aee472a2dd2728d25899595198f2c0677b782",
+          "lib/agent-features/energy-patterns.ts": "f96b0bbbdff6aeb2011455cae19abf03fe79fa974aed073983a36ae1171f46d7",
+          "lib/agent-features/errand-batch.metadata.ts": "496029ffcb0982959b267af0522fbebebd1f58eb1fbeacfc4b5793f5faab2d2d",
+          "lib/agent-features/errand-batch.ts": "6183a8a77a80f854accce55888c5df80ea804f3d19fe867fc13c2589a1d91ba8",
+          "lib/agent-features/estimate-calibration.metadata.ts": "67081c058b7183b98e4f54ecf41bd9a237063047a3be60be999f612e51c2d7d3",
+          "lib/agent-features/estimate-calibration.ts": "4953afd0af976ba5a4ce01fb6160955a92356419d0cb92abf3e5e2b3f91ce6f9",
+          "lib/agent-features/feature-kit/bounded-state.ts": "4134a80007d92d73bf88618059ead1ed82b1e368a4317b91c111b95ebcbd1e8e",
+          "lib/agent-features/feature-kit/civil-time.ts": "a786b1979d74cab8a10f21b30b57016e5d6e8ea75cfeb2d9f9354a392536d639",
+          "lib/agent-features/feature-kit/command-and-display.ts": "d7d9d9866c3abd9449e31ad037b2599b38132d3e5043399b7f11b6ae90bb0d2a",
+          "lib/agent-features/feature-kit/evidence.ts": "0b2018acc2f9f4914e9bfc2b4ec8cb554df99078b230e5512722af88e8dbe4e3",
+          "lib/agent-features/feedback-builder.metadata.ts": "aa5269ccadc99cb02458adc22870536ba102b9bc176ad49d44627a19a0dffcea",
+          "lib/agent-features/feedback-builder.ts": "861e00c1c7421f254a4a82bd67d540338e48c8baf9402bb8f8ed0894ad7a355d",
+          "lib/agent-features/feedback-themes.metadata.ts": "3e87045f0a4e3317d8c088edc7dede019671dc68644a5e1fe9dcadeed8913489",
+          "lib/agent-features/feedback-themes.ts": "cc0cabbf1fb31cdfcfea57f466c03635c3ba7685f90bc39606b99bb518fbe2ee",
+          "lib/agent-features/goal-alignment.metadata.ts": "8c39b66bc4bbaffcf44cdb3fcfba85a3dc7e8c0f829430f5e76a58a9e0335410",
+          "lib/agent-features/goal-alignment.ts": "3027b2d9dd0d0faa6a4a8b82f664cb97a7481514d9ed5da77c442ed523ca93df",
+          "lib/agent-features/habit-experiments.metadata.ts": "e562034c87e627b6f323e0f195be7ac3d9d02fd3e19a86a5cd9cfd8f4c4ee22f",
+          "lib/agent-features/habit-experiments.ts": "d59d2c2f2b59b1e7f5d938578dc5799c34381b10ccf4a716c2d7efb86e8c59ee",
+          "lib/agent-features/handoffs.ts": "7e77c40dd7949fd727f64131f9780e2a1d4d261bfdb56b5382134f4ab19d06b9",
+          "lib/agent-features/home-maintenance.metadata.ts": "6cb48051ccacd969e51dfea98dbae013c4220d748fca06a4efb10bcf7a6c820b",
+          "lib/agent-features/home-maintenance.ts": "0fc04c5ed945ebf9da5842b2b786b2389a35881ea70bffdb418897005623c466",
+          "lib/agent-features/identity.ts": "ffe078bcfc50df03b606c9a96a5a77e8c88c05ffd71ed7f2cf5a3d4dc5fa7ca8",
+          "lib/agent-features/inbox.ts": "b8018e841b796269d8f1030fc40ffecb74f911c1e0a897974e8e712640b9c3ed",
+          "lib/agent-features/index.ts": "8543a93d515c66190c8371ade02b96959e39cd59d7eaae1a2e837574df97b917",
+          "lib/agent-features/interruption-audit.metadata.ts": "80d3e9b94c4b519e05606dd3c727d32ba39eb10c1819170273a792aabc994dc1",
+          "lib/agent-features/interruption-audit.ts": "148847f935578e9359ba6b28ab7c880752cc82f85990f8b388c942416d27ae3c",
+          "lib/agent-features/interview-practice.metadata.ts": "d5529240814e34689f11cffbb378199f0c47c47e86f1161ef472c6328416f5d4",
+          "lib/agent-features/interview-practice.ts": "17eb30135d25096de4bae26c9cd14f3d107b4c520d729da8f2c0cec0bb83dc97",
+          "lib/agent-features/lazy.ts": "12bfe6efdc269fbe14e4a2f96563753744f7d83fd9ed9169024a21cef74f06c5",
+          "lib/agent-features/learning-transfer.metadata.ts": "0d3d5043419ed0d4e9c04930c6a20208c90377ba467126bc950027d51abd4388",
+          "lib/agent-features/learning-transfer.ts": "fcae361b43f122a7f08676b593a197fc7cfa344e58a7de57c64cb868adc9dd1d",
+          "lib/agent-features/learning.ts": "0cde0eee966fdc4b422794da798fe899b57b6b1636e9df9f0cb71d2ea9d0daf9",
+          "lib/agent-features/meeting-load.metadata.ts": "f4368664e3a63aa619012469ef04ae9372d343b1830b0e8337c7519e3b10b8cc",
+          "lib/agent-features/meeting-load.ts": "22520eae222bec2746995188a9134072940be7e0970be367e171181289d696a5",
+          "lib/agent-features/meeting-prep.ts": "c6d5bc54234fa01c3284fcec31215d67741aefcee384578ce3477a143311a581",
+          "lib/agent-features/memory-review.ts": "da4645741637d7f63f6a2b6598859a3fdf2193c955d92f71523947d86164e18d",
+          "lib/agent-features/mistake-patterns.metadata.ts": "fc87977b9f9b57d2badf99dbc5e1f2942c2dc92c8dd7a7e3ef9546e01fbcf762",
+          "lib/agent-features/mistake-patterns.ts": "9c99bc78a05f8ff1cfdf861de30e4049b6d76a7b547ea05d2240cac0edf23ecb",
+          "lib/agent-features/morning-brief.ts": "369203a839b0b2239e92f4d35ad7eb30917a4e74d8b41703767d782ab1f021c1",
+          "lib/agent-features/number-audit.metadata.ts": "fd50c2faeabc8238261ec2c0c1ab7ee28c60b031e51d83e0721d12281b771267",
+          "lib/agent-features/number-audit.ts": "223cacf6791e5ff613b7cff33cd1171e39ed653ae47ff5e654ade5aa909d5143",
+          "lib/agent-features/pantry-plan.metadata.ts": "39ac69d2259833237aa8a9c2a03c8d0db0ac77e5e07f7e2861261f6bcaea51b4",
+          "lib/agent-features/pantry-plan.ts": "34e5b8ca4aed0186e34035036852a9e9a29d624dff141c669aa2624928e62b37",
+          "lib/agent-features/playbooks.ts": "070ae03f40d5141830b71a62181011137b93e789a30a40ac4a5a7011d17cf2bd",
+          "lib/agent-features/practice-lab.metadata.ts": "4ea327b30212d0ea1c9539111b53ae92ba2bd44ed154847bc51e79bffed823d8",
+          "lib/agent-features/practice-lab.ts": "a5c3173ffdbf6f1c6273494df83b934e8dc867b8962d82a1cd640b800775d8e2",
+          "lib/agent-features/premortem.metadata.ts": "ff5acf680b802de75648b30bd6c4e9c4f0f04d2d459f13344e5ca4e3ca85c161",
+          "lib/agent-features/premortem.ts": "7f35360e66d3f5b613e626a440174bd1161b1bf4d33e0b9fc9efeb6d540501a3",
+          "lib/agent-features/process-friction.metadata.ts": "a8e218562e12f0cfdc4227063f8e270165eb5c9d0c39ec81104fce4a827c04b0",
+          "lib/agent-features/process-friction.ts": "ffbf8d3474307079a2c3797d818c59f6ce5805af3d5071857623f0862be7bf00",
+          "lib/agent-features/project-briefs.ts": "3fe534659f5216167a3ac1b86b95c7b6c99fd131ee77e31d3998f106c3d1b34b",
+          "lib/agent-features/purchase-compare.metadata.ts": "8e79308fcf57d6d5b98e9661dd741b7dc84736a7161d80ff9a8d1f1b65eef1ee",
+          "lib/agent-features/purchase-compare.ts": "06e06c81a49cdef24e6131b515b1052d01621723955f84729e78576616d3aa09",
+          "lib/agent-features/question-triage.metadata.ts": "6475ed752828a36f03aafd031946230cd7f5edd1027960421d65ee87b7994302",
+          "lib/agent-features/question-triage.ts": "006c0a32690cb73e212ec1727ebb054d3618c5fdce456884e2a0028e8a5315f8",
+          "lib/agent-features/read-later.ts": "340b0be008ac5d167d49c01d4acb38a477cd149efee8a7f8c693c443769ec47f",
+          "lib/agent-features/reading-path.metadata.ts": "aae9a564ca0494badba49932496d21a6bf65c69c9c36e6883f2a7ab044be867f",
+          "lib/agent-features/reading-path.ts": "f143d4fcae1085fe72fa2977d32298c814898a8d8663625b2143c4bec4e78ec0",
+          "lib/agent-features/recall.ts": "9ded44f5f081bc544183b3543b5287a6d47352a01fdc7dc8c35859f6cc6f5e8c",
+          "lib/agent-features/redaction-desk.metadata.ts": "09538b5c71921852f6eb5828240b1c09416779681de1db0a01bc46b5a3ad1181",
+          "lib/agent-features/redaction-desk.ts": "a4c34bc7773e7c8ab739515f50b7b073b610c46bacdf66e9b48e4f346a8d1a75",
+          "lib/agent-features/registry.ts": "6c92123e389e4325adf595a684a295be6755c0f7cb701a6119962cdab226496e",
+          "lib/agent-features/relationships.ts": "92db0d73e3acd8a87f04c4c42d1eca41a995e030b55653e7e1d0fbcb8927d0d5",
+          "lib/agent-features/renewal-radar.metadata.ts": "12aac74316266e73421fa8cac11f3234278c9e6e0c35945048f05ed1ba1c190d",
+          "lib/agent-features/renewal-radar.ts": "02ca70ed6d62e999227530356388325ab64d63625a7d9808729e56b639656541",
+          "lib/agent-features/reply-coach.ts": "7e1026b96d14b4d901fbc85b1ed9090fb55108088e88d1ca20cd2ded8ab34fbb",
+          "lib/agent-features/research.ts": "62fed9dd1e4431da68dcc2dab6dd9336e4713d3769a77fb83e49c2ac54f06605",
+          "lib/agent-features/runtime.ts": "301ae4eb7573262c9029bab4d5a050590f1bcc1793e987f002f7100cd707620e",
+          "lib/agent-features/scope-slicer.metadata.ts": "5bb831c12554da2a9fd52644747a9ef437f8be54d90065c6fb10056d6ea0b10c",
+          "lib/agent-features/scope-slicer.ts": "d4a1feac60efee2244f2a677187d891b40ffaadb87e9642163c78c19b0321ef3",
+          "lib/agent-features/services.ts": "41b267c450aca16e2e301694423a3e3177250fe696084c0d52356976021e6e2e",
+          "lib/agent-features/shutdown-review.metadata.ts": "72f594781d6e6783fb541ace998a6aab39f292ab3870482a5634f9294a2f850a",
+          "lib/agent-features/shutdown-review.ts": "3be7a62e7503617e99eb2ff1876e8b66bd20d0222633d86eb858375535dd9d5a",
+          "lib/agent-features/skill-matrix.metadata.ts": "c77e4e3327df9226e7b6f1d023b3d5630f073ecd9429a8f583e3c3c4ff35baf0",
+          "lib/agent-features/skill-matrix.ts": "2a5416e2b6466c3e08ee64f3c0633337040927fdfc20e5c10a8058f8a6f60ed7",
+          "lib/agent-features/source-compare.metadata.ts": "20e29512f8f1a2676ac2a9089dc9047e2c1194cd982519e890ab816b6f3f9177",
+          "lib/agent-features/source-compare.ts": "ad08339d4328810c2cd5c2cc275bdf359d6a59f497f15e39bc60fb25e23284e5",
+          "lib/agent-features/store.ts": "c5a0cdca90323f243f9844dbaf4e77e24a85ad47266da5d409db86aaaf06fd00",
+          "lib/agent-features/task-breakdown.metadata.ts": "1de69584bf9bde5044861530d86328f5a53913ed7d7a6de78124c0138e834271",
+          "lib/agent-features/task-breakdown.ts": "943eb8550fea2e8ccfe7f6d75af9da57f3940d9aadbc2a3ff72aa6da5be97e3b",
+          "lib/agent-features/teach-back.metadata.ts": "2f5343614f883b328dc27e50e8d36ebcbab30b490008163d494a48964d8bf4ad",
+          "lib/agent-features/teach-back.ts": "4f49b3b73229a5a470d437231b947428a13977be455563bd27828ef312cff1bb",
+          "lib/agent-features/timeline-builder.metadata.ts": "a2adc13114584fccd5f2636368a5538017908c714cafb29c9c0bf402246f289f",
+          "lib/agent-features/timeline-builder.ts": "b7afc4f4abbcddf588cf8bc701d41f7caf3a9125a5aa60492856db06ab62664a",
+          "lib/agent-features/travel.ts": "0212583c95c69d1dfd38bb2f9cd00d05bd428eea47da5f47ecd155bedbcd5548",
+          "lib/agent-features/types.ts": "8324309f1c8248d832a354bddf715a62940b72e05af7960266ce19cf47e7a156",
+          "lib/agent-features/weekly-review.ts": "bc17a33d2e0ed116a1413325ed46a88f274c7f0dd917d090e2d0ccf96b2f896a",
+          "lib/agent-features/workflows.ts": "ca088fe2c8c855874c3ea4cf8adffe03b08f8e6b1f13542b8c114ad4e1a1b953",
+          "lib/ai.ts": "21d363d4c94c650139caf83acf58722c494f87f2bbbcdfa93f551ee3d4480601",
+          "lib/artifact-commands.ts": "ae73ef6a35d442c368343f1b6018575e83930a3b6dc9c617047ecdb04cc5b55a",
+          "lib/artifact-images.ts": "1269fbe9859b29193a7394978f535b5f664b1ca1462708d9271ab7b89f9c8f46",
+          "lib/artifacts.ts": "74553f46566574d80bb9ebe9b6f4175ffb897ba1e34a90e123b69e8244661a68",
+          "lib/attention-triage.ts": "45036b985b19a2a0d415a5481335508fb2bc064bc39d5548274e9d360ff9d372",
+          "lib/channel-digests.ts": "7be564ebb17175075e66b52761b5a09d25cb3ef20647d5b102128acd4b160ca3",
+          "lib/channel-history.ts": "01b56957f50a2ed8b6390867c53e405ddf6249bbd191bf16269dbb012e042464",
+          "lib/channel-memory-controls.ts": "4dfa4dc4cb6ffade2f5468f2cda6eb6a2b02a0f65a64de067c1c2fdbb9801b2a",
+          "lib/decisions.ts": "64d0ba55e1c86a5d45b38e3ebb817c857c27b6ecdfe09dacde3712a6a432337a",
+          "lib/env.ts": "188fb1af9a4ccbdc1d9c51a658c3e4b9166dd4d012e5fcfd601533f93657bb46",
+          "lib/flue-tools.ts": "e8ab40efdc2781c02a8bcb29919e819ea51fbdfb43562668b03d4134c469f69f",
+          "lib/follow-ups.ts": "b7268b0fbf1b6d3d9a678c40f51541e3aaa3150fc9a8ea0eaf3fa676ceaeb86f",
+          "lib/hacker-news-schedule.ts": "7556bb83852c59343171aec062b4ab3762a5097bbd9b5cc3cede30a5a73bba69",
+          "lib/hacker-news.ts": "6e0def8fadd0df96963cc924a49ef3312cb94650552069babd5afa3bb3425e52",
+          "lib/issue-drafts.ts": "39e11d8372b01cd0a209fdf6656efd869f17c7d0457598c9ab4c5f6419161b9e",
+          "lib/memory.ts": "93e8530aa1d4c0efda330d12fe03dfedeb2bec933e3af60bde99ac73be303b1a",
+          "lib/monitors.ts": "f7a0a79b2982ade9e7545c3147ef9a1c1e1f725deb29e222418f101b17217878",
+          "lib/nobo-agent-context.ts": "42006c990e613ac84ca0c87322de8e5cb89d6ed140b417329b4027fa3d7f0b5d",
+          "lib/nobo-messages.ts": "ced5301c472070993aab783587d63dd3535a493cadcb9eb3c77f5fdf978350e9",
+          "lib/nobo-models.ts": "ca5aa6f13222c99684c0795923cab9f9b7168d937e2ecb3b33b33302e5495972",
+          "lib/nobo-prompt.ts": "3c26218356c1182292cc6361820631aa67348ae1a036fb630308a520fb8c67aa",
+          "lib/nobo-time.ts": "c7b18012d8c1557ba803f1746cc7281fb09739e81b2d9aa8869a8efdff8ea61d",
+          "lib/ops-errors.ts": "e214c143ea212b497cec31f6c65a0236d78bc16f0104e4a43fdf520cdaa9c27e",
+          "lib/ops-status.ts": "684b1dd4eb026eea7e166e648b5846069c320b186792cb8860c16b445e019ffc",
+          "lib/polls.ts": "10d3e711cfdfecfc8260872ae16715780b66e264a626f86fa766c74a02f7c8ae",
+          "lib/preferences.ts": "e49cb404c623930cb3d5e001998ee3dbf5992c9d7f4102b6a9ef00a4194e0eac",
+          "lib/redis.ts": "779ebe4a5ca7776dd36a5b1875797f86f7f09303392a1f0171fbe997533d3bb8",
+          "lib/request-body.ts": "4b1463cb4bdedc50f1a2c41cbfa1c6f378f38210d16ccfc265eddcce40f172a1",
+          "lib/scheduler-lease.ts": "dca56494f22925aa3a18887bcf5a3b0b247c574a52b67ce4f78543a3b58235ce",
+          "lib/schedules.ts": "97faa5d8fc22bd966b20298f2fd3b8a4f84682838274a650ffee8b31ebba2cbb",
+          "lib/semantic-search.ts": "98236ba911c6c14e95f67223090119a6c0a3bf5776e6babdc19c885a42dce6ed",
+          "lib/skills.ts": "6e19094b2579dea64b8c18fa47f739f2aff4e16537ced266f8126faea8db83b1",
+          "lib/slack-agent-runs.ts": "22785e8fd5c54312bb8d947f2389e2ab9be60eecd4fe5587bdf17307fa6b5270",
+          "lib/slack-approvals.ts": "c688367c135fee08a81bda3eeb2bad00abc19d0e687d38967af3fae7d093b7cd",
+          "lib/slack-commands.ts": "0393fa35e9ba96384afd9fb4016663cc0d5fa9af76c7ef8a61e53387d4c72aa3",
+          "lib/slack-events.ts": "7added03cc32637fda3d036bbca8d777a1eef98545da75ed592698e03e2460da",
+          "lib/slack-home-view.ts": "69e6e7932732ae2e9e93205ae9388b5841540affdd5fe6986e114e9fefc935f2",
+          "lib/slack-reactions.ts": "b1fd5c6153c86c1902dbdb0e102d367946219bf9c4e232cb4b14e19270dec9ba",
+          "lib/slack-readiness.ts": "b9211a23442aaf305766099f455ea535594ef3a61e00088b23f82fd04109f046",
+          "lib/slack-reminder-cards.ts": "4d6b5e79c6ca059cfafcfbfacd9e003cf187f1cfea51150e9b25a467886f7c82",
+          "lib/slack-response-cards.ts": "fd58a6d6a88ca67f438a19f12ef78dbbae179d84fce9ddda71a7365e45365e55",
+          "lib/slack-targets.ts": "cea3ef55b7a25b8432434f21d4a0a6e4c31e81fc45f2dcd06eb56e41c5f2a217",
+          "lib/slack-widget-presentation.ts": "ca181e17e4fea89aa519ae9d887f6b31075b81e62bc8acd44d7c58c7b604f2f3",
+          "lib/slack-widget-workflows.ts": "69b76b2e37e8ec79f232ffed3d8f81242cecd79c813c3141d863917cde9f46ae",
+          "lib/slack-widgets.ts": "893000848437dd34c61276ebe0c13b2c4cf5ad2fa3742ad4b123a0a09b76fed5",
+          "lib/slack.ts": "e6dbe81d5ac52ed32409a95d6fe1c2a20c7a1679c03df6de6554814dda06104c",
+          "lib/toolbox/agendas.ts": "97264504b9a15efd20b268ea6fa718b7a01c4ef5bd8a984fd732f3796c93d5ca",
+          "lib/toolbox/bookmarks.ts": "e27141ee5473bce779cbc0e9920bc16e4c5d5d975ed530eb59a4ce65c635803e",
+          "lib/toolbox/checklists.ts": "2d8f9ff439851852ca7a039796c2b6ac3d671a15fe36e5421de0c716f982d257",
+          "lib/toolbox/core.ts": "b83944f620bfbf4aed4e706626631542704bb51849628ef683e985bd9413f37a",
+          "lib/toolbox/countdowns.ts": "035e98d88fa81ac424492d60a831bbe9a0a4dec988497fdf1a16a08b63469498",
+          "lib/toolbox/examples.ts": "25abe57b52a0d6c7c9f99e6e4d6210c55a14be05b7bd6d10b80551bc458ec2ef",
+          "lib/toolbox/focus.ts": "deff96c2894b9e6108d4bf66ab55c9798d81edbf2e05ceebde347e68ea8b0e84",
+          "lib/toolbox/glossary.ts": "d2a73eb12c42cc450e94e143d5025d3f053949b03014ac47fa320d636b2e1b0e",
+          "lib/toolbox/goals.ts": "b831a29c1a0569c5f39825ffb8ff4708110b90f1c9d383500c907f14261ba801",
+          "lib/toolbox/habits.ts": "4e86721b20c8490df40a3d3720a98445bd516f6e23bfae00a4409747ce14cd90",
+          "lib/toolbox/index.ts": "8e5e8c83eb40fd75804f5a983a49f3640540030f1404330a953654945fda50e9",
+          "lib/toolbox/journal.ts": "d5ae95710a94d7fd859c4acfc77ad3e438bada588baa6cc98e5fb32baec62f94",
+          "lib/toolbox/notes.ts": "9dc81671593a6674d5ef8521eb949eb5065cb7467f3855f735c6782f363928cc",
+          "lib/toolbox/prompts.ts": "7553f4ca8b6c13cc8b99a7ba46360a5eac092e35f75ef6f2921d36d3da8af766",
+          "lib/toolbox/releases.ts": "a1e3902500b01c9ef2aecab699f90d6da2793024113be688be37a28de35dbd1b",
+          "lib/toolbox/retros.ts": "cbd60d0ae1c39523b011f945a3155e67e92732a2a76120c5a6096863228bbc78",
+          "lib/toolbox/scorecards.ts": "56ae2808aedf83f305de09c1a3f5acc584cc6f9dcff769a56a2f5b475d72459f",
+          "lib/toolbox/snippets.ts": "7561baa4a8eea8895dcfdd9ae92b493e210c95f3ea68ccf824c1f07adabb85a1",
+          "lib/toolbox/standups.ts": "eb43bb783657f601eab8057752ef2f665b8bbdf58608126ccaa19dd2cb67794e",
+          "lib/toolbox/textkit.ts": "5cac5ba5dbbe58aa0d608eddcc5629a55eab084a9eb459400ba4960cda007e89",
+          "lib/toolbox/timelog.ts": "be109cf6406d43411f22614c6ae806993d32d85dc44e9e27c9779b1a43b8c2ac",
+          "lib/toolbox/timezones.ts": "1e3af276db1c035cc732c8fd5aba40838c868e707af83ae4baf44f4ec1857025",
+          "lib/toolbox/workload.ts": "c1ffcb6aa9c48f3c3ba3c826d372ca288538e7dfb9879b206ace44ef35124332",
+          "lib/x-media-modal.ts": "f43941457c790fc473452b8e2d6594f54053b06339d91d0d34da14f1f76aea08",
+          "lib/x-media-summary.ts": "9773326671022592c4c597b37316c956c57ee52bd519f8e16071175e85c821a5",
+          "lib/x-media.ts": "1763eb63d0b79c477636b7e884b40dcfc37eb26a72cfd1855f066d1bf2b2e034",
+          "package-lock.json": "92ae0aba4e0b1b897c2601bb93b4c2e53cd77de25000f79578a557bab633b9ab",
+          "package.json": "bd17e216f958117cb69dc13302ef6f130decd127e04c1c77b563ff8c40e171ad",
+          "scripts/bench-agent-features.mjs": "c4cc42417585a66fb8bedc8b237344aba93f0cd766a22c9a18f444eb96716b53",
+          "scripts/bench-agent-release.mjs": "737ac81b52cc4b2c1a314170068b366bb82ffae926aca0d582403280e7083066",
+          "server.ts": "64267ff9ebf9599cb71981e05a36d1e2cfbc0ee604afbae11537ff7e0ac7a149",
+          "src/agents/nobo.ts": "278b1cd1fbac963347e3a14f004c6a0df319f0608a68eadf663ab6e9ff70cf8d",
+          "src/app.ts": "7b69fee84997de393157f8b3351550cf56fcb53115d7df3ccbaa2a76dd4bcf95",
+          "src/nobo-provider.ts": "3cd8f69b2b61c64b09f78ae938105d3be2c314b8544733baa4e2e646deab4848",
+          "src/server.ts": "dd7d9a7f22d9c2791211c200d9f043575cd66b683a8befb808c28b00dc4b6a92",
+          "src/slack-agent-catalog.ts": "c87981cad922a3f22cfaefb9b4230b3efd1ba9bcc31a7534b4d2b7c9b375a835",
+          "src/slack-agent-events.ts": "ba10ad5efaf7c3a2c40fe07dc617837ea7d6b91d7ce38ccd07e98580edb83d20",
+          "src/slack-bolt.ts": "97d52cbfa6dbc64093a2d10b791346c9463aa3080db9f0cef8187c76d3d38f6b",
+          "src/slack-home-actions.ts": "a055ccafec550e30ce2e412266c104b3764db4b2bddf878167336e4350805864",
+          "src/slack-tasks.ts": "57c96d1bac4db45e18f3f7a85569a29afe9bbfc43e9553a13ceaaf7518d8c505",
+          "src/slack-toolbox.ts": "8f3fbd716aa847dba1992d2543174d14d1f338c7a14bb53b5e234034806d688f",
+          "src/slack-widget-actions.ts": "1636e3798fac43cf1b6bda736fcf1d9a4738d6cc7fc998e3fc6aea2338b38b8f",
+          "vite.config.ts": "bd7f9c14dcdc5dee3becbeaa2f376d906e00c5a9016d8d60047b4871b1fbc914"
+        },
+        "sha256": "8ee919f700dc994191599fe2d33cd8a2b2e760a5bad66e2b058b3b780d2dbc9c",
+        "head": "a280238d7c1eba791c916a2592eedd0584694fdd",
+        "status": "",
+        "historicalResultsSha256": "9b72f674cb38b4db226c87fd0214bfd7ed32c5848a6f5ff3a61d9b26c7a6cb85"
+      }
+    },
+    "after": {
+      "directory": "/tmp/joshbot-release-D4luFP",
+      "source": {
+        "files": {
+          "lib/access-controls.ts": "81a13582298ff321c2a469664f08a377dd6ba4758584d7ca804902f6cd47ed5b",
+          "lib/agent-features/achievement-portfolio.metadata.ts": "b8635f1bd65e2bdc15d8c876ce57f76f64cdb5ad62b79787a7cfaf15c4d88913",
+          "lib/agent-features/achievement-portfolio.ts": "2602190dedfa4c494d6412e9f35981941d6305a45ed25083a0080b16690c3a0f",
+          "lib/agent-features/admission.ts": "50d6bb5ceb495d264f0c8456d69ac7f6e1368bfa9277ccff2e751db01f7dd76f",
+          "lib/agent-features/argument-map.metadata.ts": "b977acf6ebe81a122265ffb180dd34d0504c6aba472883aead1636836e3c2a6e",
+          "lib/agent-features/argument-map.ts": "b695df6426ef4036cbce172ed1e55aa2cce5a84cf4551300f353db4b2f8ad814",
+          "lib/agent-features/assumption-tests.metadata.ts": "3ffa2dca4b5a7a7285311a8b656d567ab944b1fc832fc27bf3e193d650e41785",
+          "lib/agent-features/assumption-tests.ts": "e3ff118fd6109f022e1dfeb79a87ca9a1f257916cbd42b83b74c4f24b199c757",
+          "lib/agent-features/audience-brief.metadata.ts": "22f80babfbfd27d8db3b6679840977d4643cf03bdef8ad35774c1f7aa8a62fdc",
+          "lib/agent-features/audience-brief.ts": "0c282be235c2dcf7a83ffe0e4b8ad8837f853714321e0d8cef31b081af4d4b18",
+          "lib/agent-features/automation-audit.ts": "6edc6f672027b38b1a52458323580c8c7813f148ce3a05ba0f4a42094ac1836a",
+          "lib/agent-features/blocker-lab.metadata.ts": "aba0e033632f711e5a783eaf52a4adbe5640eb665a0b6c95b2237b8a34707e13",
+          "lib/agent-features/blocker-lab.ts": "93db3887277b2cd8afa2510cf58e6114fb1a53881426b8a21ae4b2d1f6b1fbad",
+          "lib/agent-features/boundary-script.metadata.ts": "322773a6393c4b53c7685d5bdadd31ca3f21fe90e31b1b47636290eaacb31aa5",
+          "lib/agent-features/boundary-script.ts": "a0c44346a03136551946953e264afd19e6cc79c6b277bb03e10a7a78013bbc64",
+          "lib/agent-features/bounded-context.ts": "4487eaf582b349abb4dd4e80d315df8bd94573883bb290bd93b43a40ea71486a",
+          "lib/agent-features/budgets.ts": "4db7291e01a2ea96fc17305bcde57a57978adce15fd1d45ca0c3cbb7e4bb4379",
+          "lib/agent-features/calendar.ts": "c7c261abf7c90314b8ac23e2b21eb666640eb6f549864e5be678f88116ec97b4",
+          "lib/agent-features/calendar/ics.ts": "95d9768b11b547cd41702f2af463af8fcb6f28a1268d81cda84276074a6b1643",
+          "lib/agent-features/calendar/state.ts": "c35f2f6c7529b9e4bba25a3b8a79410c89d198915f454f42e0dbc54b7ed85269",
+          "lib/agent-features/calendar/time.ts": "1c893ddb6df4699bf0f7946e8201b66fea7fd66589cd4681d180bb63dda92ea5",
+          "lib/agent-features/capacity-forecast.metadata.ts": "fd6cad0c0cf29630dc0a5252de70fe26cf9dd28ee0e0085f58cb5a7cd4dd2b7a",
+          "lib/agent-features/capacity-forecast.ts": "cef71af04319142ae08dde0248f985c180b542b27a59851cd4fba0f709622280",
+          "lib/agent-features/catalog-metadata.ts": "6eb22b0b3cd30ccd8cdd0e7a45b715298e06b8e47992a261dce710599d9443c1",
+          "lib/agent-features/catalog.ts": "0132fd4fc8c842fecfce8abf192095fe5739784b8b0d48a76cff554dc3879d70",
+          "lib/agent-features/change-digest.metadata.ts": "8199ef82e96b18655dd54828b6a576e18eddfa247f31692bb6a1f31a7a9ce78e",
+          "lib/agent-features/change-digest.ts": "dfc9380e265dc859c8e09a6c549085c59d433e476ee63c7984117a2d10327482",
+          "lib/agent-features/change-impact.metadata.ts": "198768cf03d637d468e2c3e082cf065a445b093fca174c35b961aec497ac2c90",
+          "lib/agent-features/change-impact.ts": "4ac35f9a6bfbbbe691e68662634789a8907fa439eaa4493f4e795892d278a5ac",
+          "lib/agent-features/checklist-lint.metadata.ts": "385c0b83afa3032fec8db547181ae6472b9f2548ecf89a860f857598009747c7",
+          "lib/agent-features/checklist-lint.ts": "6afddeb4e9c6598de28c05d70f5aab530719dbc04dd81da3d5ea6a5d88140816",
+          "lib/agent-features/claim-check.metadata.ts": "f58465aa621a9ec68325579b4db442856ec7d694f007867cfc1d5e29f11653d2",
+          "lib/agent-features/claim-check.ts": "a2f1638f23c2b9f564848e10a5fc6c6108ddec2ba13eb6b4eaaaa29c63798d2f",
+          "lib/agent-features/concept-links.metadata.ts": "988d2aa8e8027117eeccce59f9a0729db5a46895c1d06b0686c1320f125bc928",
+          "lib/agent-features/concept-links.ts": "7033095eb8449e87e195258f2e69c2120f4522cd7ab07388ec243e28e7851d76",
+          "lib/agent-features/context-batch.metadata.ts": "cdc11cdbb3845baac4d0cec941b55b92950f0b3360cc443c3839f660887f1d46",
+          "lib/agent-features/context-batch.ts": "f6b8e921e4aea247daaab3a610f01b5b04462b2122978535176c64d7cffd0042",
+          "lib/agent-features/context.ts": "24b54af920f61da37274719812989b4498bccf3c4b12f2a755a15e2d2fdd7afe",
+          "lib/agent-features/context/legacy.ts": "5a9e91cb0531cb4f83d18c5f944ff377ab15586887a15f6f4c8c794789ecd103",
+          "lib/agent-features/context/shared.ts": "662f574b104abc682c5fbdaa93ff08ba4561159613a0bfdda019da36ae1e7bd9",
+          "lib/agent-features/cooperative-yield.ts": "b51cc00189a1389290f03abbd49a20b3cd166c3d2c8a6b7a7b3445078a825709",
+          "lib/agent-features/curriculum.metadata.ts": "4d300f186695aaa109f09d7f4f98beaea92330631b8ff40b5cd49c243e5e0f98",
+          "lib/agent-features/curriculum.ts": "3d90e20836e6970156fee2d1660847d5cfaa6e935ca908f6bff9a1f015784797",
+          "lib/agent-features/data-cleanroom.metadata.ts": "3bfd090cd51a91d55d2665e71747e288a6101ea2d368484409ee6b206757f96e",
+          "lib/agent-features/data-cleanroom.ts": "2a375cc523d5c39d73b3040ed0b6b9a2afaa4aa698fdc2913e44b470da89943f",
+          "lib/agent-features/day-planner.ts": "b23887f0bd38ce6c4690386bc3658ede0db80a582051a296e2497ee1a4b8563c",
+          "lib/agent-features/day-planner/time.ts": "9b27d847ee40fcb49c79bb3293e5719406252531a45222984b834d38d3b37dd0",
+          "lib/agent-features/deadline-backplan.metadata.ts": "2037eea1d25d68c6ce4ef02298fcffd8a8d3cc81c28eb49b7acabc5b9f5aa2b3",
+          "lib/agent-features/deadline-backplan.ts": "6d2cff012073c0c079271149993da2dac33b646d1be7e375c4c391f053f35021",
+          "lib/agent-features/decision-coach.ts": "2b623dbd6643b5300ee48b67d12bed5ea59a11e7425f06d5b732087532144d39",
+          "lib/agent-features/decision-journal.metadata.ts": "68bde182bfea01d14e8fecb3408ea4e596aab9e0c674ececca2c21a98e449a0b",
+          "lib/agent-features/decision-journal.ts": "c10747ec55d345f6483703421995c823570319a41e4d5a41a633338629f4342e",
+          "lib/agent-features/delegation-brief.metadata.ts": "9f4f71706c85a2d5165b6825637da4c7cc8d392fd74522de3fde6c367ccef164",
+          "lib/agent-features/delegation-brief.ts": "6e06f11b839d1862190bf251cce8b63b918f0ca36f891fd82b6f10008892fade",
+          "lib/agent-features/difficult-conversation.metadata.ts": "9c0179e2aa27d07078f5e72a8d6d0e313f8cf317ecb7cf790e897a4d98b92ae5",
+          "lib/agent-features/difficult-conversation.ts": "d36718502a989410c61e54bdc387935407c6c660afcf3e10214a7194b8821cb0",
+          "lib/agent-features/document-critic.metadata.ts": "82471ec8b26ac9fe589caedb0f0db6c9751b8960956529209f59ee10d93cb9ab",
+          "lib/agent-features/document-critic.ts": "e0bd9677e67646bd3577c2321a4cb4bb3c34c0a19c3d7271862fdcf4bf1410c2",
+          "lib/agent-features/energy-patterns.metadata.ts": "035dff4b45fe33d6b1cb1647736aee472a2dd2728d25899595198f2c0677b782",
+          "lib/agent-features/energy-patterns.ts": "f96b0bbbdff6aeb2011455cae19abf03fe79fa974aed073983a36ae1171f46d7",
+          "lib/agent-features/errand-batch.metadata.ts": "496029ffcb0982959b267af0522fbebebd1f58eb1fbeacfc4b5793f5faab2d2d",
+          "lib/agent-features/errand-batch.ts": "6183a8a77a80f854accce55888c5df80ea804f3d19fe867fc13c2589a1d91ba8",
+          "lib/agent-features/estimate-calibration.metadata.ts": "67081c058b7183b98e4f54ecf41bd9a237063047a3be60be999f612e51c2d7d3",
+          "lib/agent-features/estimate-calibration.ts": "4953afd0af976ba5a4ce01fb6160955a92356419d0cb92abf3e5e2b3f91ce6f9",
+          "lib/agent-features/feature-kit/bounded-state.ts": "4134a80007d92d73bf88618059ead1ed82b1e368a4317b91c111b95ebcbd1e8e",
+          "lib/agent-features/feature-kit/civil-time.ts": "a786b1979d74cab8a10f21b30b57016e5d6e8ea75cfeb2d9f9354a392536d639",
+          "lib/agent-features/feature-kit/command-and-display.ts": "cdb7cd5e8be726b258b0c7dcb13a052fa5bdfe1d5eeb427da3166f11322328cc",
+          "lib/agent-features/feature-kit/evidence.ts": "0b2018acc2f9f4914e9bfc2b4ec8cb554df99078b230e5512722af88e8dbe4e3",
+          "lib/agent-features/feedback-builder.metadata.ts": "aa5269ccadc99cb02458adc22870536ba102b9bc176ad49d44627a19a0dffcea",
+          "lib/agent-features/feedback-builder.ts": "861e00c1c7421f254a4a82bd67d540338e48c8baf9402bb8f8ed0894ad7a355d",
+          "lib/agent-features/feedback-themes.metadata.ts": "3e87045f0a4e3317d8c088edc7dede019671dc68644a5e1fe9dcadeed8913489",
+          "lib/agent-features/feedback-themes.ts": "cc0cabbf1fb31cdfcfea57f466c03635c3ba7685f90bc39606b99bb518fbe2ee",
+          "lib/agent-features/goal-alignment.metadata.ts": "8c39b66bc4bbaffcf44cdb3fcfba85a3dc7e8c0f829430f5e76a58a9e0335410",
+          "lib/agent-features/goal-alignment.ts": "3027b2d9dd0d0faa6a4a8b82f664cb97a7481514d9ed5da77c442ed523ca93df",
+          "lib/agent-features/habit-experiments.metadata.ts": "e562034c87e627b6f323e0f195be7ac3d9d02fd3e19a86a5cd9cfd8f4c4ee22f",
+          "lib/agent-features/habit-experiments.ts": "d59d2c2f2b59b1e7f5d938578dc5799c34381b10ccf4a716c2d7efb86e8c59ee",
+          "lib/agent-features/handoffs.ts": "7e77c40dd7949fd727f64131f9780e2a1d4d261bfdb56b5382134f4ab19d06b9",
+          "lib/agent-features/home-maintenance.metadata.ts": "6cb48051ccacd969e51dfea98dbae013c4220d748fca06a4efb10bcf7a6c820b",
+          "lib/agent-features/home-maintenance.ts": "0fc04c5ed945ebf9da5842b2b786b2389a35881ea70bffdb418897005623c466",
+          "lib/agent-features/identity.ts": "ffe078bcfc50df03b606c9a96a5a77e8c88c05ffd71ed7f2cf5a3d4dc5fa7ca8",
+          "lib/agent-features/inbox.ts": "b8018e841b796269d8f1030fc40ffecb74f911c1e0a897974e8e712640b9c3ed",
+          "lib/agent-features/index.ts": "8543a93d515c66190c8371ade02b96959e39cd59d7eaae1a2e837574df97b917",
+          "lib/agent-features/interruption-audit.metadata.ts": "80d3e9b94c4b519e05606dd3c727d32ba39eb10c1819170273a792aabc994dc1",
+          "lib/agent-features/interruption-audit.ts": "148847f935578e9359ba6b28ab7c880752cc82f85990f8b388c942416d27ae3c",
+          "lib/agent-features/interview-practice.metadata.ts": "d5529240814e34689f11cffbb378199f0c47c47e86f1161ef472c6328416f5d4",
+          "lib/agent-features/interview-practice.ts": "17eb30135d25096de4bae26c9cd14f3d107b4c520d729da8f2c0cec0bb83dc97",
+          "lib/agent-features/lazy.ts": "12bfe6efdc269fbe14e4a2f96563753744f7d83fd9ed9169024a21cef74f06c5",
+          "lib/agent-features/learning-transfer.metadata.ts": "0d3d5043419ed0d4e9c04930c6a20208c90377ba467126bc950027d51abd4388",
+          "lib/agent-features/learning-transfer.ts": "fcae361b43f122a7f08676b593a197fc7cfa344e58a7de57c64cb868adc9dd1d",
+          "lib/agent-features/learning.ts": "0cde0eee966fdc4b422794da798fe899b57b6b1636e9df9f0cb71d2ea9d0daf9",
+          "lib/agent-features/meeting-load.metadata.ts": "f4368664e3a63aa619012469ef04ae9372d343b1830b0e8337c7519e3b10b8cc",
+          "lib/agent-features/meeting-load.ts": "22520eae222bec2746995188a9134072940be7e0970be367e171181289d696a5",
+          "lib/agent-features/meeting-prep.ts": "c6d5bc54234fa01c3284fcec31215d67741aefcee384578ce3477a143311a581",
+          "lib/agent-features/memory-review.ts": "da4645741637d7f63f6a2b6598859a3fdf2193c955d92f71523947d86164e18d",
+          "lib/agent-features/mistake-patterns.metadata.ts": "fc87977b9f9b57d2badf99dbc5e1f2942c2dc92c8dd7a7e3ef9546e01fbcf762",
+          "lib/agent-features/mistake-patterns.ts": "9c99bc78a05f8ff1cfdf861de30e4049b6d76a7b547ea05d2240cac0edf23ecb",
+          "lib/agent-features/morning-brief.ts": "369203a839b0b2239e92f4d35ad7eb30917a4e74d8b41703767d782ab1f021c1",
+          "lib/agent-features/number-audit.metadata.ts": "fd50c2faeabc8238261ec2c0c1ab7ee28c60b031e51d83e0721d12281b771267",
+          "lib/agent-features/number-audit.ts": "223cacf6791e5ff613b7cff33cd1171e39ed653ae47ff5e654ade5aa909d5143",
+          "lib/agent-features/pantry-plan.metadata.ts": "39ac69d2259833237aa8a9c2a03c8d0db0ac77e5e07f7e2861261f6bcaea51b4",
+          "lib/agent-features/pantry-plan.ts": "34e5b8ca4aed0186e34035036852a9e9a29d624dff141c669aa2624928e62b37",
+          "lib/agent-features/playbooks.ts": "070ae03f40d5141830b71a62181011137b93e789a30a40ac4a5a7011d17cf2bd",
+          "lib/agent-features/practice-lab.metadata.ts": "4ea327b30212d0ea1c9539111b53ae92ba2bd44ed154847bc51e79bffed823d8",
+          "lib/agent-features/practice-lab.ts": "a5c3173ffdbf6f1c6273494df83b934e8dc867b8962d82a1cd640b800775d8e2",
+          "lib/agent-features/premortem.metadata.ts": "ff5acf680b802de75648b30bd6c4e9c4f0f04d2d459f13344e5ca4e3ca85c161",
+          "lib/agent-features/premortem.ts": "7f35360e66d3f5b613e626a440174bd1161b1bf4d33e0b9fc9efeb6d540501a3",
+          "lib/agent-features/process-friction.metadata.ts": "a8e218562e12f0cfdc4227063f8e270165eb5c9d0c39ec81104fce4a827c04b0",
+          "lib/agent-features/process-friction.ts": "ffbf8d3474307079a2c3797d818c59f6ce5805af3d5071857623f0862be7bf00",
+          "lib/agent-features/project-briefs.ts": "3fe534659f5216167a3ac1b86b95c7b6c99fd131ee77e31d3998f106c3d1b34b",
+          "lib/agent-features/purchase-compare.metadata.ts": "8e79308fcf57d6d5b98e9661dd741b7dc84736a7161d80ff9a8d1f1b65eef1ee",
+          "lib/agent-features/purchase-compare.ts": "06e06c81a49cdef24e6131b515b1052d01621723955f84729e78576616d3aa09",
+          "lib/agent-features/question-triage.metadata.ts": "6475ed752828a36f03aafd031946230cd7f5edd1027960421d65ee87b7994302",
+          "lib/agent-features/question-triage.ts": "006c0a32690cb73e212ec1727ebb054d3618c5fdce456884e2a0028e8a5315f8",
+          "lib/agent-features/read-later.ts": "340b0be008ac5d167d49c01d4acb38a477cd149efee8a7f8c693c443769ec47f",
+          "lib/agent-features/reading-path.metadata.ts": "aae9a564ca0494badba49932496d21a6bf65c69c9c36e6883f2a7ab044be867f",
+          "lib/agent-features/reading-path.ts": "f143d4fcae1085fe72fa2977d32298c814898a8d8663625b2143c4bec4e78ec0",
+          "lib/agent-features/recall.ts": "9ded44f5f081bc544183b3543b5287a6d47352a01fdc7dc8c35859f6cc6f5e8c",
+          "lib/agent-features/redaction-desk.metadata.ts": "09538b5c71921852f6eb5828240b1c09416779681de1db0a01bc46b5a3ad1181",
+          "lib/agent-features/redaction-desk.ts": "a4c34bc7773e7c8ab739515f50b7b073b610c46bacdf66e9b48e4f346a8d1a75",
+          "lib/agent-features/registry.ts": "6c92123e389e4325adf595a684a295be6755c0f7cb701a6119962cdab226496e",
+          "lib/agent-features/relationships.ts": "92db0d73e3acd8a87f04c4c42d1eca41a995e030b55653e7e1d0fbcb8927d0d5",
+          "lib/agent-features/renewal-radar.metadata.ts": "12aac74316266e73421fa8cac11f3234278c9e6e0c35945048f05ed1ba1c190d",
+          "lib/agent-features/renewal-radar.ts": "02ca70ed6d62e999227530356388325ab64d63625a7d9808729e56b639656541",
+          "lib/agent-features/reply-coach.ts": "7e1026b96d14b4d901fbc85b1ed9090fb55108088e88d1ca20cd2ded8ab34fbb",
+          "lib/agent-features/research.ts": "62fed9dd1e4431da68dcc2dab6dd9336e4713d3769a77fb83e49c2ac54f06605",
+          "lib/agent-features/runtime.ts": "301ae4eb7573262c9029bab4d5a050590f1bcc1793e987f002f7100cd707620e",
+          "lib/agent-features/scope-slicer.metadata.ts": "5bb831c12554da2a9fd52644747a9ef437f8be54d90065c6fb10056d6ea0b10c",
+          "lib/agent-features/scope-slicer.ts": "d4a1feac60efee2244f2a677187d891b40ffaadb87e9642163c78c19b0321ef3",
+          "lib/agent-features/services.ts": "41b267c450aca16e2e301694423a3e3177250fe696084c0d52356976021e6e2e",
+          "lib/agent-features/shutdown-review.metadata.ts": "72f594781d6e6783fb541ace998a6aab39f292ab3870482a5634f9294a2f850a",
+          "lib/agent-features/shutdown-review.ts": "3be7a62e7503617e99eb2ff1876e8b66bd20d0222633d86eb858375535dd9d5a",
+          "lib/agent-features/skill-matrix.metadata.ts": "c77e4e3327df9226e7b6f1d023b3d5630f073ecd9429a8f583e3c3c4ff35baf0",
+          "lib/agent-features/skill-matrix.ts": "2a5416e2b6466c3e08ee64f3c0633337040927fdfc20e5c10a8058f8a6f60ed7",
+          "lib/agent-features/source-compare.metadata.ts": "20e29512f8f1a2676ac2a9089dc9047e2c1194cd982519e890ab816b6f3f9177",
+          "lib/agent-features/source-compare.ts": "ad08339d4328810c2cd5c2cc275bdf359d6a59f497f15e39bc60fb25e23284e5",
+          "lib/agent-features/store.ts": "c5a0cdca90323f243f9844dbaf4e77e24a85ad47266da5d409db86aaaf06fd00",
+          "lib/agent-features/task-breakdown.metadata.ts": "1de69584bf9bde5044861530d86328f5a53913ed7d7a6de78124c0138e834271",
+          "lib/agent-features/task-breakdown.ts": "943eb8550fea2e8ccfe7f6d75af9da57f3940d9aadbc2a3ff72aa6da5be97e3b",
+          "lib/agent-features/teach-back.metadata.ts": "2f5343614f883b328dc27e50e8d36ebcbab30b490008163d494a48964d8bf4ad",
+          "lib/agent-features/teach-back.ts": "4f49b3b73229a5a470d437231b947428a13977be455563bd27828ef312cff1bb",
+          "lib/agent-features/timeline-builder.metadata.ts": "a2adc13114584fccd5f2636368a5538017908c714cafb29c9c0bf402246f289f",
+          "lib/agent-features/timeline-builder.ts": "b7afc4f4abbcddf588cf8bc701d41f7caf3a9125a5aa60492856db06ab62664a",
+          "lib/agent-features/travel.ts": "0212583c95c69d1dfd38bb2f9cd00d05bd428eea47da5f47ecd155bedbcd5548",
+          "lib/agent-features/types.ts": "8324309f1c8248d832a354bddf715a62940b72e05af7960266ce19cf47e7a156",
+          "lib/agent-features/weekly-review.ts": "bc17a33d2e0ed116a1413325ed46a88f274c7f0dd917d090e2d0ccf96b2f896a",
+          "lib/agent-features/workflows.ts": "ca088fe2c8c855874c3ea4cf8adffe03b08f8e6b1f13542b8c114ad4e1a1b953",
+          "lib/ai.ts": "21d363d4c94c650139caf83acf58722c494f87f2bbbcdfa93f551ee3d4480601",
+          "lib/artifact-commands.ts": "ae73ef6a35d442c368343f1b6018575e83930a3b6dc9c617047ecdb04cc5b55a",
+          "lib/artifact-images.ts": "1269fbe9859b29193a7394978f535b5f664b1ca1462708d9271ab7b89f9c8f46",
+          "lib/artifacts.ts": "74553f46566574d80bb9ebe9b6f4175ffb897ba1e34a90e123b69e8244661a68",
+          "lib/attention-triage.ts": "45036b985b19a2a0d415a5481335508fb2bc064bc39d5548274e9d360ff9d372",
+          "lib/channel-digests.ts": "7be564ebb17175075e66b52761b5a09d25cb3ef20647d5b102128acd4b160ca3",
+          "lib/channel-history.ts": "01b56957f50a2ed8b6390867c53e405ddf6249bbd191bf16269dbb012e042464",
+          "lib/channel-memory-controls.ts": "4dfa4dc4cb6ffade2f5468f2cda6eb6a2b02a0f65a64de067c1c2fdbb9801b2a",
+          "lib/decisions.ts": "64d0ba55e1c86a5d45b38e3ebb817c857c27b6ecdfe09dacde3712a6a432337a",
+          "lib/env.ts": "188fb1af9a4ccbdc1d9c51a658c3e4b9166dd4d012e5fcfd601533f93657bb46",
+          "lib/flue-tools.ts": "e8ab40efdc2781c02a8bcb29919e819ea51fbdfb43562668b03d4134c469f69f",
+          "lib/follow-ups.ts": "b7268b0fbf1b6d3d9a678c40f51541e3aaa3150fc9a8ea0eaf3fa676ceaeb86f",
+          "lib/hacker-news-schedule.ts": "7556bb83852c59343171aec062b4ab3762a5097bbd9b5cc3cede30a5a73bba69",
+          "lib/hacker-news.ts": "6e0def8fadd0df96963cc924a49ef3312cb94650552069babd5afa3bb3425e52",
+          "lib/issue-drafts.ts": "39e11d8372b01cd0a209fdf6656efd869f17c7d0457598c9ab4c5f6419161b9e",
+          "lib/memory.ts": "93e8530aa1d4c0efda330d12fe03dfedeb2bec933e3af60bde99ac73be303b1a",
+          "lib/monitors.ts": "f7a0a79b2982ade9e7545c3147ef9a1c1e1f725deb29e222418f101b17217878",
+          "lib/nobo-agent-context.ts": "42006c990e613ac84ca0c87322de8e5cb89d6ed140b417329b4027fa3d7f0b5d",
+          "lib/nobo-messages.ts": "ced5301c472070993aab783587d63dd3535a493cadcb9eb3c77f5fdf978350e9",
+          "lib/nobo-models.ts": "ca5aa6f13222c99684c0795923cab9f9b7168d937e2ecb3b33b33302e5495972",
+          "lib/nobo-prompt.ts": "3c26218356c1182292cc6361820631aa67348ae1a036fb630308a520fb8c67aa",
+          "lib/nobo-time.ts": "c7b18012d8c1557ba803f1746cc7281fb09739e81b2d9aa8869a8efdff8ea61d",
+          "lib/ops-errors.ts": "e214c143ea212b497cec31f6c65a0236d78bc16f0104e4a43fdf520cdaa9c27e",
+          "lib/ops-status.ts": "684b1dd4eb026eea7e166e648b5846069c320b186792cb8860c16b445e019ffc",
+          "lib/polls.ts": "10d3e711cfdfecfc8260872ae16715780b66e264a626f86fa766c74a02f7c8ae",
+          "lib/preferences.ts": "e49cb404c623930cb3d5e001998ee3dbf5992c9d7f4102b6a9ef00a4194e0eac",
+          "lib/redis.ts": "779ebe4a5ca7776dd36a5b1875797f86f7f09303392a1f0171fbe997533d3bb8",
+          "lib/request-body.ts": "4b1463cb4bdedc50f1a2c41cbfa1c6f378f38210d16ccfc265eddcce40f172a1",
+          "lib/scheduler-lease.ts": "dca56494f22925aa3a18887bcf5a3b0b247c574a52b67ce4f78543a3b58235ce",
+          "lib/schedules.ts": "97faa5d8fc22bd966b20298f2fd3b8a4f84682838274a650ffee8b31ebba2cbb",
+          "lib/semantic-search.ts": "98236ba911c6c14e95f67223090119a6c0a3bf5776e6babdc19c885a42dce6ed",
+          "lib/skills.ts": "6e19094b2579dea64b8c18fa47f739f2aff4e16537ced266f8126faea8db83b1",
+          "lib/slack-agent-runs.ts": "22785e8fd5c54312bb8d947f2389e2ab9be60eecd4fe5587bdf17307fa6b5270",
+          "lib/slack-approvals.ts": "c688367c135fee08a81bda3eeb2bad00abc19d0e687d38967af3fae7d093b7cd",
+          "lib/slack-commands.ts": "0393fa35e9ba96384afd9fb4016663cc0d5fa9af76c7ef8a61e53387d4c72aa3",
+          "lib/slack-events.ts": "7added03cc32637fda3d036bbca8d777a1eef98545da75ed592698e03e2460da",
+          "lib/slack-home-view.ts": "69e6e7932732ae2e9e93205ae9388b5841540affdd5fe6986e114e9fefc935f2",
+          "lib/slack-reactions.ts": "b1fd5c6153c86c1902dbdb0e102d367946219bf9c4e232cb4b14e19270dec9ba",
+          "lib/slack-readiness.ts": "b9211a23442aaf305766099f455ea535594ef3a61e00088b23f82fd04109f046",
+          "lib/slack-reminder-cards.ts": "4d6b5e79c6ca059cfafcfbfacd9e003cf187f1cfea51150e9b25a467886f7c82",
+          "lib/slack-response-cards.ts": "fd58a6d6a88ca67f438a19f12ef78dbbae179d84fce9ddda71a7365e45365e55",
+          "lib/slack-targets.ts": "cea3ef55b7a25b8432434f21d4a0a6e4c31e81fc45f2dcd06eb56e41c5f2a217",
+          "lib/slack-widget-presentation.ts": "ca181e17e4fea89aa519ae9d887f6b31075b81e62bc8acd44d7c58c7b604f2f3",
+          "lib/slack-widget-workflows.ts": "69b76b2e37e8ec79f232ffed3d8f81242cecd79c813c3141d863917cde9f46ae",
+          "lib/slack-widgets.ts": "893000848437dd34c61276ebe0c13b2c4cf5ad2fa3742ad4b123a0a09b76fed5",
+          "lib/slack.ts": "e6dbe81d5ac52ed32409a95d6fe1c2a20c7a1679c03df6de6554814dda06104c",
+          "lib/toolbox/agendas.ts": "97264504b9a15efd20b268ea6fa718b7a01c4ef5bd8a984fd732f3796c93d5ca",
+          "lib/toolbox/bookmarks.ts": "e27141ee5473bce779cbc0e9920bc16e4c5d5d975ed530eb59a4ce65c635803e",
+          "lib/toolbox/checklists.ts": "2d8f9ff439851852ca7a039796c2b6ac3d671a15fe36e5421de0c716f982d257",
+          "lib/toolbox/core.ts": "b83944f620bfbf4aed4e706626631542704bb51849628ef683e985bd9413f37a",
+          "lib/toolbox/countdowns.ts": "035e98d88fa81ac424492d60a831bbe9a0a4dec988497fdf1a16a08b63469498",
+          "lib/toolbox/examples.ts": "25abe57b52a0d6c7c9f99e6e4d6210c55a14be05b7bd6d10b80551bc458ec2ef",
+          "lib/toolbox/focus.ts": "deff96c2894b9e6108d4bf66ab55c9798d81edbf2e05ceebde347e68ea8b0e84",
+          "lib/toolbox/glossary.ts": "d2a73eb12c42cc450e94e143d5025d3f053949b03014ac47fa320d636b2e1b0e",
+          "lib/toolbox/goals.ts": "b831a29c1a0569c5f39825ffb8ff4708110b90f1c9d383500c907f14261ba801",
+          "lib/toolbox/habits.ts": "4e86721b20c8490df40a3d3720a98445bd516f6e23bfae00a4409747ce14cd90",
+          "lib/toolbox/index.ts": "8e5e8c83eb40fd75804f5a983a49f3640540030f1404330a953654945fda50e9",
+          "lib/toolbox/journal.ts": "d5ae95710a94d7fd859c4acfc77ad3e438bada588baa6cc98e5fb32baec62f94",
+          "lib/toolbox/notes.ts": "9dc81671593a6674d5ef8521eb949eb5065cb7467f3855f735c6782f363928cc",
+          "lib/toolbox/prompts.ts": "7553f4ca8b6c13cc8b99a7ba46360a5eac092e35f75ef6f2921d36d3da8af766",
+          "lib/toolbox/releases.ts": "a1e3902500b01c9ef2aecab699f90d6da2793024113be688be37a28de35dbd1b",
+          "lib/toolbox/retros.ts": "cbd60d0ae1c39523b011f945a3155e67e92732a2a76120c5a6096863228bbc78",
+          "lib/toolbox/scorecards.ts": "56ae2808aedf83f305de09c1a3f5acc584cc6f9dcff769a56a2f5b475d72459f",
+          "lib/toolbox/snippets.ts": "7561baa4a8eea8895dcfdd9ae92b493e210c95f3ea68ccf824c1f07adabb85a1",
+          "lib/toolbox/standups.ts": "eb43bb783657f601eab8057752ef2f665b8bbdf58608126ccaa19dd2cb67794e",
+          "lib/toolbox/textkit.ts": "5cac5ba5dbbe58aa0d608eddcc5629a55eab084a9eb459400ba4960cda007e89",
+          "lib/toolbox/timelog.ts": "be109cf6406d43411f22614c6ae806993d32d85dc44e9e27c9779b1a43b8c2ac",
+          "lib/toolbox/timezones.ts": "1e3af276db1c035cc732c8fd5aba40838c868e707af83ae4baf44f4ec1857025",
+          "lib/toolbox/workload.ts": "c1ffcb6aa9c48f3c3ba3c826d372ca288538e7dfb9879b206ace44ef35124332",
+          "lib/x-media-modal.ts": "f43941457c790fc473452b8e2d6594f54053b06339d91d0d34da14f1f76aea08",
+          "lib/x-media-summary.ts": "9773326671022592c4c597b37316c956c57ee52bd519f8e16071175e85c821a5",
+          "lib/x-media.ts": "1763eb63d0b79c477636b7e884b40dcfc37eb26a72cfd1855f066d1bf2b2e034",
+          "package-lock.json": "92ae0aba4e0b1b897c2601bb93b4c2e53cd77de25000f79578a557bab633b9ab",
+          "package.json": "bd17e216f958117cb69dc13302ef6f130decd127e04c1c77b563ff8c40e171ad",
+          "scripts/bench-agent-features.mjs": "c4cc42417585a66fb8bedc8b237344aba93f0cd766a22c9a18f444eb96716b53",
+          "scripts/bench-agent-release.mjs": "737ac81b52cc4b2c1a314170068b366bb82ffae926aca0d582403280e7083066",
+          "server.ts": "64267ff9ebf9599cb71981e05a36d1e2cfbc0ee604afbae11537ff7e0ac7a149",
+          "src/agents/nobo.ts": "278b1cd1fbac963347e3a14f004c6a0df319f0608a68eadf663ab6e9ff70cf8d",
+          "src/app.ts": "7b69fee84997de393157f8b3351550cf56fcb53115d7df3ccbaa2a76dd4bcf95",
+          "src/nobo-provider.ts": "3cd8f69b2b61c64b09f78ae938105d3be2c314b8544733baa4e2e646deab4848",
+          "src/server.ts": "dd7d9a7f22d9c2791211c200d9f043575cd66b683a8befb808c28b00dc4b6a92",
+          "src/slack-agent-catalog.ts": "c87981cad922a3f22cfaefb9b4230b3efd1ba9bcc31a7534b4d2b7c9b375a835",
+          "src/slack-agent-events.ts": "ba10ad5efaf7c3a2c40fe07dc617837ea7d6b91d7ce38ccd07e98580edb83d20",
+          "src/slack-bolt.ts": "97d52cbfa6dbc64093a2d10b791346c9463aa3080db9f0cef8187c76d3d38f6b",
+          "src/slack-home-actions.ts": "a055ccafec550e30ce2e412266c104b3764db4b2bddf878167336e4350805864",
+          "src/slack-tasks.ts": "57c96d1bac4db45e18f3f7a85569a29afe9bbfc43e9553a13ceaaf7518d8c505",
+          "src/slack-toolbox.ts": "8f3fbd716aa847dba1992d2543174d14d1f338c7a14bb53b5e234034806d688f",
+          "src/slack-widget-actions.ts": "1636e3798fac43cf1b6bda736fcf1d9a4738d6cc7fc998e3fc6aea2338b38b8f",
+          "vite.config.ts": "bd7f9c14dcdc5dee3becbeaa2f376d906e00c5a9016d8d60047b4871b1fbc914"
+        },
+        "sha256": "0429fd52af9f9cffe21e2f0fe88061e2eb4c341a0fe34f2d760db7c97e6e55b0",
+        "head": "8532acaef2079887258f7dda246bee12222291b3",
+        "status": "",
+        "historicalResultsSha256": "9b72f674cb38b4db226c87fd0214bfd7ed32c5848a6f5ff3a61d9b26c7a6cb85"
+      },
+      "build": {
+        "status": "complete",
+        "vite": "8.3.5",
+        "cpuMs": 1636.428,
+        "wallMs": 343.311738,
+        "peakRssMiB": 916.46484375,
+        "artifacts": {
+          "adapters.mjs": "6d550a423d37bdd7a737f74fabe52c5fdab0c95e0bfd24d3feabcee5473e8a81",
+          "assets/access-controls-DcjwtTzw.js": "b3596e09aeb6db5a095f958aee00c9b30a9674c22acc4c261b59a52c5fe222ac",
+          "assets/achievement-portfolio-DEFBlSx_.js": "c7d7a4fc6d36dfa0f473a41d07b1d0887f1c5224108e004df3d065f6f0ef26da",
+          "assets/admission-CkQNWk75.js": "ce62a7d0f7e67d9f24be855978d72f0c3bfe70e0854b7715017d7a1c70237e41",
+          "assets/agent-features-CTcgEKgk.js": "5d1cd9846d85cfea96c43eef87ff6cfd0bdaa351adcdff4c5fed7336745bc41e",
+          "assets/ai-DNefhHUJ.js": "e8ef3832bb1149b89dd66e6609f666efb0b4c58d83adfa14e3d2c1b4654fbe6e",
+          "assets/argument-map-DgU56HG6.js": "f08239eaefabf147698e2b82c21367ff02b8f1a4bfd212b8f530928e611f5c75",
+          "assets/assumption-tests-D1upop7-.js": "d85511aa1543d543078a9f6fdc771aef667a6ab43a5e07842355ec946d2a24f9",
+          "assets/audience-brief-BeR6uTVK.js": "4bcf290ffead4e246a5bcb97679b4440fb8772e56e83428677dba06e711ed78d",
+          "assets/blocker-lab-ttR3t5XY.js": "a90a1499be4bbe350d20e201fb6c7b29d3d47f74acd30be8a3959d695d2cb459",
+          "assets/boundary-script-CyVTYWT9.js": "fbe8131cf9844b027119ac9d8929892e3095f758691b2322e6411d4abedd7a03",
+          "assets/bounded-context-CzD4v3-d.js": "c4b623a1db0b489c4074988b469e1a4247fb40c5730cf64adb54c35f304a4bf8",
+          "assets/bounded-state-CGis1pcF.js": "894117f3629e18b7fae88f7eca9e70a5152ffeed1146f51bbd34c428966bacb2",
+          "assets/budgets-CYQ0VquH.js": "5599696597c21bc45b0dcd10218b1031361b01c7e383304ea14a223d9cf94e9c",
+          "assets/calendar-BBckVD9j.js": "ec78c94d3dc4cc0bb2075544d783ed98caf3c99fb8c44c2b44ca624f679e5b6e",
+          "assets/capacity-forecast-BGQiXYc7.js": "6c386b621a7c3d4f9fffed3bd956ae4d7f2782af9566c20917d8c8e6a326447b",
+          "assets/change-digest-CSMItGP1.js": "af3e5e1941332d23629fc3f25e082f30cf8b4cd9278954a773b6d71931cc2fcc",
+          "assets/change-impact-DwwDMx5t.js": "e3e214c382a0d78934c954349bb3d860edeab40cbd53d3b45909d883e2465d7e",
+          "assets/checklist-lint-Bt3Hc0Wh.js": "4719309dc47347516421e4f3f9cd7a0a84da7b12f582ebff24bfc055e8389e0e",
+          "assets/civil-time-DNl11yv_.js": "ecc3be369d2bbc8d219a0fec3f712938ef7945b58118dbdc8212483dec2ac3b4",
+          "assets/claim-check-B8EUwkfn.js": "794df07a58e5708f5761bdad0d3e59704eea809593000e37e9e3b6cda711a5ca",
+          "assets/concept-links-h0J8aFJq.js": "b5a49cd6f2b730a1f3dd0c046bd5789cb2072c92ad4d7504e3419c35e8ffcfe7",
+          "assets/context-batch-tVBuyvFv.js": "b61bfb05c39883f392c470cc081d590663e7471081ad04a8fa9a7a3d6ae21014",
+          "assets/context-odOlnNY1.js": "7d698a5e8348b3daa62a9f05773f67d1ff96d513c1d123882a5546dd115931c1",
+          "assets/cooperative-yield-hbhmUXHp.js": "a155405e70b89935ada27c6a463de26eb36b3981ca84c3d253c366003c3ceeaf",
+          "assets/curriculum-CTEHK4I-.js": "e1b36c26c479040d808ef19a59e8e5e7084f20965c5331ca07abcd2b6d5e6ce1",
+          "assets/data-cleanroom.metadata-BgSCbOtY.js": "300e780bb7e68f521c03a2674b9515409b33313a02fd99c9b0b4264f42d94987",
+          "assets/day-planner-BCn4dDkM.js": "89160bc73c5dbe1732b784d422f905c93ea6b78b4613bb0b0a1f80f314d5c605",
+          "assets/deadline-backplan-BXUc7jjI.js": "00de2d68510780f2bf38f0bb5303315b377e2e620ea684eb6fce1820392239c4",
+          "assets/decision-coach-DRMnwgAJ.js": "0cf745aaeb2e65985c72dcc008a4a8ac32c9dab2cf82c4fd694d9fc67970150c",
+          "assets/decision-journal-ChrZs8DX.js": "86e647b4bb44f911f05f5d34544a365d1a4d950f58b7bb6952d6fb09a585a08a",
+          "assets/delegation-brief-CWyoojNF.js": "8d844b848d5dcb8d49786acbfbbc5214cc4ccbc80c20d536454894d10870928b",
+          "assets/difficult-conversation-CfFN8FXU.js": "49d51cb2653286ca75e5da8d085159dd1b7bbc172a49c47feec4c33a4a268a64",
+          "assets/document-critic-D02Q5LPb.js": "68ea35c8a71e5e3252ad8f42609e60ce007d79d1d11fdd3ef97c458244f8747f",
+          "assets/energy-patterns-j-yLQ_eZ.js": "67b1399b11594ca285629163467dba4866fa39e51214b2691c5463c106ba9b25",
+          "assets/errand-batch-DJ4Z5fok.js": "21d10facc8256e7d3615f0feab4f8f848b836ba8f552117c609664e9ef65de20",
+          "assets/estimate-calibration-BO2i_0Kd.js": "8a76e6125095177ce7475873a7f3afb38ddd8974e663a88fda2b6a69e462e260",
+          "assets/evidence-Je-zdOwl.js": "2c7a1b25568c4c4b33daf2a19a4a5eccaee91ed01d8595ea4696665f56f46cf9",
+          "assets/feedback-builder-Dcvt1XC8.js": "fac3504910f61bd4a419e0e2a89a4afe734af22aeee2ea9046231bbc73613de1",
+          "assets/feedback-themes-2u70Af8o.js": "5c1004449fce32eca2255cfc5cff81af6126bdbce1c1f5b4cf4d0ac7ab9bb0b1",
+          "assets/goal-alignment-DHVzM43_.js": "682eda0afac5e7125b1725ca1595e6ecd092975079e42767e8251e14c21fab3a",
+          "assets/habit-experiments-DUir9_WN.js": "66f1095e4de63e81e29ab28dcf01567c00d28d0bd341ee14d4b9c50043a8f505",
+          "assets/home-maintenance-BEhl9Wri.js": "6c0e146740137b3cc0673564f4442662b6ef25dcaf7c8b2d2962ca2dac2bbca7",
+          "assets/ics-Cnxe-Zjy.js": "0f424f005df1d7bf23e631dfb401837ad4f454fd1d1e389e9247a7414e2c8aa4",
+          "assets/identity-B9ko-PxZ.js": "d4274c46f0e7ee29fe90a5ec4836723d8ca13d338d32838567a0df622beff9f6",
+          "assets/inbox-JOievnUR.js": "737e74c18fe4302ed05e2e9d652920f9012093ffa24975f81995dfe3751db3e9",
+          "assets/interruption-audit-DMis9K5A.js": "770e398a57384983b8c8401d5f25cef1655b6b522bbb694a69ea92123c1d5ba1",
+          "assets/interview-practice-C0BHcij0.js": "c5f18e2d6f18d444308273c61b9c90d10bba5187d311f670ffbc957cd0c53a95",
+          "assets/learning-ClLXIwO7.js": "b512a5e98f300c1932c13074965db098f25b6a1b9968599910a42bbbbc1448e9",
+          "assets/learning-transfer-B9028qN7.js": "f1c77bdb05d67d42dd48b516c6053f1f73c995ba250d850b2019f8a66704e82b",
+          "assets/meeting-load-VP1E9r3D.js": "8ab10a1fac7f778c2f25103cd34f4555533fb83a65723173e04be1e66b04cb38",
+          "assets/memory-review-C-yrtdLG.js": "32eeedea719590e408b9e87144ec0aeee74c74f7f39ba0de51e3ef2937da4325",
+          "assets/mistake-patterns-D6YQaQPZ.js": "e218faeba31f00afcb387274b7256a7b886b36ad0d3fcec886f58985ca58b7bd",
+          "assets/number-audit-DoImZHq6.js": "8ec4ec04c15201f952320bc84c5912fa3e682eb39a822ae6ba0c2faf0ab80187",
+          "assets/ops-errors-DwbOps4o.js": "d750d3de349888fe87afc72e1c05bd26364131e5ba896b77b4dae9905ddd4aa8",
+          "assets/pantry-plan-DeifMuTV.js": "aab65d668e822dd2d1be5749648348cc815c6f8c5aaf3ccc0bffb59593b33624",
+          "assets/playbooks-C3axRXeG.js": "91986764cd27ce6294e420edacea7fafc51893b0d4d484ece76b9454f92b2894",
+          "assets/practice-lab-D85x04Jt.js": "8addf33997b97ed89561475cd2d4b2998d0f5b35aa776f8f24624a87d94b6154",
+          "assets/preferences-DMuuQ3VE.js": "388c8644cebaef18e556b2076ecad30bb35ea9e0ee57e628daa6908c3ad78dbe",
+          "assets/premortem-DySM1kuk.js": "134b26a871591c439fdae029dfe1250bb395c2d8583c6e991c8a8623634775e8",
+          "assets/process-friction-DU4fqWmB.js": "b71ecdd656a9a911164c6574842f166dc7b81316f2d8c2c74f16e9ec40ed1fdc",
+          "assets/project-briefs-DXu6DYl4.js": "ac1cc699e614cf082c79d14782dfa492ff05ced0cbc5e9e19e19fc283c2714fb",
+          "assets/purchase-compare-DHi60u9q.js": "0d250cedfcbb140915927efd00c47a7936dbba916c448ca9adff8e7d80a5ee69",
+          "assets/question-triage-BbYjy3WV.js": "0fa21511ece2513d82fdd06d3e7fd246188d54e71c427977b7149faf06d80a77",
+          "assets/read-later-DMoGC6qU.js": "641a3459ba7a80addeabbc279d8585a5a66429f983890014bbd5d829b44f494a",
+          "assets/reading-path-OL7beaEJ.js": "8eaca6c0c6fae27a7dec0f03f8a8d2dad6383f617e20e26220ca466f38327ca7",
+          "assets/recall-CWVgkJ03.js": "5c5979b937021a2f5f9c96911aabf190178c8e9aa1b1b4b71cd5dc227a02c5a1",
+          "assets/redaction-desk-C9GzFw2U.js": "a38cd820ce48dc8617f05c3219447c256eb062448085c31bee584626f8dcd7dd",
+          "assets/redis-CO6kFAvc.js": "86c42249581a780497ca409883f755f05cfe3a05c13d99b9e2c48af3697b344d",
+          "assets/registry-B_JM7nKG.js": "89e11302cbda73506568bfefc142445300e4cf5cbafd3a7ca63f5a5c230b827d",
+          "assets/relationships-DusdaRUm.js": "6cc1f71f39a1d1ac8961188a97366d0cdee908bc9ee619c2c549d7c77e535dca",
+          "assets/renewal-radar--FMGULDH.js": "f51ded0018120f5045020c9b15e31481cd8639987fb8a11e9d807d0153669ddf",
+          "assets/reply-coach-ZrUlreNA.js": "27198e1cf34d87c52e6f2b8a403131126d221e53a62fc14b82dad5c6d77026a7",
+          "assets/research-yhCyxkPc.js": "b1f91140304a8e1ed010167d5e7e73a761e50561a00eada66a929def835e5412",
+          "assets/rolldown-runtime-D8jQpDG7.js": "a83931411698d3bbecc61f7d68f11b1653219778388942ccee581b460e5417ba",
+          "assets/runtime-C04zPdct.js": "8173b200544c882b6d1993debe701b940e6308ffcc7f596ad81dd7e6446a13d1",
+          "assets/scope-slicer-CzHaKB1R.js": "19ffab4bc3eaca3c01a95b68438a71d374bfb28baf771fcfaa8e92cadee96459",
+          "assets/services-BLcdYTay.js": "8ec81cdc472f65c141383d27d75fb89b0b6a2df69cece82f2677364dc14bf1b8",
+          "assets/shutdown-review-TonbQFOH.js": "21f2c56ad462a6ba07d0fe067d38d378af4945af769dfdaf5a0bb1527ad2ee15",
+          "assets/skill-matrix-BZ_LLHvf.js": "24d1c6ba592396af5a3568f81b1f32a503dc5b7de95ca4bf861e3f241c9d59f7",
+          "assets/slack-agent-catalog-BcnmgUoT.js": "cc0d0987093542de9e25f6a2a3a4f33c66a720dcc36206474ff17219c925fd98",
+          "assets/slack-agent-runs-CEshtIPW.js": "7fde70559ceb28f68cfcb2eb16ef4c76463b87511766ffd7ccebd94da4630ee0",
+          "assets/slack-commands-BN7vA2q2.js": "da50c10a1eefc70710161bd149b99801e1c6474a1bb1f7df3f8910776b69ca7e",
+          "assets/slack-reminder-cards-B_Wsftgc.js": "a97d740fb4a141e8ba7dba5412466b0364c41a681896175fb3abdcc448ab172f",
+          "assets/source-compare-CNnSOUpP.js": "0c736656d019646a1ca2399457b5b5d0832ddbcfe24f4727a63c1003b0f5847a",
+          "assets/task-breakdown-B3xSUNEM.js": "204819234c60b4cab85b9604fd27cbe640812ae32a3a3418aa75a7c824d73cf7",
+          "assets/teach-back-zgckcUNP.js": "9db08f4a60f59d761256eac489110da6b98cf48c86e6e7bf7eabbe1b9a71ef00",
+          "assets/time-B6gww-x7.js": "e7cae01d9b6f0b7eb2e5f5f5e8a27f5ff3483ca83a54458269e70c5f2308cd16",
+          "assets/time-CbkTEpI5.js": "1ae7d56c516b0ec970207cdadae06ea4481c53bf841742709de4a43ec1358668",
+          "assets/timeline-builder-DxLS90q7.js": "5e0a7bc4329d90f733017fb825f3ff5c032a07b454b2968fe79e3897960d1a7e",
+          "assets/travel-C7KIQesa.js": "eadcf5ab1c6310ac93e44713ed3cf08659e52d5986f3752283dac495204b577d",
+          "assets/types-la_KkjCS.js": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881",
+          "assets/workflows-83VJBSvF.js": "a2a6c02d612d9d5ad4c53a2480860a873d8c12c0a9e845944b96121472597feb",
+          "automation-audit.mjs": "ed097b8346cc5427f8d71dd4afcb43d60a64dd820c5d41984503866cdbbbc5a1",
+          "data-cleanroom.mjs": "973c9931fb1d5091ba5cd95bf8f0464ff1aadf31f3195f221695b1891cfe15b1",
+          "handoffs.mjs": "d82c1dd2d74a60a5119560b1fe106a71607f173c416facac4de34d40dcf7b65a",
+          "meeting-prep.mjs": "df33c0c35280966429aae8185f6bc797de13a8b9a5849ae7478793f8e2408b2a",
+          "morning-brief.mjs": "a1813299a4a94fc97e12eb413d96da1e23f4267278feb906e1d607c0e62baceb",
+          "parity.mjs": "df0621112c3320b5349645869f7dcf21b2727ba91c40451b9640517ea402cda8",
+          "policy.mjs": "4520468b38b0b6309d19d224d26a2db1ba9956fb2f750f6eb06063dd78391220",
+          "runtime.mjs": "1529ef130366029ab76f12d3c080e01268de92e27e433313c6ce2b2ea40a20c1",
+          "server.mjs": "a98bf00568a656902299beae4b17778a63b92ff25b9f8e79eb4bf9863e398eae",
+          "weekly-review.mjs": "829fb86a2b006db50f4ef56bda86978c48faf357687762735580a8022bf81c5b"
+        },
+        "baselineArtifacts": {
+          "engine.mjs": "49a8bd5728e09daa2b30b64e83ae4c2464b3e5c7f127c90adef90cac44ff29fb",
+          "runtime.mjs": "74da855c229a3ed3e1230313dfb4aff0bce8342287321336f7f592a979dfbeaf",
+          "server.mjs": "87a2deeffbc1b9acabea3d12ccc6501829f69d545371b8aab3dbc3ff0674a2ec",
+          "assets/access-controls-KLkJazM3.js": "682b0cfa2ef46456f1a3f829ef6204f541fff07bb7725dd446e59b2907fb1790",
+          "assets/achievement-portfolio-q2vHDX2l.js": "03920619944aa46ba441313a16a88e1af1c598cce50ee382d81cdf3848a2d29d",
+          "assets/admission-Dnk_jP-r.js": "d127e9977f929a61147a9628aaf26f0ab03a5a3d5033db8642d12059cf4d7efd",
+          "assets/ai-Dzrx06HF.js": "51294e8bfb63a5e8a4540f6cf0fe9aa4285330981ec50fb82618aabc16a9d7d5",
+          "assets/argument-map-BVS_g10I.js": "0d15de915498b4dc0f3e42b2f4a9d4eb5d7f91b171f45dab4354d08170bb4f24",
+          "assets/assumption-tests-BGPhe_dl.js": "cd45f4ae6d7fd77056d59b0f142b344c519abb7674e6fb71e365ba62292c5347",
+          "assets/audience-brief-a5VIbdjT.js": "87617ad04c4b1c59d6682eeec894da2b872e1f0f017a5f2cb8130cab6f56c69d",
+          "assets/automation-audit-ByXVPaWP.js": "daaaacc0249f76a117edbe0fbf5c24f83afdf9e570ba6627cb63d1d12eb1b0e0",
+          "assets/blocker-lab-E--zWTl_.js": "48515a908d40e8d2a0bce5cd992a68b5b7e1d85bd410bc97f074f77e498b42ea",
+          "assets/boundary-script-B8nCEoul.js": "bdf6dff4fa049e1dcf66052526e849bc4213a2eeb7c147bdd6369ee1bc007ccc",
+          "assets/bounded-context-vlt8twwz.js": "04f9e941b2a4f4d86de963f32e2f84107798240957ff0ecc4d63ea407d066f29",
+          "assets/bounded-state-CGis1pcF.js": "894117f3629e18b7fae88f7eca9e70a5152ffeed1146f51bbd34c428966bacb2",
+          "assets/budgets-C6BZWL_R.js": "cd9c4481f9b347fe2372d7c82a623ae31b189abe28c0281495fc97888d22e418",
+          "assets/calendar-C1ZKCVm-.js": "8dc6d4885e2aa55e66ee1a848b2ce104799c434fab28ed2cf0e79b46dbe20a57",
+          "assets/capacity-forecast-dP9ShnVx.js": "32b2a7121d304711cf96cd1c9bbac9a7c5b87cad4c693a974dc0d6d1d248352a",
+          "assets/change-digest-BcdVVuWz.js": "d138286f1758b29e9338d32e90896b5fa5b6e8ab929460d646a87a15e9b7d2c7",
+          "assets/change-impact-C6tnC7tv.js": "6252256316f5cfa94f934abdf0f4d860d51e681ada232638e18d7ffe8cc07608",
+          "assets/checklist-lint-CwS6wGTV.js": "8dcb475afdcf639b1309c2c4b2ff2deee39696fa82f4e864afb42d18ddf120fa",
+          "assets/civil-time-DNl11yv_.js": "ecc3be369d2bbc8d219a0fec3f712938ef7945b58118dbdc8212483dec2ac3b4",
+          "assets/claim-check-B1UvOhsO.js": "94510e7baac2f45ae43e310ac809ca303c07f14ccfc0f2badd7279ed49b01f41",
+          "assets/concept-links-kF2XZKZE.js": "98dc11661d0d69fbf56dcf008d921798d010fd0a7b521d69dc9210c294931cd9",
+          "assets/context-batch-dNde6c0h.js": "4672e8d09ef4cd00a79201f9480975468cc6f76ff001a7c27cd4ab6fa8c51cdc",
+          "assets/context-eHQkhxVl.js": "d2362c14fb7104a1041aec9904f54b77083108ca73b94189a4e28b72776a167a",
+          "assets/cooperative-yield-ET1W8b3E.js": "b8ec4e64899810152dbf0bdd5acc1c315d1ba685c631c1166aaf69060424104a",
+          "assets/curriculum-CxE5xo0s.js": "9a05fdcdc77eb4d3ad750ba6cd79a93ee92f95a9e50707505882d76f5e226293",
+          "assets/data-cleanroom-CzSwzVNv.js": "55da04c798caa49bea75d53afee322ebfd0825f8901f148030e106816ef396d0",
+          "assets/day-planner-B_Xo-2WL.js": "f404e2100ae3e407602f0fbaa4d838cb54e39cd596da91110ea3b0183d046391",
+          "assets/deadline-backplan-DLHb1hrX.js": "f6ecf12095c24de926df59ae98f6c9ab43ec82a69a0c6f51b8d55a291e0cb46c",
+          "assets/decision-coach-DRMnwgAJ.js": "0cf745aaeb2e65985c72dcc008a4a8ac32c9dab2cf82c4fd694d9fc67970150c",
+          "assets/decision-journal-D-9aNAZy.js": "f216006bc7387e2e6f60067a1d1fa101cbcaabeb658ec4a4f3e208c08c59b349",
+          "assets/delegation-brief-vOzqaxRF.js": "79cd1ec11c9e7195c2f8d087545a7fb103dac9e2b29e6a696f44a03fba9f80f3",
+          "assets/difficult-conversation-Byg8gfQk.js": "c96b5a12f3e2a8e7721e5ed4dfaff94b272558a8a17eb59beecd6feb4b5f6d9e",
+          "assets/document-critic-BoCeitLT.js": "703f5f679762be4d38645cd01b510c5dcd26b40b5244d48f4115d0c00b6362f1",
+          "assets/energy-patterns-C5AdxrsZ.js": "30b636ea456cbdb884292dd80654d4d360906dfd303669534a35925aa0296c12",
+          "assets/errand-batch-dvEGVy62.js": "f87c0362cf86594d4501e1d1c3588bb91bfc3e16a5dce917d0709bd8a6e64529",
+          "assets/estimate-calibration-D_nheJWP.js": "6efe28bc914c170f2847473b23c3214ada08f4fc17f19f0b0c70d2f2c7c2fc1f",
+          "assets/evidence-Je-zdOwl.js": "2c7a1b25568c4c4b33daf2a19a4a5eccaee91ed01d8595ea4696665f56f46cf9",
+          "assets/feedback-builder-Cfu5RjlU.js": "8f6bf6ceb432b65ca07529836cba0948f185fd1401ddc607bdf6d1ef17fc102a",
+          "assets/feedback-themes-DrVDp9l0.js": "be28ea3b2598240544ed6858f320d6cb37e36c204e1a1e9e13935d049c54ebd1",
+          "assets/goal-alignment-9Q1VJuQs.js": "e59864690776730fbe8831aa097c83014b11e8d47338b37e1d0bbe3949b13b79",
+          "assets/habit-experiments-lhtIldLq.js": "4c465e669654c42a47abc930fecacf28585239d3fc00aa3e7495fd65d6596375",
+          "assets/handoffs-gON8zcEE.js": "f7d3abd742c5c7c794cf2ff738a5132c738496d282dd55d2b0ab63cfe35b8e23",
+          "assets/home-maintenance-D4PzS-TB.js": "dbe9cc660de3f7a7d4ad8543ec3f5d0b6260b0756a3adbb4bd533e61b6009c53",
+          "assets/identity-BDRJFXS2.js": "3958f33f3846408b90df7eb4316bce519a0e08c3a7119d31adb4d7a91b5699e8",
+          "assets/inbox-JOievnUR.js": "737e74c18fe4302ed05e2e9d652920f9012093ffa24975f81995dfe3751db3e9",
+          "assets/interruption-audit-DSgrWmqy.js": "de7cfd3e2bf074ed40b50667f6da4ae478946532868cd43e7aec6e68200ea71f",
+          "assets/interview-practice-BhlIbPDL.js": "2ee66f439a5f7ff215bc403f0f8a80ededaa6db8fd2b0a586e07751d5df7bc71",
+          "assets/learning-ClLXIwO7.js": "b512a5e98f300c1932c13074965db098f25b6a1b9968599910a42bbbbc1448e9",
+          "assets/learning-transfer-CL1FkIP8.js": "ccaa8e4efabea19feabd5f8fabdab64f8ce8dd1a2754cf291f8f526be392a6bb",
+          "assets/meeting-load-BwLygXLk.js": "c9d99554d3bfa27198a939f90dfd078684680d0c486b22cdd4b3f314e265a41d",
+          "assets/meeting-prep-bLxcoTEy.js": "e21daf73f8dbad8e382f43fb3106216d12cc4433f4b0532c1d796c5fc72f377d",
+          "assets/memory-review-BQqWeVD_.js": "046c93f227e0515410a7bed6b8b9754901207dd5327197da5d59f65c1883a57e",
+          "assets/mistake-patterns-CI46pEwO.js": "8a6f66966e782346d87bf939f802025adbee12a6552c5686366dba6b55f0edb7",
+          "assets/morning-brief-BSfOD_yL.js": "cccb04e3992b55fd78a486245447285e517261df1157d4b2d0c8b98fc75ad620",
+          "assets/number-audit-BLib81YS.js": "897cabf94e65565f942a95ab6c3f74b1f149a87854162a8c830bd153ba19c861",
+          "assets/pantry-plan-NgZ4BF1Q.js": "b1c75c10911e25213eb85f8ac5559eaa3536d001c1333875bb236918a55b65b9",
+          "assets/playbooks-C3axRXeG.js": "91986764cd27ce6294e420edacea7fafc51893b0d4d484ece76b9454f92b2894",
+          "assets/practice-lab-DfnWGk1y.js": "8522361b450c90a51ece87f145b74ce3698b4aef0fd3e5d8aa3bc8556088acb3",
+          "assets/preferences-Cl5ARcRk.js": "e35b94ccc8b7d7d2fbb03c8dca4e76cb697821de72a6e67c3c7930a369412aed",
+          "assets/premortem-DJwqMEHM.js": "fb9ced911b7ae7cdf199eb57491dfeefe12251d2d018725a3e10daeab93253af",
+          "assets/process-friction-D1qTHRXj.js": "b461b59a2201ec695dc11cf8a2f340e0606ff15f937f62616fc3c75294e178a8",
+          "assets/project-briefs-DOoRzLci.js": "1e4eaf10c202f0d319fa0a76bc3ad70fc9676527795f393485d523d876c8745a",
+          "assets/purchase-compare-DUr-pliE.js": "0df03684ace5629ed44f6c4adbe7c6843ab9345b7c4fc13852bb9f447b3cba10",
+          "assets/question-triage-BanYEv92.js": "d2274e31a90eed1743daec50757969f0b2a6d0d02da57629cccee92f169acd7b",
+          "assets/read-later-DNMEcIsk.js": "048a6a01a133593d4b51a363868cf7075543ad83e61360a6309b8bc12375a0f0",
+          "assets/reading-path-CZoDOr93.js": "9468dd79db315a9c1789e74a9c91c9c4972ff6ca19b572b3c6917120c91951f5",
+          "assets/recall-5ad9EPXE.js": "63123d2bfc19461824c6f2173f3eb1870c4b684dc6da22f5a338185912a176f6",
+          "assets/redaction-desk-COq5p0Oe.js": "a96e7e3fbe6dbf656830e386ad7d6c5ad053bb094339538a91c9a49b59cfbdc3",
+          "assets/redis-CmbC4X8-.js": "e55504efe76c0ccfb3433d295e3797c42e5f70d6b75d8dc787fc23b0b9a03ee0",
+          "assets/relationships-DusdaRUm.js": "6cc1f71f39a1d1ac8961188a97366d0cdee908bc9ee619c2c549d7c77e535dca",
+          "assets/renewal-radar-o7eFPUGD.js": "f6b9e68733b0795ba80a1d4b223c54ad85e6cd40cd60de494dd5d591160cf0aa",
+          "assets/reply-coach-ZrUlreNA.js": "27198e1cf34d87c52e6f2b8a403131126d221e53a62fc14b82dad5c6d77026a7",
+          "assets/research-yhCyxkPc.js": "b1f91140304a8e1ed010167d5e7e73a761e50561a00eada66a929def835e5412",
+          "assets/rolldown-runtime-D8jQpDG7.js": "a83931411698d3bbecc61f7d68f11b1653219778388942ccee581b460e5417ba",
+          "assets/scope-slicer-CfvF67xy.js": "afc2ba9661381d993dd797d251baa286bbf46e6728a893fc165951f26d8c23a6",
+          "assets/services-D_PMPZ2l.js": "0121757492851b4df2b371bdaa88dd06a9536bf3ef693853294064d62d5eecf8",
+          "assets/shutdown-review-DZszUOrO.js": "0ff8ab814c7e276187c816f6c09042c675c55ee3bd2fc7d763753e815db01b8e",
+          "assets/skill-matrix-m_Z8UT96.js": "398d5771960021e6628e7206096cf1b05118ddd0dd209d92b188ee397ea55b0f",
+          "assets/slack-agent-runs-CEshtIPW.js": "7fde70559ceb28f68cfcb2eb16ef4c76463b87511766ffd7ccebd94da4630ee0",
+          "assets/slack-reminder-cards-DQcZCrqv.js": "f21c2e35ee9ba7c444d9d44f0828d16f1dc38c72063bd0baf682699a030c52c1",
+          "assets/source-compare-B8Msr8Gm.js": "7cd99a18868b2fb6da2a62e507b06481c58bc33d9833617c6aa940545c5613d6",
+          "assets/task-breakdown-D_mxC7nG.js": "c2aa50158f8b41ac5797eb2913f852f06e18dab2caa1a6070746b536711bc8d3",
+          "assets/teach-back-DlNUO03w.js": "ccfcf27f57451f01bb83699d388d691ddbbfc70b313542dbefd48503adc4729f",
+          "assets/time-B6gww-x7.js": "e7cae01d9b6f0b7eb2e5f5f5e8a27f5ff3483ca83a54458269e70c5f2308cd16",
+          "assets/time-CbkTEpI5.js": "1ae7d56c516b0ec970207cdadae06ea4481c53bf841742709de4a43ec1358668",
+          "assets/timeline-builder-CJBLbLm4.js": "72c36cd387ac24f5862efdd795437edafc604341956f64e4c5959a6d41c30f70",
+          "assets/travel-C7KIQesa.js": "eadcf5ab1c6310ac93e44713ed3cf08659e52d5986f3752283dac495204b577d",
+          "assets/weekly-review-D7fLB1Ee.js": "8c52237a9afebaea780bd27af91bfa1c518ed697d81f46f94fba47d3cc672cf6",
+          "assets/workflows-83VJBSvF.js": "a2a6c02d612d9d5ad4c53a2480860a873d8c12c0a9e845944b96121472597feb"
+        },
+        "networkBlocked": 0,
+        "note": "Build process CPU/RSS are excluded from application worker metrics.",
+        "exitCode": 0,
+        "signal": null,
+        "timedOut": false,
+        "stdout": "",
+        "stderr": "",
+        "pid": 965659
+      }
+    },
+    "helpers": {
+      "before": {
+        "display": {
+          "path": "/tmp/joshbot-helper-optimization-20261023/before-helpers/display.mjs",
+          "sourceSha256": "d7d9d9866c3abd9449e31ad037b2599b38132d3e5043399b7f11b6ae90bb0d2a",
+          "outputSha256": "6d416438071ba0d3a9556ae7bbc15862552162204ae76541c0f4ec50417e639e"
+        },
+        "budgets": {
+          "path": "/tmp/joshbot-helper-optimization-20261023/before-helpers/budgets.mjs",
+          "sourceSha256": "002840187cb16b6cafc022f097c0bf45f02ffe03e759a9701c61d0366f610226",
+          "outputSha256": "942260f740623ba6410da8b1c2c913411422ca20e830da9cf04ca734bbf2415a"
+        }
+      },
+      "after": {
+        "display": {
+          "path": "/tmp/joshbot-helper-optimization-20261023/after-helpers/display.mjs",
+          "sourceSha256": "cdb7cd5e8be726b258b0c7dcb13a052fa5bdfe1d5eeb427da3166f11322328cc",
+          "outputSha256": "02db87fdfb34d6d3191e8aeb9623fa3804c0ea1d762440abc9064665b7b2c834"
+        },
+        "budgets": {
+          "path": "/tmp/joshbot-helper-optimization-20261023/after-helpers/budgets.mjs",
+          "sourceSha256": "4db7291e01a2ea96fc17305bcde57a57978adce15fd1d45ca0c3cbb7e4bb4379",
+          "outputSha256": "7bb8c7d6822edf4fd27d009febbf519e9563ab12ad26d8cdb9ed6cea4291abd5"
+        }
+      }
+    },
+    "harness": {
+      "path": "/tmp/joshbot-release-5A6pQX/scripts/research-harness.mjs",
+      "sha256": "daf50c5e4b43fefc8a46cfc5f559e52c8def39b226ab08d30e5ca487011f4d74"
+    },
+    "scriptSha256": "42b2638b1f12b22ad42690be791ed555d420768e3b775dfa4fb0b95af7f87df5",
+    "cpu": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+    "changed": [
+      "lib/agent-features/budgets.ts",
+      "lib/agent-features/feature-kit/command-and-display.ts"
+    ],
+    "plan": {
+      "modes": [
+        "pagination",
+        "csv",
+        "context-ordinary",
+        "context-escaped"
+      ],
+      "samples": 3,
+      "orders": [
+        [
+          "before",
+          "after"
+        ],
+        [
+          "after",
+          "before"
+        ],
+        [
+          "before",
+          "after"
+        ]
+      ],
+      "warmups": 0,
+      "retries": 0,
+      "profilers": false,
+      "timeoutMs": 30000,
+      "work": {
+        "pagination": "40 calls, alternating plain/mrkdwn, 25,000-unit mixed prose + atomic URL and ID",
+        "csv": "unchanged original csvWorkload, 26 commands and all 19 pages",
+        "ordinary": "12 complete measurements of 600 ordinary source records",
+        "escaped": "12 complete measurements of 600 escape-dense source records"
+      },
+      "note": "Shared host; initial GC after import/fixture setup, no warmup. Active wall/CPU and whole-process peak RSS are distinct. Build outside worker timing."
+    }
+  },
+  "ownedFileGitObjects": {
+    "before": {
+      "lib/agent-features/feature-kit/command-and-display.ts": "cbb1232fd12109d1c20818f83d5a34889d905d4c",
+      "tests/agent-feature-kit.test.ts": "d51abadba23a0ed0b5c24a45232b71512e198227",
+      "lib/agent-features/budgets.ts": "e86f35731b41b2753156c8306c6426287a9e4ed1",
+      "tests/agent-context-measurement.test.ts": null
+    },
+    "after": {
+      "lib/agent-features/feature-kit/command-and-display.ts": "00a4c82ce8638249b78612cecb6b45ed318e4ca9",
+      "tests/agent-feature-kit.test.ts": "6ecf1645d0fa1a47ba4b17ea3d467579001fb771",
+      "lib/agent-features/budgets.ts": "879d7674a8551ed5090d006eb51d57c2dcf56c5c",
+      "tests/agent-context-measurement.test.ts": "2adddc936da04d1d93cd21b95312ba49d200c2fe"
+    }
+  },
+  "retainedArtifacts": {
+    "script": {
+      "path": "/tmp/joshbot-helper-optimization-20261023/compare.mjs",
+      "sha256": "42b2638b1f12b22ad42690be791ed555d420768e3b775dfa4fb0b95af7f87df5"
+    },
+    "manifest": {
+      "path": "/tmp/joshbot-helper-optimization-20261023/comparison-manifest.json",
+      "sha256": "b0d8575cf10caf974712bc4875662ac2ef1404795c1e0709cd62ad0f6a51472d"
+    },
+    "rawJsonl": {
+      "path": "/tmp/joshbot-helper-optimization-20261023/comparison-raw.jsonl",
+      "sha256": "9717232bfa5ac3bf00571681e8c891f40fd3049d0528d126e39506130623dc96"
+    },
+    "report": {
+      "path": "/tmp/joshbot-helper-optimization-20261023/comparison-report.json",
+      "sha256": "926535c29db1f931cd44113e8441d138e612c4f7a988100d7333d98380afdf4e"
+    },
+    "sampleFiles": [
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/pagination-1-before.json",
+        "sha256": "28f4d4dc9281dee24347229a5e6a1527f9d5f4c7dbe1fc9ebdd02425cb25750d"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/pagination-1-after.json",
+        "sha256": "732b849218618bc333b9c3b26e2b3242b6ae04377df70d638486b6add0fafe40"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/pagination-2-after.json",
+        "sha256": "34461be30089b4a8e3f545ec6fc8892c95fbac351137f43ee70d4ba7259e9ebd"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/pagination-2-before.json",
+        "sha256": "87de5545910ebac74cb0f92fd1057d85ea68e878919a59878ec07b681e8f4b57"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/pagination-3-before.json",
+        "sha256": "908d157efa2074c91829f581312c007eb3d7c23c2398b82be3c1f74587900de5"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/pagination-3-after.json",
+        "sha256": "c912f8e7d14a113af00aaa053de413cc1e9d35072d6f0ca8e8361b9b3d8a6d41"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/csv-1-before.json",
+        "sha256": "e545ef68d5de4b64c83fa72640db8c7f8cb39c4775b08aefd5374bc7ab824076"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/csv-1-after.json",
+        "sha256": "33352eaa9de605a370fe484c375dceef65778732d00e6ce629214afc2fccf2cd"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/csv-2-after.json",
+        "sha256": "2fbe5882b739c842928670e70e2aef1b6f7b8c50eb8d83efcd905dd34593c031"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/csv-2-before.json",
+        "sha256": "468a4bbac39ee8a88570ed33c117c01d62e286d414328fece5719748ababf539"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/csv-3-before.json",
+        "sha256": "a69f2367c030b5fc93dcc85a958140adae265c15839db523a7804585341f23a2"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/csv-3-after.json",
+        "sha256": "1ef50851ae5c5517ce44559e25039fe6a1954fb672924f72ad6844842326e66f"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-ordinary-1-before.json",
+        "sha256": "73f73a8a1ebc4024096c98b66f0a6159fc202feb60a4fdec07187aeae76c6c6e"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-ordinary-1-after.json",
+        "sha256": "fa5955abd6b4abe7cbfe2f9276f07ed50a38e3981ceeba5a195173e4b4e914db"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-ordinary-2-after.json",
+        "sha256": "487b3ac36fcec91e92952e5d928c27c0ed53c6ce6beb4ccb1af33071b303717c"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-ordinary-2-before.json",
+        "sha256": "1b8d8863af90825a32c43797c3cd3fe12d5b5b76f27ea5b828b74548534bb5b4"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-ordinary-3-before.json",
+        "sha256": "6788bb594172438a57e5fdc1d039769d6eb9bdb98f1a29a835f683b5d0108f45"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-ordinary-3-after.json",
+        "sha256": "b006254e2103a2f08e6e6e5a5a604cd531c9555ea399409c7ba9316322d8f27c"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-escaped-1-before.json",
+        "sha256": "32896ab0642dbb4943299047ee535ec40306a1593e15e8dd128c059da67a7402"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-escaped-1-after.json",
+        "sha256": "c8ae99a317687cf846f89d618271295ee3bd65079dd1f4c3fff66f235756fb75"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-escaped-2-after.json",
+        "sha256": "55cda1e3769510ac9d0c231eecabdff391aaf38b798fa5265efa15f72788e649"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-escaped-2-before.json",
+        "sha256": "c76ed8c28948d1cc1348738a01c1490072cf9a69298e37a8565b669f1cb6d1fb"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-escaped-3-before.json",
+        "sha256": "3cd2c8feb0631248e869892aa6c6563047696dea97fc0df1830aec08e0d680f3"
+      },
+      {
+        "path": "/tmp/joshbot-helper-optimization-20261023/context-escaped-3-after.json",
+        "sha256": "b5733dea5086af4d9bbb54c7826a094f9b6db52180221ae19567d7817d5fdc29"
+      }
+    ]
+  },
+  "measurementSemantics": {
+    "warmupCalls": 0,
+    "discardedSamples": 0,
+    "retries": 0,
+    "profilers": false,
+    "explicitGC": "One globalThis.gc() in each fresh worker after imports and fixture/oracle setup, before timing. No manual GC inside timed work. Natural GC included. No new heap-allocation measurements.",
+    "wallAndCPU": "Outer sample fields time run() after setup. CPU is process user+system; helper loops include assertions. CSV outer includes original monitor setup/teardown; outcome.active excludes original two 20ms waits. CSV active CPU includes request assertions; whole-worker startup/build CPU is not included.",
+    "peakRSS": "Linux VmHWM for the whole worker through the end of measured work; includes imports, setup, oracle strings and GC. No subtraction. It is not active-only/retained heap or allocated bytes.",
+    "host": "Linux x64 shared AMD RYZEN AI MAX+395; per-sample UTC/load/free memory retained. Root deferred heavy tests; UX reviewer reported idle; context owner may have small tests. Other host activity not controlled.",
+    "build": "Production Vite build before timing. Before runtime uses recovered a280 build; after runtime build records full source and module manifest. Pure helpers use same Node stripTypeScriptTypes transform for before and after.",
+    "ordering": "Within each workload pair1 before/after, pair2 after/before, pair3 before/after; workloads pagination, csv, context-ordinary, context-escaped."
+  },
+  "correctness": {
+    "paginationAndCSV": {
+      "passed": 31,
+      "command": "node --max-old-space-size=1024 --import tsx --test --test-concurrency=1 tests/agent-feature-kit.test.ts tests/agent-data-cleanroom.test.ts"
+    },
+    "contextMeasurement": {
+      "passed": 4,
+      "command": "node --max-old-space-size=1024 --import tsx --test --test-concurrency=1 tests/agent-context-measurement.test.ts"
+    },
+    "existingRuntimePerformance": {
+      "passed": 56,
+      "command": "node --max-old-space-size=1024 --import tsx --test --test-concurrency=1 tests/agent-performance.test.ts tests/agent-runtime.test.ts"
+    },
+    "types": {
+      "passed": true,
+      "command": "npm run typecheck",
+      "scope": "This child checkout; does not claim integrated-root typecheck results"
+    },
+    "executionNote": "Executed equivalent commands on /tmp source copy with read-only shared node_modules and absolute tsx/tsc paths. Portable forms assume existing checkout dependencies and Node24.22.1."
+  },
+  "rawSampleEncoding": "Each following JSON object copied verbatim from its retained per-worker .json file, in actual execution order.",
+  "rawSamples": [
+{
+  "variant": "before",
+  "workload": "pagination",
+  "sample": 1,
+  "pid": 966370,
+  "status": "complete",
+  "wallMs": 257.820737,
+  "cpuMs": 428.843,
+  "rssPeakMiB": 98.20703125,
+  "memoryStart": {
+    "rss": 50831360,
+    "heapTotal": 11325440,
+    "heapUsed": 6229360,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 98582528,
+    "heapTotal": 49610752,
+    "heapUsed": 23196048,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:00.758Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63545.3828125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:01.017Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63485.296875
+  },
+  "outcome": {
+    "calls": 40,
+    "pages": 380,
+    "inputUnits": 25085,
+    "inputBytes": 30085,
+    "outputSha256": "bd94e88acfa2246960474c590559dd7c2f6745ab2738e89c42f69ab1d4f0fec4"
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "pagination",
+  "sample": 1,
+  "pid": 966401,
+  "status": "complete",
+  "wallMs": 46.985752999999995,
+  "cpuMs": 83.351,
+  "rssPeakMiB": 60.3984375,
+  "memoryStart": {
+    "rss": 51572736,
+    "heapTotal": 11325440,
+    "heapUsed": 6231824,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 60571648,
+    "heapTotal": 12091392,
+    "heapUsed": 8897696,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:01.096Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63516.31640625
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:01.144Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63501.30859375
+  },
+  "outcome": {
+    "calls": 40,
+    "pages": 380,
+    "inputUnits": 25085,
+    "inputBytes": 30085,
+    "outputSha256": "bd94e88acfa2246960474c590559dd7c2f6745ab2738e89c42f69ab1d4f0fec4"
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "pagination",
+  "sample": 2,
+  "pid": 966418,
+  "status": "complete",
+  "wallMs": 42.668676000000005,
+  "cpuMs": 83.69,
+  "rssPeakMiB": 60.26953125,
+  "memoryStart": {
+    "rss": 49852416,
+    "heapTotal": 11587584,
+    "heapUsed": 6232272,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 59342848,
+    "heapTotal": 12353536,
+    "heapUsed": 8959760,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:01.212Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63519.57421875
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:01.255Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63520.65625
+  },
+  "outcome": {
+    "calls": 40,
+    "pages": 380,
+    "inputUnits": 25085,
+    "inputBytes": 30085,
+    "outputSha256": "bd94e88acfa2246960474c590559dd7c2f6745ab2738e89c42f69ab1d4f0fec4"
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "pagination",
+  "sample": 2,
+  "pid": 966436,
+  "status": "complete",
+  "wallMs": 369.577648,
+  "cpuMs": 567.296,
+  "rssPeakMiB": 101.05859375,
+  "memoryStart": {
+    "rss": 49848320,
+    "heapTotal": 11325440,
+    "heapUsed": 6228848,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 101449728,
+    "heapTotal": 46309376,
+    "heapUsed": 19510248,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:01.332Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63478.65234375
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:01.702Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63393.7578125
+  },
+  "outcome": {
+    "calls": 40,
+    "pages": 380,
+    "inputUnits": 25085,
+    "inputBytes": 30085,
+    "outputSha256": "bd94e88acfa2246960474c590559dd7c2f6745ab2738e89c42f69ab1d4f0fec4"
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "pagination",
+  "sample": 3,
+  "pid": 966508,
+  "status": "complete",
+  "wallMs": 350.381534,
+  "cpuMs": 567.695,
+  "rssPeakMiB": 137.0390625,
+  "memoryStart": {
+    "rss": 49197056,
+    "heapTotal": 11587584,
+    "heapUsed": 6227816,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 138784768,
+    "heapTotal": 88948736,
+    "heapUsed": 54214176,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:01.798Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63426.4609375
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:02.149Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63409.32421875
+  },
+  "outcome": {
+    "calls": 40,
+    "pages": 380,
+    "inputUnits": 25085,
+    "inputBytes": 30085,
+    "outputSha256": "bd94e88acfa2246960474c590559dd7c2f6745ab2738e89c42f69ab1d4f0fec4"
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "pagination",
+  "sample": 3,
+  "pid": 966566,
+  "status": "complete",
+  "wallMs": 42.99511700000001,
+  "cpuMs": 90.442,
+  "rssPeakMiB": 62.0859375,
+  "memoryStart": {
+    "rss": 50081792,
+    "heapTotal": 11325440,
+    "heapUsed": 6232304,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 61345792,
+    "heapTotal": 12353536,
+    "heapUsed": 8937072,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:02.242Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63476.41015625
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:02.286Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63475.09765625
+  },
+  "outcome": {
+    "calls": 40,
+    "pages": 380,
+    "inputUnits": 25085,
+    "inputBytes": 30085,
+    "outputSha256": "bd94e88acfa2246960474c590559dd7c2f6745ab2738e89c42f69ab1d4f0fec4"
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "csv",
+  "sample": 1,
+  "pid": 966604,
+  "status": "complete",
+  "wallMs": 289.583024,
+  "cpuMs": 402.077,
+  "rssPeakMiB": 105.78125,
+  "memoryStart": {
+    "rss": 50380800,
+    "heapTotal": 12496896,
+    "heapUsed": 7137568,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 104288256,
+    "heapTotal": 49225728,
+    "heapUsed": 16331072,
+    "external": 2889524,
+    "arrayBuffers": 209207
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:02.403Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63416.3984375
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:02.693Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63327.25390625
+  },
+  "outcome": {
+    "active": {
+      "wallMs": 246.843219,
+      "cpuMs": 399.524,
+      "eventLoopMaxMs": 32.866303,
+      "rssAtStartMiB": 48.046875,
+      "peakRssMiB": 105.77734375,
+      "note": "Active requests after imports/raw fixture setup; no peak subtraction. VmHWM still includes all earlier allocations."
+    },
+    "offered": 26,
+    "completed": 26,
+    "rows": 40,
+    "columns": 8,
+    "cells": 320,
+    "duplicateGroups": 10,
+    "pages": 19,
+    "fullRetrieval": true,
+    "sourceBytes": 663,
+    "stateBytes": 8893,
+    "exportBytes": 8917,
+    "p95Ms": 18.565942000000007,
+    "backend": {
+      "reads": 29,
+      "writes": 4
+    },
+    "generations": 0,
+    "searches": 0,
+    "contextReads": 0,
+    "concurrency": 1,
+    "note": "Actual registered deterministic CSV lifecycle and full retrieval at row/column maxima; dynamic byte reserve binds separately. Not a recall comparison."
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "csv",
+  "sample": 1,
+  "pid": 966673,
+  "status": "complete",
+  "wallMs": 137.093321,
+  "cpuMs": 156.275,
+  "rssPeakMiB": 66.32421875,
+  "memoryStart": {
+    "rss": 51392512,
+    "heapTotal": 12496896,
+    "heapUsed": 7137520,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 64995328,
+    "heapTotal": 18001920,
+    "heapUsed": 9743064,
+    "external": 2889524,
+    "arrayBuffers": 209207
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:02.791Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63399.81640625
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:02.929Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63353.7109375
+  },
+  "outcome": {
+    "active": {
+      "wallMs": 94.86785199999998,
+      "cpuMs": 154.204,
+      "eventLoopMaxMs": 21.839871,
+      "rssAtStartMiB": 49.01171875,
+      "peakRssMiB": 66.32421875,
+      "note": "Active requests after imports/raw fixture setup; no peak subtraction. VmHWM still includes all earlier allocations."
+    },
+    "offered": 26,
+    "completed": 26,
+    "rows": 40,
+    "columns": 8,
+    "cells": 320,
+    "duplicateGroups": 10,
+    "pages": 19,
+    "fullRetrieval": true,
+    "sourceBytes": 663,
+    "stateBytes": 8893,
+    "exportBytes": 8917,
+    "p95Ms": 7.117867000000018,
+    "backend": {
+      "reads": 29,
+      "writes": 4
+    },
+    "generations": 0,
+    "searches": 0,
+    "contextReads": 0,
+    "concurrency": 1,
+    "note": "Actual registered deterministic CSV lifecycle and full retrieval at row/column maxima; dynamic byte reserve binds separately. Not a recall comparison."
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "csv",
+  "sample": 2,
+  "pid": 966698,
+  "status": "complete",
+  "wallMs": 132.62318799999997,
+  "cpuMs": 164.426,
+  "rssPeakMiB": 67.8203125,
+  "memoryStart": {
+    "rss": 51916800,
+    "heapTotal": 12496896,
+    "heapUsed": 7138024,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 66822144,
+    "heapTotal": 18526208,
+    "heapUsed": 9747096,
+    "external": 2889524,
+    "arrayBuffers": 209207
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:03.008Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63337.70703125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:03.141Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63308.03515625
+  },
+  "outcome": {
+    "active": {
+      "wallMs": 89.31844,
+      "cpuMs": 147.417,
+      "eventLoopMaxMs": 15.736831,
+      "rssAtStartMiB": 49.51171875,
+      "peakRssMiB": 67.8203125,
+      "note": "Active requests after imports/raw fixture setup; no peak subtraction. VmHWM still includes all earlier allocations."
+    },
+    "offered": 26,
+    "completed": 26,
+    "rows": 40,
+    "columns": 8,
+    "cells": 320,
+    "duplicateGroups": 10,
+    "pages": 19,
+    "fullRetrieval": true,
+    "sourceBytes": 663,
+    "stateBytes": 8893,
+    "exportBytes": 8917,
+    "p95Ms": 12.690899000000002,
+    "backend": {
+      "reads": 29,
+      "writes": 4
+    },
+    "generations": 0,
+    "searches": 0,
+    "contextReads": 0,
+    "concurrency": 1,
+    "note": "Actual registered deterministic CSV lifecycle and full retrieval at row/column maxima; dynamic byte reserve binds separately. Not a recall comparison."
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "csv",
+  "sample": 2,
+  "pid": 966722,
+  "status": "complete",
+  "wallMs": 256.123985,
+  "cpuMs": 329.811,
+  "rssPeakMiB": 96.953125,
+  "memoryStart": {
+    "rss": 52797440,
+    "heapTotal": 12496896,
+    "heapUsed": 7137064,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 97161216,
+    "heapTotal": 46051328,
+    "heapUsed": 10298296,
+    "external": 2889524,
+    "arrayBuffers": 209207
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:03.233Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63258.23046875
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:03.490Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63229.86328125
+  },
+  "outcome": {
+    "active": {
+      "wallMs": 213.949725,
+      "cpuMs": 322.044,
+      "eventLoopMaxMs": 21.479423,
+      "rssAtStartMiB": 50.3515625,
+      "peakRssMiB": 96.94921875,
+      "note": "Active requests after imports/raw fixture setup; no peak subtraction. VmHWM still includes all earlier allocations."
+    },
+    "offered": 26,
+    "completed": 26,
+    "rows": 40,
+    "columns": 8,
+    "cells": 320,
+    "duplicateGroups": 10,
+    "pages": 19,
+    "fullRetrieval": true,
+    "sourceBytes": 663,
+    "stateBytes": 8893,
+    "exportBytes": 8917,
+    "p95Ms": 16.052122999999995,
+    "backend": {
+      "reads": 29,
+      "writes": 4
+    },
+    "generations": 0,
+    "searches": 0,
+    "contextReads": 0,
+    "concurrency": 1,
+    "note": "Actual registered deterministic CSV lifecycle and full retrieval at row/column maxima; dynamic byte reserve binds separately. Not a recall comparison."
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "csv",
+  "sample": 3,
+  "pid": 966763,
+  "status": "complete",
+  "wallMs": 229.644468,
+  "cpuMs": 277.505,
+  "rssPeakMiB": 102.86328125,
+  "memoryStart": {
+    "rss": 52019200,
+    "heapTotal": 12496896,
+    "heapUsed": 7136600,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 102801408,
+    "heapTotal": 50982912,
+    "heapUsed": 18035720,
+    "external": 2889524,
+    "arrayBuffers": 209207
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:03.599Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63210.76171875
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:03.829Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63135.9609375
+  },
+  "outcome": {
+    "active": {
+      "wallMs": 188.22356599999998,
+      "cpuMs": 275.252,
+      "eventLoopMaxMs": 30.425087,
+      "rssAtStartMiB": 49.609375,
+      "peakRssMiB": 102.859375,
+      "note": "Active requests after imports/raw fixture setup; no peak subtraction. VmHWM still includes all earlier allocations."
+    },
+    "offered": 26,
+    "completed": 26,
+    "rows": 40,
+    "columns": 8,
+    "cells": 320,
+    "duplicateGroups": 10,
+    "pages": 19,
+    "fullRetrieval": true,
+    "sourceBytes": 663,
+    "stateBytes": 8893,
+    "exportBytes": 8917,
+    "p95Ms": 14.281963999999988,
+    "backend": {
+      "reads": 29,
+      "writes": 4
+    },
+    "generations": 0,
+    "searches": 0,
+    "contextReads": 0,
+    "concurrency": 1,
+    "note": "Actual registered deterministic CSV lifecycle and full retrieval at row/column maxima; dynamic byte reserve binds separately. Not a recall comparison."
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "csv",
+  "sample": 3,
+  "pid": 966787,
+  "status": "complete",
+  "wallMs": 130.70367199999998,
+  "cpuMs": 151.473,
+  "rssPeakMiB": 66.26171875,
+  "memoryStart": {
+    "rss": 50929664,
+    "heapTotal": 12496896,
+    "heapUsed": 7137432,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 64782336,
+    "heapTotal": 18001920,
+    "heapUsed": 9706472,
+    "external": 2889524,
+    "arrayBuffers": 209207
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:03.926Z",
+    "load": [
+      31.62,
+      31.49,
+      19.13
+    ],
+    "freeMiB": 63176.06640625
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.057Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63147.5234375
+  },
+  "outcome": {
+    "active": {
+      "wallMs": 90.401518,
+      "cpuMs": 149.334,
+      "eventLoopMaxMs": 30.719999,
+      "rssAtStartMiB": 48.5703125,
+      "peakRssMiB": 66.26171875,
+      "note": "Active requests after imports/raw fixture setup; no peak subtraction. VmHWM still includes all earlier allocations."
+    },
+    "offered": 26,
+    "completed": 26,
+    "rows": 40,
+    "columns": 8,
+    "cells": 320,
+    "duplicateGroups": 10,
+    "pages": 19,
+    "fullRetrieval": true,
+    "sourceBytes": 663,
+    "stateBytes": 8893,
+    "exportBytes": 8917,
+    "p95Ms": 8.016711999999998,
+    "backend": {
+      "reads": 29,
+      "writes": 4
+    },
+    "generations": 0,
+    "searches": 0,
+    "contextReads": 0,
+    "concurrency": 1,
+    "note": "Actual registered deterministic CSV lifecycle and full retrieval at row/column maxima; dynamic byte reserve binds separately. Not a recall comparison."
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "context-ordinary",
+  "sample": 1,
+  "pid": 966812,
+  "status": "complete",
+  "wallMs": 37.722086999999995,
+  "cpuMs": 52.476,
+  "rssPeakMiB": 65.625,
+  "memoryStart": {
+    "rss": 52899840,
+    "heapTotal": 18075648,
+    "heapUsed": 8176864,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 65351680,
+    "heapTotal": 18075648,
+    "heapUsed": 8365368,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.129Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63120.078125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.167Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63103.8828125
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 980671,
+    "totalMeasuredBytes": 11768052
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "context-ordinary",
+  "sample": 1,
+  "pid": 966827,
+  "status": "complete",
+  "wallMs": 32.879655,
+  "cpuMs": 47.525,
+  "rssPeakMiB": 62,
+  "memoryStart": {
+    "rss": 53391360,
+    "heapTotal": 17551360,
+    "heapUsed": 8175712,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 61632512,
+    "heapTotal": 18075648,
+    "heapUsed": 8772352,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.250Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63064.81640625
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.284Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63060.37890625
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 980671,
+    "totalMeasuredBytes": 11768052
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "context-ordinary",
+  "sample": 2,
+  "pid": 966856,
+  "status": "complete",
+  "wallMs": 39.19101500000001,
+  "cpuMs": 54.201,
+  "rssPeakMiB": 61.68359375,
+  "memoryStart": {
+    "rss": 51732480,
+    "heapTotal": 18075648,
+    "heapUsed": 8175704,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 60506112,
+    "heapTotal": 18337792,
+    "heapUsed": 8707120,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.385Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63039.66015625
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.427Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63030.33203125
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 980671,
+    "totalMeasuredBytes": 11768052
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "context-ordinary",
+  "sample": 2,
+  "pid": 966876,
+  "status": "complete",
+  "wallMs": 66.675794,
+  "cpuMs": 83.425,
+  "rssPeakMiB": 65.953125,
+  "memoryStart": {
+    "rss": 53547008,
+    "heapTotal": 17813504,
+    "heapUsed": 8175712,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 65994752,
+    "heapTotal": 18337792,
+    "heapUsed": 12436576,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.531Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63030.26171875
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.598Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63053.7734375
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 980671,
+    "totalMeasuredBytes": 11768052
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "context-ordinary",
+  "sample": 3,
+  "pid": 966884,
+  "status": "complete",
+  "wallMs": 46.718051,
+  "cpuMs": 64.763,
+  "rssPeakMiB": 65.8828125,
+  "memoryStart": {
+    "rss": 52117504,
+    "heapTotal": 17551360,
+    "heapUsed": 8173952,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 64778240,
+    "heapTotal": 18075648,
+    "heapUsed": 8358800,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.690Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63059.23828125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.737Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63052.109375
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 980671,
+    "totalMeasuredBytes": 11768052
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "context-ordinary",
+  "sample": 3,
+  "pid": 966892,
+  "status": "complete",
+  "wallMs": 30.751015999999993,
+  "cpuMs": 41.454,
+  "rssPeakMiB": 61.859375,
+  "memoryStart": {
+    "rss": 54493184,
+    "heapTotal": 18075648,
+    "heapUsed": 8178008,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 62435328,
+    "heapTotal": 18337792,
+    "heapUsed": 8773720,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.804Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63037.703125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:04.836Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63035.5703125
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 980671,
+    "totalMeasuredBytes": 11768052
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "context-escaped",
+  "sample": 1,
+  "pid": 966900,
+  "status": "complete",
+  "wallMs": 1028.493615,
+  "cpuMs": 1043.09,
+  "rssPeakMiB": 81.48828125,
+  "memoryStart": {
+    "rss": 66637824,
+    "heapTotal": 32493568,
+    "heapUsed": 23042784,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 81477632,
+    "heapTotal": 33017856,
+    "heapUsed": 27328048,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:04.939Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62994.078125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:05.968Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62835.44140625
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 10516691,
+    "totalMeasuredBytes": 126200292
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "context-escaped",
+  "sample": 1,
+  "pid": 966939,
+  "status": "complete",
+  "wallMs": 250.277691,
+  "cpuMs": 275.404,
+  "rssPeakMiB": 81.42578125,
+  "memoryStart": {
+    "rss": 65810432,
+    "heapTotal": 32231424,
+    "heapUsed": 23042888,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 80846848,
+    "heapTotal": 33280000,
+    "heapUsed": 23336960,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:06.086Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62871.87109375
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:06.337Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62879.16015625
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 10516691,
+    "totalMeasuredBytes": 126200292
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "context-escaped",
+  "sample": 2,
+  "pid": 966962,
+  "status": "complete",
+  "wallMs": 265.987044,
+  "cpuMs": 294.366,
+  "rssPeakMiB": 81.31640625,
+  "memoryStart": {
+    "rss": 67301376,
+    "heapTotal": 32493568,
+    "heapUsed": 23042960,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 81854464,
+    "heapTotal": 33542144,
+    "heapUsed": 23404888,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:06.445Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62825.4921875
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:06.712Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62766.31640625
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 10516691,
+    "totalMeasuredBytes": 126200292
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "context-escaped",
+  "sample": 2,
+  "pid": 966970,
+  "status": "complete",
+  "wallMs": 1184.9014949999998,
+  "cpuMs": 1202.728,
+  "rssPeakMiB": 81.38671875,
+  "memoryStart": {
+    "rss": 67313664,
+    "heapTotal": 32493568,
+    "heapUsed": 23042016,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 81657856,
+    "heapTotal": 33542144,
+    "heapUsed": 27036880,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:06.829Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 62691.984375
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:08.015Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63212.68359375
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 10516691,
+    "totalMeasuredBytes": 126200292
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "before",
+  "workload": "context-escaped",
+  "sample": 3,
+  "pid": 967021,
+  "status": "complete",
+  "wallMs": 1330.138603,
+  "cpuMs": 1325.996,
+  "rssPeakMiB": 81.62890625,
+  "memoryStart": {
+    "rss": 66576384,
+    "heapTotal": 32493568,
+    "heapUsed": 23043032,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 81588224,
+    "heapTotal": 33542144,
+    "heapUsed": 23254648,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:08.127Z",
+    "load": [
+      29.89,
+      31.13,
+      19.08
+    ],
+    "freeMiB": 63229.3203125
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:09.458Z",
+    "load": [
+      29.42,
+      31.02,
+      19.11
+    ],
+    "freeMiB": 63122.5234375
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 10516691,
+    "totalMeasuredBytes": 126200292
+  },
+  "networkBlocked": [],
+  "profilers": false
+},
+{
+  "variant": "after",
+  "workload": "context-escaped",
+  "sample": 3,
+  "pid": 967127,
+  "status": "complete",
+  "wallMs": 398.26675,
+  "cpuMs": 365.491,
+  "rssPeakMiB": 81.55078125,
+  "memoryStart": {
+    "rss": 65974272,
+    "heapTotal": 32493568,
+    "heapUsed": 23043632,
+    "external": 2781666,
+    "arrayBuffers": 143655
+  },
+  "memoryEnd": {
+    "rss": 80248832,
+    "heapTotal": 33017856,
+    "heapUsed": 23431808,
+    "external": 2781722,
+    "arrayBuffers": 143671
+  },
+  "hostStart": {
+    "at": "2026-10-23T07:41:09.564Z",
+    "load": [
+      29.42,
+      31.02,
+      19.11
+    ],
+    "freeMiB": 63123.109375
+  },
+  "hostEnd": {
+    "at": "2026-10-23T07:41:09.963Z",
+    "load": [
+      29.42,
+      31.02,
+      19.11
+    ],
+    "freeMiB": 62736.28515625
+  },
+  "outcome": {
+    "calls": 12,
+    "recordsPerCall": 600,
+    "bytesPerCall": 10516691,
+    "totalMeasuredBytes": 126200292
+  },
+  "networkBlocked": [],
+  "profilers": false
+}
+  ]
+}

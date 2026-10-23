@@ -42,12 +42,17 @@ export function measureAgentContext(items: AgentContextItem[]): number {
   const add = (amount: number) => { bytes += amount; if (bytes > AGENT_CONTEXT_LIMITS.bytes) throw contextTooLarge(); };
   const string = (value: string) => {
     add(Buffer.byteLength(value) + 2);
-    // JSON escapes quotes/backslashes/control characters. Valid Unicode stays UTF8.
-    for (const match of value.matchAll(/["\\\u0000-\u001f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g)) {
-      const code = match[0].charCodeAt(0);
-      if (code >= 0xd800) {
-        add(3); // UTF8 replacement bytes -> six ASCII escape bytes.
-      } else add(code < 32 && ![8, 9, 10, 12, 13].includes(code) ? 5 : 1);
+    // Most strings need no adjustment. Do not allocate a regex match per escape.
+    if (!/["\\\u0000-\u001f\ud800-\udfff]/.test(value)) return;
+    for (let index = 0; index < value.length; index++) {
+      const code = value.charCodeAt(index);
+      if (code === 34 || code === 92) add(1);
+      else if (code < 32) add(code === 8 || code === 9 || code === 10 || code === 12 || code === 13 ? 1 : 5);
+      else if (code >= 0xd800 && code <= 0xdbff) {
+        const next = value.charCodeAt(index + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) index++; // valid pairs stay UTF8
+        else add(3); // UTF8 replacement bytes -> six ASCII escape bytes
+      } else if (code >= 0xdc00 && code <= 0xdfff) add(3);
     }
   };
   const visit = (value: unknown, depth: number): void => {

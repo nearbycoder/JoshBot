@@ -1,5 +1,6 @@
 import type { AgentContextItem } from "../types.js";
 import type { AgentStateBackend } from "../store.js";
+import { AGENT_STATE_BATCH_KEYS, AGENT_STATE_BATCH_VALUE_BYTES } from "../store.js";
 import { contextRead, normalizedStatus, parseContextRecord, sourceId, text, timestamp } from "./shared.js";
 
 export type ContextOwner = { teamId: string; userId: string; channelId?: string };
@@ -113,6 +114,36 @@ export async function readLegacyContext(
       throw new Error(`Personal ${kind} index is invalid or too large to read completely (limit ${LEGACY_INDEX_LIMIT}).`);
     }
     for (const id of ids) sourceId(kind, id); // Validate every ID before constructing any record keys.
+    if (backend.getMany) {
+      const sorted = (ids as string[]).sort();
+      for (let offset = 0; offset < sorted.length; offset += AGENT_STATE_BATCH_KEYS) {
+        signal?.throwIfAborted();
+        const chunk = sorted.slice(offset, offset + AGENT_STATE_BATCH_KEYS);
+        const outcomes = await contextRead(signal, () => backend.getMany!(chunk.map(id => `${source.record}${id}`), AGENT_STATE_BATCH_VALUE_BYTES));
+        signal?.throwIfAborted();
+        if (!Array.isArray(outcomes) || outcomes.length !== chunk.length) throw new Error("Invalid bounded personal-state batch outcomes.");
+        for (const [index, id] of chunk.entries()) {
+          const slot = outcomes[index];
+          if (!slot || typeof slot !== "object") throw new Error("Invalid bounded personal-state batch outcomes.");
+          if (slot.status === "rejected") {
+            if (!(slot.reason instanceof Error)) throw new Error("Invalid bounded personal-state batch outcomes.");
+            throw slot.reason;
+          }
+          if (slot.status !== "fulfilled" || (slot.value !== null && typeof slot.value !== "string")) throw new Error("Invalid bounded personal-state batch outcomes.");
+          const raw = slot.value;
+          if (raw === null) continue;
+          // Consume settled slots in original ID order: an earlier parse/owner/ID
+          // failure must precede a later Redis type or capacity error.
+          const value = parseContextRecord(raw, 64_000);
+          if (!owned(value, owner, kind)) continue;
+          if (value.id !== id) throw new Error(`Personal ${kind} source ID does not match its indexed record.`);
+          items.push(mapLegacy(kind, value));
+        }
+      }
+      continue;
+    }
+    // Optional method absent: retain the existing serial path and stop-on-error
+    // behavior exactly. A failed batch is never retried through this path.
     for (const id of (ids as string[]).sort()) {
       const raw = await contextRead(signal, () => backend.get(`${source.record}${id}`));
       if (raw === null) continue; // Stale owner-index member: source was deleted.

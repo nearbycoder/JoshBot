@@ -5,6 +5,7 @@ import { serializedBytes, assertStateVersion, assertRevision, assertQuota } from
 import { captureEvidence } from "../lib/agent-features/feature-kit/evidence.js";
 import { civilDate, addCivilDays, compareCivilDates, civilDaysBetween, normalizeInstant, dateInZone, civilRange, instantRange } from "../lib/agent-features/feature-kit/civil-time.js";
 import { createAgentFeatureFixture, createMemoryAgentBackend, deferred } from "./helpers/agent-feature-fixture.js";
+import type { DisplayPart, DisplayPage, PaginationOptions } from "../lib/agent-features/feature-kit/command-and-display.js";
 import type { AgentFeature, AgentContextItem } from "../lib/agent-features/types.js";
 
 test("bounded parsers preserve complete decoded fields and reject ambiguous/partial input", () => {
@@ -345,4 +346,150 @@ test("source optional projection never invokes accessors or hides malformed/unsu
   assert.throws(() => captureEvidence([{ ...source, text: undefined }], evidenceOptions));
   assert.throws(() => captureEvidence([{ ...source, metadata: { current: undefined } }], evidenceOptions));
   assert.throws(() => captureEvidence([{ ...source, metadata: { createdAt: NaN } }], evidenceOptions));
+});
+
+// Frozen a280238 paginator: compatibility oracle for exact pages, errors and callbacks.
+function originalPaginateParts(parts: readonly DisplayPart[], options: PaginationOptions): DisplayPage[] {
+  const max = options.maxUnits ?? 3_500;
+  if (!Number.isSafeInteger(max) || max < 32 || max > 3_500 || parts.length > 4_096) {
+    throw new Error("Use a reply budget of 32–3500 string units and at most 4096 parts.");
+  }
+  const title = options.title ?? "";
+  const escapedTitle = renderText(title, options.mode);
+  const units: DisplayPart[] = [];
+  let inputUnits = 0;
+  for (const part of parts) {
+    if (typeof part.text !== "string" || !part.text.isWellFormed()) throw new Error("Display text must have valid Unicode boundaries.");
+    inputUnits += part.text.length;
+    if (inputUnits > 262_144) throw new Error("Too much detail for one pagination operation; select one record or a smaller evidence scope.");
+    if (part.atomic) units.push(part);
+    else {
+      // Exact text survives; do not alter URL query strings or split a copied command.
+      for (const match of part.text.matchAll(/https?:\/\/[^\s]+|\/nobo-help[^\r\n]*|[\s\S]/gu)) {
+        units.push({ text: match[0], atomic: match[0].length > 2 });
+      }
+    }
+  }
+  const encoded = units.map(part => renderText(part.text, options.mode));
+  let remaining = encoded.reduce((sum, value) => sum + value.length, 0);
+  // At least one code point per nonempty page. This upper bound reserves total digits
+  // without repeatedly repaginating as the actual page count changes.
+  const totalBound = Math.min(10_000, Math.max(1, units.length));
+  const header = (page: number, total: number) => `${escapedTitle ? `${escapedTitle}\n` : ""}Page ${page}/${total}\n`;
+  const bodies: { body: string; nextCommand?: string }[] = [];
+  let cursor = 0;
+  do {
+    const page = bodies.length + 1;
+    if (page > 10_000) throw new Error("Too many detail pages; use a larger reply budget or select a smaller scope.");
+    const reservedHeader = header(page, totalBound).length;
+    if (remaining <= max - reservedHeader) {
+      bodies.push({ body: units.slice(cursor).map(part => part.text).join("") });
+      break;
+    }
+    const nextCommand = boundedText(options.command(page + 1), { label: "Next command", maxBytes: 12_000, trim: false });
+    if (/[\r\n]/u.test(nextCommand)) throw new Error("Next command must be one complete line.");
+    const capacity = max - reservedHeader - renderText(`\nNext: ${nextCommand}`, options.mode).length;
+    if (capacity < 2) throw new Error("Reply budget leaves no detail space after the title and next command; shorten the title/command or increase maxUnits.");
+    const start = cursor;
+    let used = 0;
+    while (cursor < units.length && used + encoded[cursor].length <= capacity) used += encoded[cursor++].length;
+    if (start === cursor) throw new Error("An atomic URL, identifier, command, or Unicode character cannot fit this page. Shorten the title/command, increase maxUnits up to 3500, or reject the value before saving; it was not split or dropped.");
+    bodies.push({ body: units.slice(start, cursor).map(part => part.text).join(""), nextCommand });
+    remaining -= used;
+  } while (cursor < units.length);
+  return bodies.map(({ body, nextCommand }, index) => ({
+    body, page: index + 1, total: bodies.length, ...(nextCommand === undefined ? {} : { nextCommand }),
+    text: header(index + 1, bodies.length) + renderText(body, options.mode) +
+      (nextCommand === undefined ? "" : renderText(`\nNext: ${nextCommand}`, options.mode)),
+  }));
+}
+
+
+test("span pagination matches the original page objects, boundaries, errors and callback sequence", () => {
+  const compare = (parts: DisplayPart[], options: PaginationOptions) => {
+    const outcome = (paginate: typeof paginateParts) => {
+      const calls: number[] = [];
+      try {
+        return { pages: paginate(parts, { ...options, command: page => { calls.push(page); return options.command(page); } }), calls };
+      } catch (error) {
+        assert.ok(error instanceof Error);
+        return { error: { name: error.name, message: error.message }, calls };
+      }
+    };
+    assert.deepEqual(outcome(paginateParts), outcome(originalPaginateParts));
+  };
+  const command = (page: number) => `show ${page} &<>`;
+  for (const mode of ["plain", "mrkdwn"] as const) {
+    for (const length of [0, 1, 9, 10, 99, 100, 999, 1000, 9999, 10000, 10001, 262144]) {
+      compare([{ text: "a".repeat(length) }], { mode, command, maxUnits: 140 });
+    }
+    for (const text of ["界😀&<>e\u0301\r\n\t ".repeat(90), "xhttps://a.test/?q=&<>\n/nobo-help agent foo https://b.test/\r\n".repeat(20), "http:// https://\n/nobo-help\n/nobo-helper suffix\n", "\u0000\u007f\u2028\u2029\ufeff ".repeat(60)]) {
+      for (const maxUnits of [32, 73, 140, 3500]) compare([{ text }, { text: "", atomic: true }, { text: "identifier-123", atomic: true }], { mode, command, maxUnits, title: "<&>界" });
+    }
+    compare([{ text: "😀".repeat(131072) }], { mode, command });
+    compare([{ text: "" }, { text: "", atomic: true }], { mode, command });
+    compare([{ text: "x".repeat(262144) }], { mode, command: () => "x", maxUnits: 32 });
+  }
+  let seed = 20261023;
+  const random = (max: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % max; };
+  const atoms = ["abc ", "界", "😀", "&<>", "e\u0301", "\r\n", "\t", "https://x.test/?a=1&b=2 ", "/nobo-help agent show x\n", "https", "://x", "\u2028", ""];
+  for (let sample = 0; sample < 600; sample++) {
+    const parts = Array.from({ length: 1 + random(8) }, () => ({ text: Array.from({ length: random(30) }, () => atoms[random(atoms.length)]).join(""), atomic: random(6) === 0 }));
+    compare(parts, { mode: random(2) ? "plain" : "mrkdwn", command, maxUnits: 32 + random(220), title: atoms[random(atoms.length)] });
+  }
+  for (const parts of [[{ text: "\ud800" }], [{ text: "\udc00", atomic: true }], [{ text: "\ud800" }, { text: "\udc00" }], [{ text: "x".repeat(262145) }], Array.from({ length: 4097 }, () => ({ text: "" })), [{ text: "x".repeat(3501), atomic: true }]]) {
+    compare(parts, { mode: "plain", command });
+  }
+  for (const maxUnits of [0, 31, 3501, NaN, Infinity, 32.5]) compare([{ text: "x" }], { mode: "plain", command, maxUnits });
+  for (const next of ["", "\n", "x\ny", "\ud800", "\u0000", "x".repeat(12001)]) compare([{ text: "x".repeat(300) }], { mode: "plain", maxUnits: 80, command: () => next });
+  compare([{ text: "x".repeat(300) }], { mode: "plain", maxUnits: 80, command: () => { throw new TypeError("callback failed"); } });
+  compare([], { mode: "other" as never, command });
+  compare([], { mode: "plain", title: "\ud800", command });
+});
+
+test("registered CSV 40x8 lifecycle retains all 19 pages and exact cells, state and exports", async () => {
+  const { handleAgentCommand } = await import("../lib/agent-features/index.js");
+  const backend = createMemoryAgentBackend();
+  const owner = { teamId: "TKITCSV", userId: "UKITCSV", channelId: "CKITCSV" };
+  const forbidden = async (): Promise<never> => assert.fail("CSV must not call a provider or source service");
+  const options = { backend, services: { generate: forbidden, search: forbidden, readContext: forbidden }, timezone: "UTC", now: new Date("2026-10-22T12:00:00Z") };
+  let commands = 0, pages = 0;
+  const run = (command: string) => { commands++; return handleAgentCommand(`data-cleanroom ${command}`, owner, options); };
+  const rows = Array.from({ length: 40 }, (_, i) => Array.from({ length: 8 }, () => String(i % 10)));
+  const header = Array.from({ length: 8 }, (_, i) => `c${i}`);
+  const created = await run(`create Maximum rows and columns | ${[header, ...rows].map(row => row.join(",")).join("\n")}`);
+  assert.match(created, /^Saved privately: table-/);
+  const id = created.match(/table-[a-f0-9-]{36}/)![0];
+  const raw = () => backend.data.get("nobo:agents:v1:TKITCSV:UKITCSV:data-cleanroom:state")!;
+  const record = () => JSON.parse(raw()).records[0];
+  const retrieve = async (command: string) => {
+    let body = "";
+    for (let page = 0; page < 100; page++) {
+      const reply = await run(command); pages++;
+      assert.ok(reply.length <= 3500 && reply.isWellFormed());
+      const heading = /^.*\nPage \d+\/\d+\n/.exec(reply); assert.ok(heading, reply);
+      const next = /\nNext: \/nobo-help agent data-cleanroom ([^\n]+)$/.exec(reply);
+      body += reply.slice(heading[0].length, next?.index ?? reply.length);
+      if (!next || !/ rev \d+-[a-f0-9]{64}$/.test(next[1])) return body;
+      command = next[1];
+    }
+    assert.fail("CSV pagination did not terminate");
+  };
+  assert.deepEqual(record().original.rows.map((row: { cells: string[] }) => row.cells), rows);
+  assert.equal(await retrieve(`export-csv ${id}`), [header, ...rows].map(row => row.join(",")).join("\r\n"));
+  const preview = await run(`preview ${id} | dedupe | ${header.join(",")}`);
+  const token = preview.match(/preview-[a-f0-9-]{36}/)![0];
+  assert.equal(record().preview.output.rows.length, 10);
+  await retrieve(`preview-show ${id}`);
+  assert.match(await run(`apply ${id} ${token}`), /^Saved privately:/);
+  assert.equal(record().current.rows.length, 10);
+  assert.deepEqual(record().undo.rows.map((row: { cells: string[] }) => row.cells), rows);
+  assert.deepEqual(JSON.parse(await retrieve(`show ${id}`)), JSON.parse(await run(`export ${id}`)));
+  assert.match(await run(`undo ${id} confirm`), /^Saved privately:/);
+  assert.deepEqual(record().current.rows.map((row: { cells: string[] }) => row.cells), rows);
+  assert.deepEqual(JSON.parse(await retrieve(`show ${id}`)), JSON.parse(await run(`export ${id}`)));
+  assert.equal(Buffer.byteLength(raw()), 8893);
+  assert.equal(Buffer.byteLength(await run(`export ${id}`)), 8917);
+  assert.equal(pages, 19); assert.equal(commands, 26);
+  assert.equal(backend.calls.gets, 29); assert.equal(backend.calls.writes, 4);
 });

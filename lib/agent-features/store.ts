@@ -1,13 +1,20 @@
 import { validateAgentIdentity } from "./identity.js";
 export { validateAgentIdentity } from "./identity.js";
-import { resolveAgentBudgets } from "./budgets.js";
+import { AgentContextCapacityError, resolveAgentBudgets } from "./budgets.js";
 import { contextRead } from "./context/shared.js";
 import type { AgentFeatureStore, AgentFeatureResourceBudgets } from "./types.js";
 
 export interface AgentStateBackend {
   get(key: string): Promise<string | null>;
+  /** Already-settled, aligned outcomes; no cache, retries or outstanding siblings.
+   * Implementations must bound bytes before returning values, including corrupt
+   * oversized records. Callers consume outcomes in original source order. */
+  getMany?(keys: readonly string[], maxValueBytes: number): Promise<readonly PromiseSettledResult<string | null>[]>;
   compareSet(key: string, previous: string | null, next: string, ttlSeconds?: number): Promise<boolean>;
 }
+
+export const AGENT_STATE_BATCH_KEYS = 16;
+export const AGENT_STATE_BATCH_VALUE_BYTES = 64_000;
 
 /** Present unreadable bytes are never the read<T>() absence sentinel. No raw data is retained. */
 export class AgentStateCorruptionError extends Error {
@@ -29,12 +36,63 @@ if tonumber(ARGV[4])>0 then
 else redis.call('SET',KEYS[1],ARGV[3]) end
 return 1`;
 
+// One physical read-only promise. Check length before GET so even malformed
+// stored values cannot multiply unbounded allocations across the batch. Missing
+// values are distinct from type/size failures, which remain at their own slot.
+const BOUNDED_GET_MANY = `
+local out={}
+for i,key in ipairs(KEYS) do
+  local size=redis.pcall('STRLEN',key)
+  if type(size)=='table' and size.err then
+    out[i]={0,'wrong-type'}
+  elseif size>tonumber(ARGV[1]) then
+    out[i]={0,'too-large'}
+  else
+    out[i]={1,redis.call('GET',key)}
+  end
+end
+return out`;
+
+function batchOutcomes(reply: unknown, count: number, maxBytes: number): PromiseSettledResult<string | null>[] {
+  const invalid = () => new Error("Invalid bounded personal-state batch response.");
+  if (!Array.isArray(reply) || reply.length !== count) throw invalid();
+  return Array.from(reply, slot => {
+    if (!Array.isArray(slot) || slot.length !== 2) throw invalid();
+    if (slot[0] === 1 && (slot[1] === null || typeof slot[1] === "string")) {
+      if (typeof slot[1] === "string" && Buffer.byteLength(slot[1]) > maxBytes) throw invalid();
+      return { status: "fulfilled", value: slot[1] };
+    }
+    if (slot[0] === 0 && slot[1] === "too-large") return {
+      status: "rejected", reason: new AgentContextCapacityError("Personal context is too large to load completely."),
+    };
+    if (slot[0] === 0 && slot[1] === "wrong-type") return {
+      status: "rejected", reason: new Error("WRONGTYPE Operation against a key holding the wrong kind of value"),
+    };
+    throw invalid();
+  });
+}
+
 export async function createAgentStateBackend(): Promise<AgentStateBackend | null> {
   const { getRedisClient } = await import("../redis.js");
   const redis = await getRedisClient();
   if (!redis) return null;
   return {
     get: (key) => redis.get(key),
+    async getMany(keys, maxValueBytes) {
+      if (!Array.isArray(keys) || keys.length < 1 || keys.length > AGENT_STATE_BATCH_KEYS ||
+          !Number.isInteger(maxValueBytes) || maxValueBytes < 1 || maxValueBytes > AGENT_STATE_BATCH_VALUE_BYTES) {
+        throw new Error("Invalid bounded personal-state batch request.");
+      }
+      const batch = Array.from(keys);
+      if (!batch.every(key => typeof key === "string" && key.length > 0 && key.length <= 512)) {
+        throw new Error("Invalid bounded personal-state batch request.");
+      }
+      // Keep the original Redis promise inside the existing physical-work scope,
+      // even if the caller aborts while the command remains in flight.
+      return contextRead(undefined, async () => batchOutcomes(await redis.eval(BOUNDED_GET_MANY, {
+        keys: batch, arguments: [String(maxValueBytes)],
+      }), batch.length, maxValueBytes));
+    },
     compareSet: async (key, previous, next, ttlSeconds = 0) =>
       (await redis.eval(CAS, {
         keys: [key],

@@ -16,6 +16,7 @@ export const AGENT_CATALOG_PRIVACY = "Personal agents stay private. Browsing run
 const prefix = "/nobo-help agent";
 const reset = `Open the catalog: ${prefix} catalog`;
 const reserved = new Set(["catalog", "search", "help"]);
+const conversationalWords = new Set(["a", "an", "the", "i", "me", "my", "please", "for", "to"]);
 const compareId = (a: AgentFeatureMetadata, b: AgentFeatureMetadata) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 export const escapeCatalogText = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 export const isAgentCatalogGroup = (value: unknown): value is AgentCatalogGroup => agentCatalogGroups.some(group => group.slug === value);
@@ -40,6 +41,11 @@ export function normalizeAgentCatalogQuery(value: string): string | undefined {
 type CatalogCommand = { state: AgentCatalogState; error?: never } | { error: string; state?: never };
 /** null means an ordinary feature route; reserved names always finish here. */
 export function parseAgentCatalogCommand(text: string): CatalogCommand | null {
+  // Ordinary feature payloads can contain large, whitespace-sensitive CSV/text.
+  // Inspect only the routing word before normalizing catalog navigation.
+  const leading = /^\s*(\S+)/u.exec(text)?.[1];
+  if (!leading) return { state: { page: 1 } };
+  if (!reserved.has(leading.toLowerCase())) return null;
   const normalized = text.trim().replace(/\s+/gu, " ");
   const [verb = "", ...parts] = normalized.split(" ");
   if (!verb || (verb.toLowerCase() === "help" && !parts.length)) return { state: { page: 1 } };
@@ -68,7 +74,8 @@ export function findAgentCatalogEntries(entries: readonly AgentFeatureMetadata[]
   const label = agentCatalogGroups.find(group => group.slug === state.group)?.label;
   const filtered = entries.filter(entry => !label || entry.group === label);
   if (state.query) {
-    const query = state.query.toLowerCase(), tokens = query.split(" ");
+    const query = state.query.toLowerCase(), tokens = query.split(" ").filter(token => !conversationalWords.has(token));
+    if (!tokens.length) return [];
     const ranked = filtered.flatMap(entry => {
       const primary = `${entry.id} ${entry.title}`.toLowerCase();
       const all = `${primary} ${entry.description} ${(entry.keywords ?? []).join(" ")}`.toLowerCase();
