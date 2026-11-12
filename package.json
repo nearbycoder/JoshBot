@@ -16,7 +16,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^1.4.0",
     "@flue/runtime": "^2.3.0",
-    "@hono/node-server": "^2.1.5",
+    "@hono/node-server": "^2.1.8",
     "@slack/bolt": "^5.1.0",
     "@slack/web-api": "^8.2.0",
     "@sparticuz/chromium": "^153.0.0",
