@@ -13,6 +13,7 @@ const HACKER_NEWS_SCHEDULE_TIMEZONE = "America/Chicago";
 let hackerNewsScheduleStarted = false;
 let hackerNewsScheduleRunning = false;
 let resolvedChannelIdPromise: Promise<string | null> | null = null;
+const hackerNewsJobs: Cron[] = [];
 
 export function startHackerNewsSchedule() {
   if (hackerNewsScheduleStarted) {
@@ -28,21 +29,30 @@ export function startHackerNewsSchedule() {
   for (const time of getHackerNewsScheduleTimes()) {
     const cronExpression = timeToCronExpression(time);
 
-    new Cron(
-      cronExpression,
-      {
-        protect: true,
-        timezone: HACKER_NEWS_SCHEDULE_TIMEZONE,
-        catch: (error) => {
-          recordOpsError("hacker news schedule", error);
-          console.error(`Scheduled Hacker News post failed: ${summarizeError(error)}`);
+    hackerNewsJobs.push(
+      new Cron(
+        cronExpression,
+        {
+          protect: true,
+          timezone: HACKER_NEWS_SCHEDULE_TIMEZONE,
+          catch: (error) => {
+            recordOpsError("hacker news schedule", error);
+            console.error(`Scheduled Hacker News post failed: ${summarizeError(error)}`);
+          }
+        },
+        async () => {
+          await postScheduledHackerNewsDigest();
         }
-      },
-      async () => {
-        await postScheduledHackerNewsDigest();
-      }
+      )
     );
   }
+}
+
+export function stopHackerNewsSchedule() {
+  for (const job of hackerNewsJobs.splice(0)) {
+    job.stop();
+  }
+  hackerNewsScheduleStarted = false;
 }
 
 export function getHackerNewsScheduleStatus() {

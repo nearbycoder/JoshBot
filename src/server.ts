@@ -7,6 +7,7 @@ import { registerNoboProvider } from "./nobo-provider.js";
 import { createSlackBolt, SLACK_ENDPOINTS } from "./slack-bolt.js";
 import { startBackgroundRunners } from "./slack-tasks.js";
 import { checkSlackAgentReadiness } from "../lib/slack-readiness.js";
+import { closeRedisClient } from "../lib/redis.js";
 
 export async function startNoboServer(options: {
   signingSecret: string;
@@ -40,13 +41,15 @@ export async function startNoboServer(options: {
       });
     });
     console.log("NoBo listening with Slack Bolt");
-    if (options.backgroundRunners !== false) startBackgroundRunners();
+    const stopRunners = options.backgroundRunners !== false ? startBackgroundRunners() : undefined;
     return {
       server,
       async stop() {
+        stopRunners?.();
         const closed = new Promise<void>((resolve) => server.close(() => resolve()));
         await runtime.stop();
         await closed;
+        await closeRedisClient();
       }
     };
   } catch (error) {

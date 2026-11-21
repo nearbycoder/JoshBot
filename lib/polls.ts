@@ -132,7 +132,8 @@ export async function handlePollCommandText({
 
     return {
       responseType: result.ok ? "in_channel" as const : "ephemeral" as const,
-      text: result.ok ? formatPollCreated(result.poll) : `Couldn't create poll: ${result.reason}`
+      text: result.ok ? formatPollCreated(result.poll) : `Couldn't create poll: ${result.reason}`,
+      ...(result.ok ? { blocks: buildSlackPollBlocks(result.poll) } : {})
     };
   }
 
@@ -148,7 +149,8 @@ export async function handlePollCommandText({
     const result = await resolvePollForCommand(channelId, intent.pollId, threadTs);
     return {
       responseType: "ephemeral" as const,
-      text: result.ok ? formatPollSummary(result.poll) : `Couldn't summarize poll: ${result.reason}`
+      text: result.ok ? formatPollSummary(result.poll) : `Couldn't summarize poll: ${result.reason}`,
+      ...(result.ok ? { blocks: buildSlackPollBlocks(result.poll) } : {})
     };
   }
 
@@ -171,7 +173,8 @@ export async function handlePollCommandText({
 
     return {
       responseType: result.ok ? "in_channel" as const : "ephemeral" as const,
-      text: result.ok ? formatPollVoteRecorded(result.poll, result.option, userId) : `Couldn't record vote: ${result.reason}`
+      text: result.ok ? formatPollVoteRecorded(result.poll, result.option, userId) : `Couldn't record vote: ${result.reason}`,
+      ...(result.ok ? { blocks: buildSlackPollBlocks(result.poll) } : {})
     };
   }
 
@@ -188,7 +191,8 @@ export async function handlePollCommandText({
 
     return {
       responseType: result.ok ? "in_channel" as const : "ephemeral" as const,
-      text: result.ok ? formatPollClosed(result.poll, result.decisionText) : `Couldn't close poll: ${result.reason}`
+      text: result.ok ? formatPollClosed(result.poll, result.decisionText) : `Couldn't close poll: ${result.reason}`,
+      ...(result.ok ? { blocks: buildSlackPollBlocks(result.poll, result.decisionText) } : {})
     };
   }
 
@@ -248,6 +252,10 @@ export function parsePollIntent(input: string): PollIntent | null {
   const decideMatch = unprefixed.match(/^(?:decide|decision|record-decision)(?:\s+(.+))?$/i);
   if (decideMatch) {
     return parseDecideIntent(decideMatch[1] ?? "");
+  }
+
+  if (unprefixed.includes("|")) {
+    return parseCreateIntent(unprefixed);
   }
 
   return null;
@@ -535,6 +543,87 @@ export function formatPollVoteRecorded(poll: SlackPoll, option: SlackPollOption,
 export function formatPollClosed(poll: SlackPoll, decisionText?: string) {
   const decision = decisionText ? `\nDecision logged: ${decisionText}` : "";
   return `${formatPollSummary(poll)}\nClosed.${decision}`;
+}
+
+export function buildSlackPollBlocks(poll: SlackPoll, decisionText?: string): Array<Record<string, unknown>> {
+  const counts = countPollVotes(poll);
+  const totalVotes = Object.keys(poll.votes).length;
+  const escape = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const clip = (text: string, max: number) => text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+  const bar = (count: number) => {
+    const filled = totalVotes > 0 ? Math.round((count / totalVotes) * 8) : 0;
+    return `${"█".repeat(filled)}${"░".repeat(8 - filled)}`;
+  };
+  const optionLines = poll.options.map((option) => {
+    const count = counts[option.id] ?? 0;
+    const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+    const voteWord = count === 1 ? "vote" : "votes";
+    return `*${option.id}.* ${escape(option.text)}\n\`${bar(count)}\` ${pct}% (${count} ${voteWord})`;
+  });
+
+  const blocks: Array<Record<string, unknown>> = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${escape(clip(poll.question, 200))}* · _${poll.status === "open" ? "Open" : "Closed"}_\n\n${optionLines.join("\n\n")}`
+      }
+    }
+  ];
+
+  if (decisionText) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: `Decision logged: *${escape(clip(decisionText, 300))}*` }]
+    });
+  }
+
+  if (poll.status === "open") {
+    const voteButtons = poll.options.map((option) => ({
+      type: "button",
+      text: { type: "plain_text", text: clip(`${option.id}. ${option.text}`, 72), emoji: true },
+      action_id: `nobo_poll_vote:${option.id}`,
+      value: `${poll.id}:${option.id}`
+    }));
+
+    for (let index = 0; index < voteButtons.length; index += 5) {
+      blocks.push({
+        type: "actions",
+        elements: voteButtons.slice(index, index + 5)
+      });
+    }
+
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Close poll", emoji: true },
+          action_id: "nobo_poll_close",
+          value: poll.id
+        },
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Close & log decision", emoji: true },
+          action_id: "nobo_poll_close_decision",
+          value: poll.id
+        }
+      ]
+    });
+  }
+
+  const voteSummary = `${totalVotes} total ${totalVotes === 1 ? "vote" : "votes"}`;
+  blocks.push({
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text: `Poll \`${formatPollShortId(poll)}\` · ${voteSummary}${poll.status === "open" ? " · Click a button to vote or change your vote" : ""}`
+      }
+    ]
+  });
+
+  return blocks;
 }
 
 function parseCreateIntent(input: string): PollIntent {

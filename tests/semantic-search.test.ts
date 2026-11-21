@@ -42,6 +42,27 @@ test("lexical semantic search ranks exact phrase matches first", () => {
   assert.equal(results.some((result) => result.document.id === "3"), false);
 });
 
+test("lexical semantic search supports prefix matching and fuzzy typo recovery", () => {
+  const provider = new LexicalSemanticSearchProvider();
+  const documents: SemanticSearchDocument[] = [
+    {
+      id: "1",
+      source: "artifact",
+      title: "Deployment checklist",
+      text: "Production deployment and database migration steps."
+    },
+    {
+      id: "2",
+      source: "channel-message",
+      title: "Lunch",
+      text: "Tacos at noon."
+    }
+  ];
+
+  assert.equal(provider.search("deploy", documents)[0]?.document.id, "1");
+  assert.equal(provider.search("databse migraton", documents)[0]?.document.id, "1");
+});
+
 test("semantic search scopes artifacts to requester and searches current channel history", async () => {
   await withTempArtifactDir(async () => {
     const ownArtifact = await createArtifact({

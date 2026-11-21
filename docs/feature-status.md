@@ -1,6 +1,17 @@
 # NoBo feature status
 
-The baseline sections below record the October 22, 2026 refresh against implementation, automated tests, and production configuration. Their live observations and test counts are historical evidence for that refresh, not verification of the later personal-agent expansion. “Implemented” describes code availability; Slack permissions, subscriptions, credentials, and storage determine what is usable in a particular workspace.
+## November 20, 2026 platform and Slack UX refresh
+
+- **Runtime & dependencies**: Upgraded to Node 26 LTS (`.nvmrc`, CI, `@types/node` 26; `engines.node >= 24`), updated all direct dependencies (`@earendil-works/pi-ai` 1.6, `@flue/runtime` 2.3.1, `@slack/web-api` 8.5, `croner` 11, `dotenv` 18, `exa-js` 2.29, `hono` 4.13.19, `@hono/node-server` 2.1.11, `pdfjs-dist` 6.5, `playwright-core` 1.65, `redis` 6.3.1, `vite` 8.3.8, `typebox` 1.4.7, and `@modelcontextprotocol/client` override `^2.4.0`), resolving all 5 dependency advisories (`npm audit` reports 0 vulnerabilities).
+- **New libraries adopted**: Replaced the hand-rolled artifact Markdown renderer with `marked` 18 (XSS-safe HTML escaping, URL sanitization, CSP, GFM tables/task lists, dark-mode support) and upgraded lexical history/artifact search to `minisearch` 7 (BM25+ ranking, title boosting, prefix & fuzzy typo matching).
+- **OpenCode Go model catalog**: Refreshed to **31 active reviewed models** matching live discovery and `pi-ai` 1.6 (added `kimi-k3.1-pro`, `gemini-4-argon`, `qwen4-max`, `hy4`, `hy4-flash-free`, `longcat-2.5-free`, `minimax-m3.1-flash`, `iceman-contributor-free`; retired `glm-5.2`, `gemini-4-argon-contributor`, `minimax-m3.1-flash-free`, `mimo-v2.5`, `mimo-v2.5-pro`). Kimi K3 remains the default text/vision model.
+- **Streamlined Slack experience**:
+  - Unified `/nobo` slash command: bare `/nobo` opens the Quick Launcher modal (with modal-stack pushing), and `/nobo <subcommand>` routes to all existing commands while keeping every legacy `/nobo-*` command intact.
+  - Interactive Block Kit polls with visual vote bars, 1-click vote buttons, and `Close poll` / `Close & log decision` actions that update poll cards in place.
+  - DM skill parity (explicit mention skills now work in direct messages too), human-friendly native AI task progress titles, updated DM suggested prompts, featured-first channel model selector with 1-click reset, Home detail modal `Cancel` (monitors) / `Forget` (memories) / localized timestamps, automatic Home refresh after preferences/reminder modal submits, and tool-specific placeholder examples in the Toolbox modal.
+- **Attachments & resilience**: Added `.pptx` slide text extraction, code-block-aware `normalizeSlackMrkdwn` and fence-safe message chunking, 15s Slack API timeouts with bounded `429 Retry-After` backoff on idempotent reads, and graceful background runner + Redis cleanup on server shutdown.
+
+The baseline sections below record the October 22, 2026 refresh against implementation, automated tests, and production configuration. Their live observations and test counts are historical evidence for that refresh, not verification of later changes. “Implemented” describes code availability; Slack permissions, subscriptions, credentials, and storage determine what is usable in a particular workspace.
 
 ## Seventy private personal agents
 

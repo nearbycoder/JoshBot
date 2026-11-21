@@ -37,12 +37,14 @@ test("Stop during a failing image/model call never starts a fallback", async () 
   assert.equal(calls, 1);
 });
 
-test("Task cards expose lifecycle and tool names, not inputs, outputs or reasoning", () => {
+test("Task cards expose friendly lifecycle labels without inputs, outputs or reasoning", () => {
   const project = createAgentTaskProjector();
   assert.deepEqual(project({ type: "tool-input", toolCallId: "tool1", toolName: "web_search" }),
-    { type: "task_update", id: "tool1", title: "web_search", status: "in_progress" });
+    { type: "task_update", id: "tool1", title: "Searching the web", status: "in_progress" });
   assert.deepEqual(project({ type: "tool-output", toolCallId: "tool1" }),
-    { type: "task_update", id: "tool1", title: "web_search", status: "complete" });
+    { type: "task_update", id: "tool1", title: "Searching the web", status: "complete" });
+  assert.deepEqual(project({ type: "tool-input", toolCallId: "tool2", toolName: "custom_tool" }),
+    { type: "task_update", id: "tool2", title: "custom_tool", status: "in_progress" });
   assert.equal(project({ type: "message-delta" }), undefined);
   assert.equal(project({ type: "tool-output-error", toolCallId: "unknown" })?.status, "error");
 });

@@ -40,7 +40,14 @@ import {
   type ReminderStyle,
   type UserVerbosity
 } from "./preferences.js";
-import { handlePollCommandText } from "./polls.js";
+import {
+  buildSlackPollBlocks,
+  closeSlackPoll,
+  formatPollClosed,
+  formatPollVoteRecorded,
+  handlePollCommandText,
+  recordSlackPollVote
+} from "./polls.js";
 import {
   createScheduleFromTool,
   type ScheduleToolInput,
@@ -51,6 +58,7 @@ import {
   formatOpenCodeGoModelName,
   getDefaultSlackTextModel,
   getSlackImageModel,
+  isOpenCodeGoFeaturedModel,
   listOpenCodeGoModels,
   normalizeOpenCodeGoSupportedModelId,
   requiresOpenCodeGoDataTrainingOptIn,
@@ -87,13 +95,56 @@ const DAD_JOKES = [
 type SlackBlock = Record<string, unknown>;
 
 const CHANNEL_MODEL_ACTION_ID = "nobo_channel_model_select";
+const CHANNEL_MODEL_RESET_ACTION_ID = "nobo_channel_model_reset";
+const POLL_VOTE_ACTION_PREFIX = "nobo_poll_vote:";
+const POLL_CLOSE_ACTION_ID = "nobo_poll_close";
+const POLL_CLOSE_DECISION_ACTION_ID = "nobo_poll_close_decision";
 const OPEN_MODAL_ACTION_PREFIX = "nobo_open_modal:";
+const LAUNCHER_MODAL_CALLBACK_ID = "nobo_launcher_modal";
 const REMINDER_MODAL_CALLBACK_ID = "nobo_reminder_modal";
 const PREFS_MODAL_CALLBACK_ID = "nobo_prefs_modal";
 const DIGEST_MODAL_CALLBACK_ID = "nobo_digest_modal";
 const ARTIFACT_MODAL_CALLBACK_ID = "nobo_artifact_modal";
 const SLACK_SELECT_MAX_OPTIONS = 100;
 const SLACK_MODAL_SECTION_TEXT_LIMIT = 2900;
+
+const UNIFIED_NOBO_SUBCOMMANDS: Record<string, { command: string; prefix?: string }> = {
+  help: { command: "/nobo-help" },
+  status: { command: "/nobo-status" },
+  search: { command: "/nobo-search" },
+  prefs: { command: "/nobo-prefs" },
+  preferences: { command: "/nobo-prefs" },
+  settings: { command: "/nobo-prefs" },
+  reminder: { command: "/nobo-reminder" },
+  reminders: { command: "/nobo-reminder" },
+  model: { command: "/nobo-channel-model" },
+  "channel-model": { command: "/nobo-channel-model" },
+  listen: { command: "/nobo-listen" },
+  memory: { command: "/nobo-memory" },
+  artifacts: { command: "/nobo-artifacts" },
+  artifact: { command: "/nobo-artifacts" },
+  decisions: { command: "/nobo-decisions" },
+  decision: { command: "/nobo-decisions" },
+  issues: { command: "/nobo-issues" },
+  issue: { command: "/nobo-issues" },
+  polls: { command: "/nobo-polls" },
+  poll: { command: "/nobo-polls" },
+  news: { command: "/nobo-news" },
+  "ai-news": { command: "/nobo-ai-news" },
+  ai: { command: "/nobo-ai-news" },
+  "hacker-news": { command: "/nobo-hacker-news" },
+  hn: { command: "/nobo-hacker-news" },
+  digest: { command: "/nobo-channel-digest" },
+  "channel-digest": { command: "/nobo-channel-digest" },
+  x: { command: "/nobo-x" },
+  tools: { command: "/nobo-help", prefix: "tools" },
+  toolbox: { command: "/nobo-help", prefix: "tools" },
+  agent: { command: "/nobo-help", prefix: "agent" },
+  agents: { command: "/nobo-help", prefix: "agent" },
+  admin: { command: "/nobo-admin" },
+  joke: { command: "/nobo-dad-joke" },
+  "dad-joke": { command: "/nobo-dad-joke" }
+};
 
 export type SlackSlashCommandPayload = {
   command: string;
@@ -129,6 +180,7 @@ export type SlackInteractionPayload = {
 
 type SlackInteractionAction = {
   action_id?: string;
+  value?: string;
   selected_option?: {
     value?: string;
   };
@@ -184,6 +236,7 @@ export type SlackSlashCommandOptions = {
 
 export type SlackInteractionOptions = {
   setChannelModelPreference?: typeof setChannelModelPreference;
+  clearChannelModelPreference?: typeof clearChannelModelPreference;
   createSchedule?: typeof createScheduleFromTool;
   saveChannelDigest?: typeof handleChannelDigestCommand;
   evaluateAccess?: (subject: NoboAccessSubject) => Promise<{ allowed: boolean; reason?: string }>;
@@ -234,16 +287,43 @@ export function parseSlackInteractionPayload(rawBody: string): SlackInteractionP
   return JSON.parse(payload) as SlackInteractionPayload;
 }
 
+function resolveUnifiedNoboCommand(payload: SlackSlashCommandPayload): SlackSlashCommandPayload | null {
+  if (payload.command.trim().toLowerCase() !== "/nobo") {
+    return null;
+  }
+
+  const trimmed = payload.text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const [rawSubcommand, ...rest] = trimmed.split(/\s+/);
+  const subcommand = rawSubcommand?.toLowerCase() ?? "";
+  const route = UNIFIED_NOBO_SUBCOMMANDS[subcommand];
+  if (!route) {
+    return null;
+  }
+
+  const remaining = rest.join(" ").trim();
+  const nextText = route.prefix ? [route.prefix, remaining].filter(Boolean).join(" ") : remaining;
+  return {
+    ...payload,
+    command: route.command,
+    text: nextText
+  };
+}
+
 export async function handleSlackSlashCommandPayload(
   payload: SlackSlashCommandPayload,
   options: SlackSlashCommandOptions = {}
 ): Promise<SlackSlashCommandResult> {
-  if (payload.command.trim().toLowerCase() === "/nobo-help" && /^agent(?:\s|$)/i.test(payload.text.trim())) {
-    return withAgentAdmission({ teamId: payload.team_id, userId: payload.user_id },
-      () => handleAdmittedSlackSlashCommandPayload(payload, options),
+  const routed = resolveUnifiedNoboCommand(payload) ?? payload;
+  if (routed.command.trim().toLowerCase() === "/nobo-help" && /^agent(?:\s|$)/i.test(routed.text.trim())) {
+    return withAgentAdmission({ teamId: routed.team_id, userId: routed.user_id },
+      () => handleAdmittedSlackSlashCommandPayload(routed, options),
       () => immediate(ephemeral(AGENT_BUSY_MESSAGE)));
   }
-  return handleAdmittedSlackSlashCommandPayload(payload, options);
+  return handleAdmittedSlackSlashCommandPayload(routed, options);
 }
 
 async function handleAdmittedSlackSlashCommandPayload(
@@ -298,6 +378,10 @@ async function handleAdmittedSlackSlashCommandPayload(
       if (!(error instanceof XMediaError)) throw error;
       return immediate(ephemeral(`${error.message}\n\n${X_MEDIA_HELP}`));
     }
+  }
+
+  if (command === "/nobo") {
+    return handleUnifiedNoboLauncher(payload);
   }
 
   if (command === "/nobo-dad-joke") {
@@ -392,7 +476,7 @@ async function handleAdmittedSlackSlashCommandPayload(
   if (command !== "/nobo-help") {
     return immediate(
       ephemeral(
-        "This endpoint is configured for `/nobo-help`, `/nobo-status`, `/nobo-admin`, `/nobo-search`, `/nobo-x`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-polls`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo-help`."
+        "This endpoint is configured for `/nobo` (unified hub) as well as `/nobo-help`, `/nobo-status`, `/nobo-admin`, `/nobo-search`, `/nobo-x`, `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-issues`, `/nobo-polls`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`. Try `/nobo` or `/nobo-help`."
       )
     );
   }
@@ -426,6 +510,7 @@ async function handleAdmittedSlackSlashCommandPayload(
 export function formatNoboSlashCommandHelp() {
   return [
     `*NoBo slash commands*`,
+    "`/nobo [command]`: unified launcher modal & command router (e.g. `/nobo model`, `/nobo reminder`, `/nobo search <query>`, `/nobo polls`, `/nobo agent`, `/nobo tools`)",
     "`/nobo-help`: show this help",
     "`/nobo-help tools`: private productivity toolbox (also in NoBo Home)",
     "`/nobo-help agent`: personal agent features and command examples",
@@ -439,7 +524,7 @@ export function formatNoboSlashCommandHelp() {
     "`/nobo-artifacts [list|update <id> <content>|versions <id>|diff <id>|rollback <id>|delete <id>|cleanup]`: manage your generated artifacts",
     "`/nobo-decisions [add <decision>|list]`: capture or list channel decisions",
     "`/nobo-issues [github|linear|both] [create] <follow-up bullets>`: draft or create issues",
-    "`/nobo-polls [create|list|vote|results|close]`: run lightweight channel polls",
+    "`/nobo-polls [create|list|vote|results|close]`: run interactive channel polls with 1-click voting",
     "`/nobo-news [focus]`: post this week's news digest",
     "`/nobo-hacker-news [focus]`: post top trending Hacker News stories",
     "`/nobo-ai-news [focus]`: post this week's AI news digest",
@@ -450,6 +535,92 @@ export function formatNoboSlashCommandHelp() {
     "",
     formatSlackSkillHelp()
   ].join("\n");
+}
+
+function handleUnifiedNoboLauncher(payload: SlackSlashCommandPayload): SlackSlashCommandResult {
+  const trimmed = payload.text.trim();
+  if (trimmed) {
+    return immediate(
+      ephemeral(
+        `I don't recognize \`/nobo ${trimmed}\`. Try \`/nobo\` for the quick launcher, or subcommands like \`search\`, \`model\`, \`reminder\`, \`prefs\`, \`polls\`, \`digest\`, \`artifacts\`, \`decisions\`, \`news\`, \`ai-news\`, \`hn\`, \`tools\`, \`agent\`, \`status\`, or \`help\`.`
+      )
+    );
+  }
+
+  const context: SlackModalContext = {
+    userId: payload.user_id,
+    channelId: payload.channel_id
+  };
+
+  if (payload.trigger_id) {
+    return {
+      response: ephemeral("Opening NoBo quick launcher."),
+      modal: {
+        triggerId: payload.trigger_id,
+        view: buildQuickLauncherModal(context)
+      }
+    };
+  }
+
+  return immediate({
+    ...ephemeral("NoBo quick launcher — pick an action or run `/nobo <command>`."),
+    blocks: buildQuickLauncherBlocks()
+  });
+}
+
+function buildQuickLauncherModal(context: SlackModalContext): SlackView {
+  return {
+    type: "modal",
+    callback_id: LAUNCHER_MODAL_CALLBACK_ID,
+    private_metadata: encodeModalMetadata(context),
+    title: plainText("NoBo"),
+    close: plainText("Close"),
+    blocks: buildQuickLauncherBlocks()
+  };
+}
+
+function buildQuickLauncherBlocks(): SlackBlock[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "*Quick actions*\nJump straight into a form or workspace tool without memorizing slash commands."
+      }
+    },
+    {
+      type: "actions",
+      elements: [
+        { type: "button", text: plainText("New reminder"), style: "primary", action_id: `${OPEN_MODAL_ACTION_PREFIX}reminder` },
+        { type: "button", text: plainText("Preferences"), action_id: `${OPEN_MODAL_ACTION_PREFIX}prefs` },
+        { type: "button", text: plainText("Channel digest"), action_id: `${OPEN_MODAL_ACTION_PREFIX}digest` },
+        { type: "button", text: plainText("Artifacts"), action_id: `${OPEN_MODAL_ACTION_PREFIX}artifacts` }
+      ]
+    },
+    {
+      type: "actions",
+      elements: [
+        { type: "button", text: plainText("Personal toolbox"), action_id: "nobo_home_open_toolbox", value: "toolbox" },
+        { type: "button", text: plainText("Personal agents"), action_id: "nobo_home_open_agents", value: "agents" },
+        { type: "button", text: plainText("Model settings"), action_id: "nobo_home_open_models", value: "models" }
+      ]
+    },
+    { type: "divider" },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: [
+          "*Popular `/nobo` shortcuts*",
+          "• `/nobo search <query>` — search channel history & documents",
+          "• `/nobo model` — switch this channel's AI model",
+          "• `/nobo polls create Question? | Yes | No` — start a clickable poll",
+          "• `/nobo listen [on|off]` — toggle active listening",
+          "• `/nobo ai-news` · `/nobo hn` · `/nobo status` · `/nobo help`"
+        ].join("\n")
+      }
+    }
+  ];
 }
 
 async function handleAdminSlashCommand(
@@ -559,9 +730,8 @@ async function handlePollsSlashCommand(
     source: "slash-command"
   });
 
-  return immediate(
-    result.responseType === "in_channel" ? inChannel(result.text) : ephemeral(result.text)
-  );
+  const base = result.responseType === "in_channel" ? inChannel(result.text) : ephemeral(result.text);
+  return immediate(result.blocks ? { ...base, blocks: result.blocks } : base);
 }
 
 async function handleStatusSlashCommand(
@@ -800,6 +970,42 @@ export async function handleSlackInteractionRequest(
     return handleSlackOpenModalAction(payload, modalAction.action_id ?? "");
   }
 
+  const pollAction = payload.actions?.find(
+    (candidate) =>
+      candidate.action_id?.startsWith(POLL_VOTE_ACTION_PREFIX) ||
+      candidate.action_id === POLL_CLOSE_ACTION_ID ||
+      candidate.action_id === POLL_CLOSE_DECISION_ACTION_ID
+  );
+
+  if (pollAction) {
+    return handleSlackPollAction(payload, pollAction);
+  }
+
+  const resetModelAction = payload.actions?.find(
+    (candidate) => candidate.action_id === CHANNEL_MODEL_RESET_ACTION_ID
+  );
+
+  if (resetModelAction) {
+    const channelId = payload.channel?.id;
+    if (!channelId) {
+      return { response: ephemeral("Slack did not send a channel for this action.") };
+    }
+    const clearModelPreference = options.clearChannelModelPreference ?? clearChannelModelPreference;
+    const result = await clearModelPreference(channelId);
+    if (!result.ok) {
+      return { response: ephemeral(`Couldn't reset channel model: ${result.reason}`) };
+    }
+    const defaultModel = getDefaultSlackTextModel();
+    const response = await buildChannelModelSelectorResponse(channelId, defaultModel);
+    return {
+      response: {
+        ...response,
+        text: `Reset this channel to the default model: \`${defaultModel}\`.`,
+        replace_original: true
+      }
+    };
+  }
+
   const action = payload.actions?.find(
     (candidate) => candidate.action_id === CHANNEL_MODEL_ACTION_ID
   );
@@ -894,6 +1100,62 @@ async function handleSlackShortcutPayload(
   };
 }
 
+async function handleSlackPollAction(
+  payload: SlackInteractionPayload,
+  action: SlackInteractionAction
+): Promise<SlackInteractionResult> {
+  const channelId = payload.channel?.id;
+  const userId = payload.user?.id;
+
+  if (!channelId) {
+    return { response: ephemeral("Slack did not send a channel for this poll action.") };
+  }
+
+  if (action.action_id?.startsWith(POLL_VOTE_ACTION_PREFIX)) {
+    if (!userId) {
+      return { response: ephemeral("Slack did not send a user for this vote.") };
+    }
+    const [pollId = "", choice = ""] = (action.value ?? "").split(":");
+    const result = await recordSlackPollVote({
+      channelId,
+      pollId,
+      choice,
+      userId,
+      source: "command"
+    });
+    if (!result.ok) {
+      return { response: ephemeral(`Couldn't record vote: ${result.reason}`) };
+    }
+    return {
+      response: {
+        ...inChannel(formatPollVoteRecorded(result.poll, result.option, userId)),
+        blocks: buildSlackPollBlocks(result.poll),
+        replace_original: true
+      }
+    };
+  }
+
+  const recordDecision = action.action_id === POLL_CLOSE_DECISION_ACTION_ID;
+  const pollId = action.value ?? "";
+  const result = await closeSlackPoll({
+    channelId,
+    pollId,
+    userId,
+    recordDecision,
+    source: "slash-command"
+  });
+  if (!result.ok) {
+    return { response: ephemeral(`Couldn't close poll: ${result.reason}`) };
+  }
+  return {
+    response: {
+      ...inChannel(formatPollClosed(result.poll, result.decisionText)),
+      blocks: buildSlackPollBlocks(result.poll, result.decisionText),
+      replace_original: true
+    }
+  };
+}
+
 async function handleSlackOpenModalAction(
   payload: SlackInteractionPayload,
   actionId: string
@@ -905,9 +1167,10 @@ async function handleSlackOpenModalAction(
     return { response: ephemeral("Slack did not send a trigger for this action.") };
   }
 
+  const metadata = parseModalMetadata(payload.view?.private_metadata);
   const view = await buildModalForKind(kind, {
-    userId: payload.user?.id,
-    channelId: payload.channel?.id
+    userId: payload.user?.id ?? metadata.userId,
+    channelId: payload.channel?.id ?? metadata.channelId
   });
 
   if (!view) {
@@ -1051,7 +1314,10 @@ async function buildPreferencesModal(context: SlackModalContext): Promise<SlackV
     submit: plainText("Save"),
     close: plainText("Cancel"),
     blocks: [
-      inputBlock("prefs_timezone", "Timezone", plainTextInput("prefs_timezone_input", preferences.timeZone)),
+      {
+        ...inputBlock("prefs_timezone", "Timezone", plainTextInput("prefs_timezone_input", preferences.timeZone, "America/Chicago")),
+        hint: plainText("IANA timezone, e.g. America/Chicago, America/New_York, America/Los_Angeles, Europe/London, or UTC.")
+      },
       inputBlock(
         "prefs_verbosity",
         "Verbosity",
@@ -1061,7 +1327,10 @@ async function buildPreferencesModal(context: SlackModalContext): Promise<SlackV
           option("Detailed", "detailed")
         ], preferences.verbosity)
       ),
-      inputBlock("prefs_news", "News interests", plainTextInput("prefs_news_input", preferences.newsInterests.join(", ")), true),
+      {
+        ...inputBlock("prefs_news", "News interests", plainTextInput("prefs_news_input", preferences.newsInterests.join(", "), "ai, startups, security"), true),
+        hint: plainText("Comma-separated topics used by /nobo-news when no focus is supplied.")
+      },
       inputBlock(
         "prefs_reminder_style",
         "Reminder style",
@@ -1371,11 +1640,12 @@ function inputBlock(blockId: string, label: string, element: Record<string, unkn
   };
 }
 
-function plainTextInput(actionId: string, initialValue: string) {
+function plainTextInput(actionId: string, initialValue: string, placeholder?: string) {
   return {
     type: "plain_text_input",
     action_id: actionId,
     ...(initialValue ? { initial_value: initialValue } : {}),
+    ...(placeholder ? { placeholder: plainText(placeholder) } : {}),
     multiline: initialValue.length > 80
   };
 }
@@ -1487,9 +1757,13 @@ async function buildChannelModelSelectorResponse(
     listOpenCodeGoModels(),
     selectedModelIdOverride ? Promise.resolve(null) : getChannelPreferences(channelId)
   ]);
+  const defaultModelId = getDefaultSlackTextModel();
   const selectedModelId =
-    selectedModelIdOverride ?? channelPreferences?.modelId ?? getDefaultSlackTextModel();
-  const options = models.slice(0, SLACK_SELECT_MAX_OPTIONS).map(createModelSelectOption);
+    selectedModelIdOverride ?? channelPreferences?.modelId ?? defaultModelId;
+  const sortedModels = [...models].sort((left, right) =>
+    Number(isOpenCodeGoFeaturedModel(right.id)) - Number(isOpenCodeGoFeaturedModel(left.id))
+  );
+  const options = sortedModels.slice(0, SLACK_SELECT_MAX_OPTIONS).map(createModelSelectOption);
   const selectedOption =
     options.find((option) => option.value === selectedModelId) ??
     createModelSelectOption({
@@ -1533,7 +1807,17 @@ async function buildChannelModelSelectorResponse(
             },
             initial_option: selectedOption,
             options
-          }
+          },
+          ...(selectedModelId !== defaultModelId
+            ? [
+                {
+                  type: "button",
+                  text: plainText("Reset to default"),
+                  action_id: CHANNEL_MODEL_RESET_ACTION_ID,
+                  value: defaultModelId
+                }
+              ]
+            : [])
         ]
       }
     ]
@@ -1602,6 +1886,7 @@ async function resolveOpenCodeGoModelId(input: string) {
 
 function createModelSelectOption(model: { id: string; name: string }) {
   const capabilities = [
+    isOpenCodeGoFeaturedModel(model.id) ? "featured" : null,
     supportsOpenCodeGoImageInput(model.id) ? "image" : "text-only",
     requiresOpenCodeGoDataTrainingOptIn(model.id) ? "training opt-in" : null
   ].filter(Boolean);

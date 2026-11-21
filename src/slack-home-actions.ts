@@ -16,15 +16,20 @@ import {
   editOwnedSchedule,
 } from "../lib/schedules.js";
 import { listRecentArtifacts } from "../lib/artifacts.js";
+import { cancelMonitorById } from "../lib/monitors.js";
+import { removeUserMemory } from "../lib/memory.js";
+import { homeTimestamp } from "../lib/slack-home-view.js";
 import {
   getDefaultSlackTextModel,
   getDefaultSlackVisionModel,
+  isOpenCodeGoFeaturedModel,
   listOpenCodeGoModelDefinitions,
   normalizeOpenCodeGoSupportedModelId,
   supportsOpenCodeGoImageInput,
   requiresOpenCodeGoDataTrainingOptIn,
 } from "../lib/nobo-models.js";
 import {
+  getUserPreferences,
   setChannelModelPreference,
   clearChannelModelPreference,
 } from "../lib/preferences.js";
@@ -130,7 +135,22 @@ export function registerSlackHomeActions(
             ),
           ),
         );
-        await publishSlackAppHome(body.user.id);
+        await dependencies.publish(body.user.id);
+      } else if (action.action_id === "nobo_home_cancel_monitor") {
+        const message = await cancelMonitorById(body.user.id, id);
+        await show(modal("Monitor updated", textBlocks(escapeSlack(message))));
+        await dependencies.publish(body.user.id);
+      } else if (action.action_id === "nobo_home_forget_memory") {
+        const result = await removeUserMemory(body.user.id, id);
+        const message = result.ok
+          ? result.status === "removed"
+            ? `Removed from memory: ${result.removed}`
+            : result.status === "missing"
+              ? "That memory was already removed."
+              : "Multiple memories matched. Reopen Remembered about you to refresh."
+          : `Couldn't update memory: ${result.reason}`;
+        await show(modal("Memory updated", textBlocks(escapeSlack(message))));
+        await dependencies.publish(body.user.id);
       } else if (action.action_id === "nobo_home_edit") {
         const schedule = await getOwnedSchedule(id, body.user.id);
         await show(
@@ -187,12 +207,15 @@ export function registerSlackHomeActions(
       } else if (selected === "toolbox") {
         await show(toolboxView());
       } else if (selected === "reminders") {
-        const items = await getUserScheduleDashboardItems(body.user.id, 10);
+        const [items, prefs] = await Promise.all([
+          getUserScheduleDashboardItems(body.user.id, 10),
+          getUserPreferences(body.user.id),
+        ]);
         const blocks = items.flatMap((item) => [
           ...textBlocks(
             escapeSlack(item.summary) +
               "\nNext: " +
-              escapeSlack(item.nextRunAt),
+              escapeSlack(homeTimestamp(item.nextRunAt, prefs.timeZone)),
           ),
           {
             type: "actions",
@@ -224,16 +247,17 @@ export function registerSlackHomeActions(
           ),
         );
       } else if (selected === "artifacts") {
-        const items = await listRecentArtifacts(15, {
-          ownerUserId: body.user.id,
-        });
+        const [items, prefs] = await Promise.all([
+          listRecentArtifacts(15, { ownerUserId: body.user.id }),
+          getUserPreferences(body.user.id),
+        ]);
         await show(
           modal(
             "Saved documents",
             items.length
               ? items.flatMap((a) =>
                   textBlocks(
-                    `<${a.previewUrl}|${escapeSlack(a.title).replace(/\|/g, " ")}>\n${a.kind} · Updated ${a.updatedAt}\nID: ${a.id.slice(0, 8)}`,
+                    `<${a.previewUrl}|${escapeSlack(a.title).replace(/\|/g, " ")}>\n${a.kind === "html" ? "Web document" : "Note"} · Updated ${escapeSlack(homeTimestamp(a.updatedAt, prefs.timeZone))} · ID \`${a.id.slice(0, 8)}\``,
                   ),
                 )
               : textBlocks(
@@ -242,7 +266,11 @@ export function registerSlackHomeActions(
           ),
         );
       } else if (selected === "models") {
-        const definitions = listOpenCodeGoModelDefinitions();
+        const definitions = [...listOpenCodeGoModelDefinitions()].sort(
+          (left, right) =>
+            Number(isOpenCodeGoFeaturedModel(right.id)) -
+            Number(isOpenCodeGoFeaturedModel(left.id)),
+        );
         await show(
           modal(
             "Model settings",
@@ -274,6 +302,9 @@ export function registerSlackHomeActions(
                     ...definitions.map((model) => ({
                       text: plain(
                         model.id +
+                          (isOpenCodeGoFeaturedModel(model.id)
+                            ? " · featured"
+                            : "") +
                           (supportsOpenCodeGoImageInput(model.id)
                             ? " · images"
                             : "") +

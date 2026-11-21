@@ -12,6 +12,7 @@ import {
   parseSlackSlashCommandPayload
 } from "../lib/slack-commands.js";
 import { __testing as modelTesting } from "../lib/nobo-models.js";
+import { __testing as pollTesting } from "../lib/polls.js";
 
 test("parses Slack slash command payloads", () => {
   const payload = parseSlackSlashCommandPayload(
@@ -850,7 +851,154 @@ test("channel model interaction replaces selector with updated current model", a
     assert.match(JSON.stringify(response.blocks), /fall back to `kimi-k3`/);
     assert.match(JSON.stringify(response.blocks), /"initial_option"/);
     assert.match(JSON.stringify(response.blocks), /"value":"deepseek-v4-pro"/);
+    assert.match(JSON.stringify(response.blocks), /nobo_channel_model_reset/);
   });
+});
+
+test("unified /nobo slash command opens the quick launcher modal and routes subcommands", async () => {
+  const launcher = await handleSlackSlashCommandPayload({
+    command: "/nobo",
+    text: "",
+    user_id: "U123",
+    channel_id: "C123",
+    trigger_id: "trig-1"
+  });
+  assert.equal(launcher.modal?.triggerId, "trig-1");
+  assert.match(JSON.stringify(launcher.modal?.view), /nobo_launcher_modal/);
+  assert.match(JSON.stringify(launcher.modal?.view), /nobo_open_modal:reminder/);
+  assert.match(JSON.stringify(launcher.modal?.view), /nobo_home_open_agents/);
+
+  const joke = await handleSlackSlashCommandPayload({
+    command: "/nobo",
+    text: "joke",
+    user_id: "U123",
+    channel_id: "C123"
+  });
+  assert.equal(joke.response.response_type, "in_channel");
+  assert.match(joke.response.text, /\*Dad joke:\*/);
+
+  const hn = await handleSlackSlashCommandPayload({
+    command: "/nobo",
+    text: "hn typescript",
+    user_id: "U123",
+    channel_id: "C123"
+  });
+  assert.deepEqual(hn.task, {
+    type: "hacker-news",
+    channelId: "C123",
+    userId: "U123",
+    focus: "typescript"
+  });
+
+  const status = await handleSlackSlashCommandPayload(
+    { command: "/nobo", text: "status", user_id: "U123", channel_id: "C123" },
+    { formatOpsStatus: async () => "*NoBo status*\nRedis: ok" }
+  );
+  assert.match(status.response.text, /Redis: ok/);
+});
+
+test("channel model reset button restores workspace default and refreshes selector", async () => {
+  await withMockOpenCodeModels(async () => {
+    const result = await handleSlackInteractionPayload(
+      {
+        type: "block_actions",
+        channel: { id: "C123" },
+        actions: [{ action_id: "nobo_channel_model_reset", value: "kimi-k3" }]
+      },
+      {
+        clearChannelModelPreference: async () => ({
+          ok: true as const,
+          preferences: { modelId: null }
+        })
+      }
+    );
+
+    const response = asSlashResponse(result);
+    assert.equal(response.replace_original, true);
+    assert.match(response.text, /Reset this channel to the default model: `kimi-k3`/);
+    assert.doesNotMatch(JSON.stringify(response.blocks), /nobo_channel_model_reset/);
+  });
+});
+
+test("Quick Launcher modal actions preserve channel metadata when opening child modals", async () => {
+  const result = await handleSlackInteractionRequest({
+    type: "block_actions",
+    trigger_id: "trigger-123",
+    user: { id: "U123" },
+    view: {
+      id: "V1",
+      callback_id: "nobo_launcher_modal",
+      private_metadata: JSON.stringify({ userId: "U123", channelId: "C789" })
+    },
+    actions: [{ action_id: "nobo_open_modal:reminder", value: "reminder" }]
+  });
+
+  assert.ok(result.modal);
+  assert.equal(result.modal.triggerId, "trigger-123");
+  assert.equal(result.modal.view.callback_id, "nobo_reminder_modal");
+  assert.match(JSON.stringify(result.modal.view), /C789/);
+});
+
+test("interactive poll buttons record votes and close polls in place", async (t) => {
+  const memory = new Map<string, string>();
+  const store = {
+    async get(key: string) {
+      return memory.get(key) ?? null;
+    },
+    async eval(_script: string, options: { keys: string[]; arguments: string[] }) {
+      const [presence, expected, replacement, decisionPayload] = options.arguments;
+      const current = memory.get(options.keys[0]) ?? null;
+      if (presence === "missing" ? current !== null : current !== expected) {
+        return 0;
+      }
+      if (decisionPayload) {
+        const decision = JSON.parse(decisionPayload);
+        const previous = JSON.parse(memory.get(options.keys[1]) ?? '{"decisions":[]}');
+        memory.set(options.keys[1], JSON.stringify({ decisions: [...(previous.decisions ?? []), decision] }));
+      }
+      memory.set(options.keys[0], replacement);
+      return 1;
+    }
+  };
+  pollTesting.setRedisProvider(async () => store);
+  t.after(() => pollTesting.setRedisProvider());
+
+  const created = await handleSlackSlashCommandPayload({
+    command: "/nobo",
+    text: "poll Ship Friday? | Yes | No",
+    user_id: "U123",
+    channel_id: "C123"
+  });
+  assert.equal(created.response.response_type, "in_channel");
+  assert.ok(Array.isArray(created.response.blocks));
+  const voteValue = (JSON.stringify(created.response.blocks).match(/"value":"([^"]+:1)"/) ?? [])[1];
+  assert.ok(voteValue);
+  const pollId = voteValue.split(":")[0]!;
+
+  const voted = asSlashResponse(
+    await handleSlackInteractionPayload({
+      type: "block_actions",
+      channel: { id: "C123" },
+      user: { id: "U456" },
+      actions: [{ action_id: "nobo_poll_vote:1", value: voteValue }]
+    })
+  );
+  assert.equal(voted.replace_original, true);
+  assert.match(voted.text, /Recorded <@U456>'s vote for poll .*Yes/);
+  assert.match(JSON.stringify(voted.blocks), /100% \(1 vote\)/);
+
+  const closed = asSlashResponse(
+    await handleSlackInteractionPayload({
+      type: "block_actions",
+      channel: { id: "C123" },
+      user: { id: "U123" },
+      actions: [{ action_id: "nobo_poll_close_decision", value: pollId }]
+    })
+  );
+  assert.equal(closed.replace_original, true);
+  assert.match(closed.text, /\*Poll .* closed\*: Ship Friday/);
+  assert.match(JSON.stringify(closed.blocks), /Decision logged: \*Ship Friday: Yes\*/);
+  assert.doesNotMatch(JSON.stringify(closed.blocks), /nobo_poll_vote:/);
 });
 
 async function withTempArtifactDir(run: () => Promise<void>) {

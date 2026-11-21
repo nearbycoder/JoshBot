@@ -2,6 +2,7 @@ import type { App } from "@slack/bolt";
 import type { ViewsOpenArguments } from "@slack/web-api";
 import { randomUUID } from "node:crypto";
 import { features, handleToolbox } from "../lib/toolbox/index.js";
+import { toolboxExamples } from "../lib/toolbox/examples.js";
 import { evaluateNoboAccess } from "../lib/access-controls.js";
 import { recordOpsError } from "../lib/ops-errors.js";
 
@@ -11,6 +12,7 @@ export function toolboxView(
 ): ViewsOpenArguments["view"] {
   const plain = (text: string) => ({ type: "plain_text" as const, text });
   const options = features.map((f) => ({ text: plain(f.title), value: f.id }));
+  const example = toolboxExamples[selected] ?? "help";
   const nonce = randomUUID();
   return {
     type: "modal",
@@ -46,6 +48,7 @@ export function toolboxView(
           multiline: true,
           max_length: 3000,
           initial_value: "help",
+          placeholder: plain(`e.g. ${example}`.slice(0, 150)),
         },
       },
     ],

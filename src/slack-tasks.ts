@@ -1,19 +1,27 @@
 import { createConditionalMonitorCheck, createScheduledSlackMessage, createWeeklyAiNewsSlackDigest, createWeeklyNewsSlackDigest } from "../lib/ai.js";
-import { startChannelDigestSubscriptionRunner } from "../lib/channel-digests.js";
+import { startChannelDigestSubscriptionRunner, stopChannelDigestSubscriptionRunner } from "../lib/channel-digests.js";
 import { createHackerNewsSlackDigest } from "../lib/hacker-news.js";
-import { startHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
+import { startHackerNewsSchedule, stopHackerNewsSchedule } from "../lib/hacker-news-schedule.js";
 import type { SlackSlashCommandPayload, SlackSlashCommandTask } from "../lib/slack-commands.js";
 import { postGeneratedSlackMessage, postSlackMessage } from "../lib/slack.js";
 import { appendChannelMemory, type ChannelMemoryEntry } from "../lib/memory.js";
-import { startMonitorRunner } from "../lib/monitors.js";
+import { startMonitorRunner, stopMonitorRunner } from "../lib/monitors.js";
 import { getPreferredNewsFocus, getUserPreferences } from "../lib/preferences.js";
-import { startScheduleRunner } from "../lib/schedules.js";
+import { startScheduleRunner, stopScheduleRunner } from "../lib/schedules.js";
 
 export function startBackgroundRunners() {
   startScheduleRunner({ postSlackMessage, runScheduledTask: createScheduledSlackMessage });
   startMonitorRunner({ postSlackMessage, runMonitorCheck: createConditionalMonitorCheck });
   startChannelDigestSubscriptionRunner({ postSlackMessage });
   startHackerNewsSchedule();
+  return stopBackgroundRunners;
+}
+
+export function stopBackgroundRunners() {
+  stopScheduleRunner();
+  stopMonitorRunner();
+  stopChannelDigestSubscriptionRunner();
+  stopHackerNewsSchedule();
 }
 
 export async function runSlackSlashCommandTask(task: SlackSlashCommandTask, commandText: string) {

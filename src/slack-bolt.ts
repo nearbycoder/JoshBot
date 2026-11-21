@@ -15,6 +15,7 @@ import { registerSlackHomeActions } from "./slack-home-actions.js";
 import { registerSlackToolbox } from "./slack-toolbox.js";
 import { uploadXMedia, xMediaUploadClient, XMediaError } from "../lib/x-media.js";
 import { X_MEDIA_MODAL, buildXMediaStatusModal, parseXMediaSubmission } from "../lib/x-media-modal.js";
+import { publishSlackAppHome } from "../lib/slack.js";
 
 export const SLACK_ENDPOINTS = ["/api/slack/events", "/api/slack/commands", "/api/slack/interactions", "/slack/events"];
 const defaultHandlers = {
@@ -126,7 +127,9 @@ export function createSlackBolt(options: {
     await ack();
     const result = await handlers.interaction(body as SlackInteractionPayload);
     if (result.modal) {
-      await client.views.open({ trigger_id: result.modal.triggerId, view: toBoltView(result.modal.view) });
+      const opening = { trigger_id: result.modal.triggerId, view: toBoltView(result.modal.view) };
+      if ("view" in body && body.view?.type === "modal") await client.views.push(opening);
+      else await client.views.open(opening);
     }
     if ("text" in result.response) await respond(result.response);
   });
@@ -172,6 +175,11 @@ export function createSlackBolt(options: {
       view: toBoltView(result.response.view)
     });
     else await ack();
+    const callbackId = body.view.callback_id;
+    if (process.env.SLACK_BOT_TOKEN && body.user?.id &&
+        (callbackId === "nobo_prefs_modal" || callbackId === "nobo_reminder_modal")) {
+      void publishSlackAppHome(body.user.id).catch(() => {});
+    }
   });
   bolt.view({ callback_id: /.*/, type: "view_closed" }, async ({ ack }) => { await ack(); });
   return { bolt, receiver };

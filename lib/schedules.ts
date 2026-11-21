@@ -213,6 +213,8 @@ export async function maybeHandleScheduleCommand(event: SlackMessageEvent) {
   return null;
 }
 
+let scheduleRunnerTimer: ReturnType<typeof setInterval> | null = null;
+
 export function startScheduleRunner({
   postSlackMessage,
   runScheduledTask
@@ -232,12 +234,21 @@ export function startScheduleRunner({
     console.error(`Schedule runner failed: ${summarizeError(error)}`);
   });
 
-  setInterval(() => {
+  scheduleRunnerTimer = setInterval(() => {
     void runDueSchedules({ postSlackMessage, runScheduledTask }).catch((error) => {
       recordOpsError("schedule runner", error);
       console.error(`Schedule runner failed: ${summarizeError(error)}`);
     });
-  }, intervalMs).unref();
+  }, intervalMs);
+  scheduleRunnerTimer.unref();
+}
+
+export function stopScheduleRunner() {
+  if (scheduleRunnerTimer) {
+    clearInterval(scheduleRunnerTimer);
+    scheduleRunnerTimer = null;
+  }
+  schedulerStarted = false;
 }
 
 export function getScheduleRunnerStatus() {

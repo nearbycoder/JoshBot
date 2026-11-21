@@ -11,6 +11,9 @@ import {
   registerSlackHomeActions,
   resolveHomeDestination,
 } from "../src/slack-home-actions.js";
+import { __testing as monitorTesting } from "../lib/monitors.js";
+import type { getRedisClient } from "../lib/redis.js";
+import { SchedulerRedis } from "./helpers/scheduler-redis.js";
 
 const empty = (): SlackHomeDashboardData => ({
   userId: "U1",
@@ -131,11 +134,15 @@ test("secondary information and commands remain accessible in focused detail mod
   ];
   const memory = buildSlackHomeDetailsView(data, "memory");
   assert.equal((memory.blocks[1].text as { type: string }).type, "plain_text");
+  assert.equal((memory.blocks[1].accessory as { action_id?: string }).action_id, "nobo_home_forget_memory");
   assert.match(JSON.stringify(memory), /Private preference/);
   assert.match(
     JSON.stringify(buildSlackHomeDetailsView(data, "channels")),
     /deepseek-v4-pro.*channel override/,
   );
+  data.monitors = [{ id: "mon123456789", summary: "Alert on deploy failed", nextRunAt: "2026-09-08T18:00:00Z" }];
+  const monitors = buildSlackHomeDetailsView(data, "monitors");
+  assert.equal((monitors.blocks[1].accessory as { action_id?: string }).action_id, "nobo_home_cancel_monitor");
   const help = JSON.stringify(buildSlackHomeDetailsView(data, "help"));
   for (const command of [
     "summarize-thread",
@@ -235,4 +242,72 @@ test("Home buttons and legacy menu route correctly; refresh stays private and sk
   allowed = false;
   await actionHandler(input);
   assert.deepEqual(calls, ["ack"]);
+});
+
+test("Home monitor cancel action cancels owned monitor and refreshes Home", async (t) => {
+  const redis = new SchedulerRedis();
+  monitorTesting.setRedisProvider(
+    async () => redis as unknown as NonNullable<Awaited<ReturnType<typeof getRedisClient>>>,
+  );
+  t.after(() => monitorTesting.setRedisProvider());
+  const id = "mon123456789";
+  await redis.set(
+    `monitors:job:${id}`,
+    JSON.stringify({
+      id,
+      ownerUserId: "UOWNER",
+      channel: "C123",
+      timezone: "America/Chicago",
+      createdAt: "2026-11-20T00:00:00.000Z",
+      nextRunAt: "2026-11-21T00:00:00.000Z",
+      kind: "interval",
+      intervalMs: 60_000,
+      source: "prompt",
+      conditionType: "appears",
+      query: "deploy failed",
+    }),
+  );
+  await redis.sAdd("monitors:user:UOWNER", id);
+  await redis.zAdd("monitors:due", { value: id, score: Date.now() + 60_000 });
+
+  let actionHandler: (args: any) => Promise<void> = async () => {};
+  const updates: unknown[] = [];
+  const published: string[] = [];
+  registerSlackHomeActions(
+    {
+      action: (_pattern: unknown, handler: typeof actionHandler) =>
+        (actionHandler = handler),
+      view: () => {},
+    } as unknown as App,
+    {
+      access: (async () => ({ allowed: true })) as any,
+      publish: (async (user: string) => {
+        published.push(user);
+      }) as any,
+      details: async (_user, kind) => buildSlackHomeDetailsView(empty(), kind),
+    },
+  );
+
+  await actionHandler({
+    ack: async () => {},
+    body: {
+      user: { id: "UOWNER" },
+      team: { id: "T1" },
+      trigger_id: "trigger",
+      view: { type: "modal" },
+    },
+    action: { action_id: "nobo_home_cancel_monitor", value: id },
+    client: {
+      views: {
+        push: async () => ({ view: { id: "V2" } }),
+        update: async (args: unknown) => {
+          updates.push(args);
+        },
+      },
+    },
+  });
+
+  assert.equal(await redis.get(`monitors:job:${id}`), null);
+  assert.deepEqual(published, ["UOWNER"]);
+  assert.match(JSON.stringify(updates), /Canceled monitor `mon12345`/);
 });

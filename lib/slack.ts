@@ -972,6 +972,65 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
       return;
     }
 
+    const memories = event.user ? await getUserMemories(event.user) : [];
+    const modelMessages = await toModelMessages(threadMessages, event.user, {
+      token,
+      liveEvent: event
+    });
+    const skillStream = createSlackReplyStreamer({
+      token,
+      channel: event.channel,
+      threadTs: event.thread_ts,
+      nativeAi: createSlackNativeAiTarget(event, conversationThreadTs)
+    });
+    let skillReply: string | null;
+
+    try {
+      skillReply = await maybeHandleSlackSkillCommand({
+        commandText: stripSlackFormatting(event.text),
+        modelMessages,
+        memories,
+        currentUserId: event.user,
+        channelMemories,
+        channelId: event.channel,
+        threadTs: conversationThreadTs,
+        messageTs: event.ts,
+        scheduleContext: getScheduleContext(event),
+        onTextDelta: skillStream?.append,
+        beforeModelReply: skillStream.start
+      });
+    } catch (error) {
+      await skillStream?.fail();
+      throw error;
+    }
+
+    if (skillReply) {
+      const postedReply = await finishSlackReply({
+        token,
+        channel: event.channel,
+        threadTs: event.thread_ts,
+        text: skillReply,
+        stream: skillStream
+      });
+      await recordAssistantChannelMemory({
+        channel: event.channel,
+        threadTs: conversationThreadTs,
+        text: skillReply,
+        ts: postedReply.ts
+      });
+
+      await saveCachedThreadMessages(
+        event.channel,
+        conversationThreadTs,
+        appendCachedThreadMessage(threadMessages, {
+          role: "assistant",
+          content: skillReply,
+          ts: postedReply.ts
+        })
+      );
+      return;
+    }
+
     const replyStream = createSlackReplyStreamer({
       token,
       channel: event.channel,
@@ -986,7 +1045,8 @@ export async function respondToSlackDirectMessage(event: SlackMessageEvent) {
         token,
         threadMessages,
         event,
-        memories: event.user ? await getUserMemories(event.user) : [],
+        memories,
+        modelMessages,
         channelMemories,
         channelId: event.channel,
         onTextDelta: replyStream?.append
@@ -2121,26 +2181,39 @@ async function slackApi<T extends { ok: boolean }>({
   path: string;
   body?: Record<string, unknown>;
 }): Promise<Extract<T, { ok: true }>> {
-  const response = await fetch(`https://slack.com/api/${path}`, {
-    method,
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json; charset=utf-8"
-    },
-    body: method === "POST" ? JSON.stringify(body ?? {}) : undefined
-  });
+  const maxAttempts = method === "GET" ? 3 : 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetch(`https://slack.com/api/${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8"
+      },
+      body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
+      signal: AbortSignal.timeout(15_000)
+    });
 
-  if (!response.ok) {
-    throw new Error(`Slack API request failed with HTTP ${response.status}`);
+    if (response.status === 429 && attempt < maxAttempts) {
+      const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "1");
+      const delayMs = Math.min(Math.max(Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 1000, 200), 10_000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Slack API request failed with HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as T;
+
+    if (!payload.ok) {
+      throw new Error(`Slack API error: ${JSON.stringify(payload)}`);
+    }
+
+    return payload as Extract<T, { ok: true }>;
   }
 
-  const payload = (await response.json()) as T;
-
-  if (!payload.ok) {
-    throw new Error(`Slack API error: ${JSON.stringify(payload)}`);
-  }
-
-  return payload as Extract<T, { ok: true }>;
+  throw new Error("Slack API request exhausted rate-limit retries");
 }
 
 async function maybeHandleMemoryCommand(event: SlackMessageEvent) {
@@ -2735,16 +2808,28 @@ function getSupportedDocumentAttachmentType(file: SlackFile) {
     return "xlsx" as const;
   }
 
+  if (
+    mimetype === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    filetype === "pptx" ||
+    hasSlackFileExtension(file, [".pptx"])
+  ) {
+    return "pptx" as const;
+  }
+
   return null;
 }
 
-async function extractDocumentText(bytes: Buffer, type: "pdf" | "docx" | "xlsx") {
+async function extractDocumentText(bytes: Buffer, type: "pdf" | "docx" | "xlsx" | "pptx") {
   if (type === "pdf") {
     return extractPdfText(bytes);
   }
 
   if (type === "docx") {
     return extractDocxText(bytes);
+  }
+
+  if (type === "pptx") {
+    return extractPptxText(bytes);
   }
 
   return extractXlsxText(bytes);
@@ -2784,6 +2869,26 @@ function extractDocxText(bytes: Buffer) {
     .sort((left, right) => left.entryName.localeCompare(right.entryName));
 
   return entries.map((entry) => extractOpenXmlText(entry.getData().toString("utf8"))).filter(Boolean).join("\n\n");
+}
+
+function extractPptxText(bytes: Buffer) {
+  const zip = new AdmZip(bytes);
+  const slides = zip
+    .getEntries()
+    .map((entry) => {
+      const match = entry.entryName.match(/^ppt\/slides\/slide(\d+)\.xml$/u);
+      return match ? { entry, number: Number(match[1]) } : null;
+    })
+    .filter((slide): slide is { entry: AdmZip.IZipEntry; number: number } => slide !== null)
+    .sort((left, right) => left.number - right.number);
+
+  return slides
+    .map(({ entry, number }) => {
+      const text = extractOpenXmlText(entry.getData().toString("utf8"));
+      return text ? `Slide ${number}:\n${text}` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function extractXlsxText(bytes: Buffer) {
@@ -3031,10 +3136,18 @@ function createSlackTextBlocks(text: string): SlackBlock[] {
 function splitSlackSectionBlockText(input: string) {
   const chunks: string[] = [];
   let current = "";
+  let inCodeFence = false;
+  const effectiveLimit = SLACK_SECTION_BLOCK_TEXT_LIMIT - 8;
   const lines = (input || " ").split("\n");
 
-  const pushCurrent = () => {
+  const pushCurrent = (preserveFence = false) => {
     if (!current) {
+      return;
+    }
+
+    if (preserveFence && inCodeFence) {
+      chunks.push(`${current}\n\`\`\``);
+      current = "```";
       return;
     }
 
@@ -3043,34 +3156,52 @@ function splitSlackSectionBlockText(input: string) {
   };
 
   for (const line of lines) {
+    const trimmed = line.trimStart();
+    const togglesFence = trimmed.startsWith("```") && (trimmed.match(/```/g)?.length ?? 0) % 2 === 1;
     let remaining = line;
 
-    while (remaining.length > SLACK_SECTION_BLOCK_TEXT_LIMIT) {
-      const slice = remaining.slice(0, SLACK_SECTION_BLOCK_TEXT_LIMIT);
+    while (remaining.length > effectiveLimit) {
+      const slice = remaining.slice(0, effectiveLimit);
       const candidate = current ? `${current}\n${slice}` : slice;
 
-      if (candidate.length > SLACK_SECTION_BLOCK_TEXT_LIMIT) {
-        pushCurrent();
-        chunks.push(slice);
+      if (candidate.length > effectiveLimit) {
+        pushCurrent(true);
+        const nextCandidate = current ? `${current}\n${slice}` : slice;
+        if (inCodeFence) {
+          chunks.push(`${nextCandidate}\n\`\`\``);
+          current = "```";
+        } else {
+          chunks.push(nextCandidate);
+          current = "";
+        }
       } else {
-        chunks.push(candidate);
-        current = "";
+        if (inCodeFence) {
+          chunks.push(`${candidate}\n\`\`\``);
+          current = "```";
+        } else {
+          chunks.push(candidate);
+          current = "";
+        }
       }
 
-      remaining = remaining.slice(SLACK_SECTION_BLOCK_TEXT_LIMIT);
+      remaining = remaining.slice(effectiveLimit);
     }
 
     const candidate = current ? `${current}\n${remaining}` : remaining;
 
-    if (candidate.length > SLACK_SECTION_BLOCK_TEXT_LIMIT) {
-      pushCurrent();
-      current = remaining;
+    if (candidate.length > effectiveLimit) {
+      pushCurrent(true);
+      current = current ? `${current}\n${remaining}` : remaining;
     } else {
       current = candidate;
     }
+
+    if (togglesFence) {
+      inCodeFence = !inCodeFence;
+    }
   }
 
-  pushCurrent();
+  pushCurrent(false);
 
   if (chunks.length === 0) {
     chunks.push(" ");
@@ -3505,6 +3636,8 @@ function summarizeError(error: unknown) {
 }
 
 export const __testing = {
+  createSlackTextBlocks,
+  splitSlackSectionBlockText,
   updateSlackMessageWithWidgetFallback,
   acquireActiveListeningReplySlot,
   acknowledgeTargetedSlackEvent,

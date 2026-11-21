@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import MiniSearch from "minisearch";
 import { listArtifacts, type ListedArtifact } from "./artifacts.js";
 import { fetchSlackChannelHistory, type SlackChannelHistoryEntry } from "./channel-history.js";
 
@@ -73,40 +74,39 @@ export class LexicalSemanticSearchProvider implements SemanticSearchProvider {
       return [];
     }
 
-    const indexedDocuments = documents.map((document) => ({
-      document,
-      titleTokens: tokenize(document.title),
-      textTokens: tokenize(document.text)
-    }));
-    const averageLength =
-      indexedDocuments.reduce((total, document) => total + document.textTokens.length, 0) /
-        indexedDocuments.length || 1;
-    const documentFrequencies = new Map<string, number>();
+    const index = new MiniSearch<{ id: number; title: string; text: string }>({
+      fields: ["title", "text"],
+      tokenize: (value) => value.toLowerCase().match(/[a-z0-9]+/g) ?? [],
+      processTerm: (term) => (term.length > 1 && !STOP_WORDS.has(term) ? term : null)
+    });
+    index.addAll(documents.map((document, idx) => ({ id: idx, title: document.title, text: document.text })));
 
-    for (const token of new Set(queryTokens)) {
-      documentFrequencies.set(
-        token,
-        indexedDocuments.filter(
-          (document) => document.titleTokens.includes(token) || document.textTokens.includes(token)
-        ).length
-      );
-    }
+    const hits = index.search(query, {
+      boost: { title: 3, text: 1 },
+      prefix: (term) => term.length >= 3,
+      fuzzy: (term) => (term.length >= 5 ? 0.2 : false),
+      combineWith: "OR"
+    });
+    const normalizedQuery = normalizeForPhrase(query);
 
-    return indexedDocuments
-      .map(({ document, titleTokens, textTokens }) => ({
-        document,
-        score: scoreDocument({
-          query,
-          queryTokens,
-          titleTokens,
-          textTokens,
-          documentCount: documents.length,
-          averageLength,
-          documentFrequencies
-        }),
-        excerpt: createExcerpt(document.text, queryTokens)
-      }))
-      .filter((result) => result.score > 0)
+    return hits
+      .map((hit) => {
+        const document = documents[hit.id as number];
+        if (!document) return null;
+        let score = hit.score;
+        if (normalizedQuery.length > 2) {
+          const titlePhrase = normalizeForPhrase(document.title);
+          const textPhrase = normalizeForPhrase(document.text);
+          if (titlePhrase.includes(normalizedQuery)) score += 8;
+          if (textPhrase.includes(normalizedQuery)) score += 5;
+        }
+        return {
+          document,
+          score,
+          excerpt: createExcerpt(document.text, [...new Set([...queryTokens, ...hit.terms])])
+        };
+      })
+      .filter((result): result is SemanticSearchResult => result !== null && result.score > 0)
       .sort(
         (left, right) =>
           right.score - left.score || compareDates(right.document.createdAt, left.document.createdAt)
@@ -227,62 +227,6 @@ async function defaultReadArtifactContent(artifact: ListedArtifact) {
   return readFile(artifact.path, "utf8");
 }
 
-function scoreDocument({
-  query,
-  queryTokens,
-  titleTokens,
-  textTokens,
-  documentCount,
-  averageLength,
-  documentFrequencies
-}: {
-  query: string;
-  queryTokens: string[];
-  titleTokens: string[];
-  textTokens: string[];
-  documentCount: number;
-  averageLength: number;
-  documentFrequencies: Map<string, number>;
-}) {
-  const titleCounts = countTokens(titleTokens);
-  const textCounts = countTokens(textTokens);
-  let score = 0;
-
-  for (const token of queryTokens) {
-    const documentFrequency = documentFrequencies.get(token) ?? 0;
-    const idf = Math.log(1 + (documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5));
-    score += 3 * (titleCounts.get(token) ?? 0) * idf;
-    score += bm25(textCounts.get(token) ?? 0, textTokens.length, averageLength) * idf;
-  }
-
-  const normalizedQuery = normalizeForPhrase(query);
-  if (normalizedQuery.length > 2) {
-    const title = normalizeForPhrase(titleTokens.join(" "));
-    const text = normalizeForPhrase(textTokens.join(" "));
-    if (title.includes(normalizedQuery)) {
-      score += 8;
-    }
-    if (text.includes(normalizedQuery)) {
-      score += 5;
-    }
-  }
-
-  return score;
-}
-
-function bm25(termFrequency: number, documentLength: number, averageLength: number) {
-  if (termFrequency === 0) {
-    return 0;
-  }
-
-  const k1 = 1.2;
-  const b = 0.75;
-  return (
-    (termFrequency * (k1 + 1)) /
-    (termFrequency + k1 * (1 - b + b * (documentLength / averageLength)))
-  );
-}
-
 function tokenize(input: string) {
   const tokens = input
     .toLowerCase()
@@ -290,16 +234,6 @@ function tokenize(input: string) {
     ?.filter((token) => token.length > 1 && !STOP_WORDS.has(token));
 
   return tokens && tokens.length > 0 ? tokens : input.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-}
-
-function countTokens(tokens: string[]) {
-  const counts = new Map<string, number>();
-
-  for (const token of tokens) {
-    counts.set(token, (counts.get(token) ?? 0) + 1);
-  }
-
-  return counts;
 }
 
 function createExcerpt(text: string, queryTokens: string[]) {

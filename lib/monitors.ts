@@ -231,6 +231,8 @@ export async function handleMonitorCommandText({
   return formatCreatedMonitorResult(await createMonitorFromTool(context, parsed.monitor));
 }
 
+let monitorRunnerTimer: ReturnType<typeof setInterval> | null = null;
+
 export function startMonitorRunner({
   postSlackMessage,
   runMonitorCheck
@@ -250,12 +252,21 @@ export function startMonitorRunner({
     console.error(`Monitor runner failed: ${summarizeError(error)}`);
   });
 
-  setInterval(() => {
+  monitorRunnerTimer = setInterval(() => {
     void runDueMonitors({ postSlackMessage, runMonitorCheck }).catch((error) => {
       recordOpsError("monitor runner", error);
       console.error(`Monitor runner failed: ${summarizeError(error)}`);
     });
-  }, intervalMs).unref();
+  }, intervalMs);
+  monitorRunnerTimer.unref();
+}
+
+export function stopMonitorRunner() {
+  if (monitorRunnerTimer) {
+    clearInterval(monitorRunnerTimer);
+    monitorRunnerTimer = null;
+  }
+  monitorRunnerStarted = false;
 }
 
 export function getMonitorRunnerStatus() {
@@ -341,6 +352,10 @@ export async function getUserMonitorDashboardItems(
 
 export async function cancelMonitorFromTool(context: SlackScheduleContext, idPrefix: string) {
   return cancelUserMonitor(context.ownerUserId, idPrefix);
+}
+
+export async function cancelMonitorById(ownerUserId: string, idPrefix: string) {
+  return cancelUserMonitor(ownerUserId, idPrefix);
 }
 
 async function createMonitor(

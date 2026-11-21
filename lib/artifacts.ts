@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import { Marked } from "marked";
 import { renderArtifactImage } from "./artifact-images.js";
 
 export type ArtifactKind = "html" | "markdown";
@@ -1066,6 +1067,62 @@ function parsePositiveDays(input: number | string, label: string) {
   return value;
 }
 
+const SAFE_MARKDOWN_PREVIEW_CSP =
+  "default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; font-src data:; base-uri 'none'; form-action 'none'";
+
+const safeMarkdownParser = new Marked({
+  gfm: true,
+  breaks: false,
+  renderer: {
+    html({ text }) {
+      return escapeHtml(text);
+    },
+    link({ href, title, tokens }) {
+      const label = this.parser.parseInline(tokens);
+      const safeHref = sanitizePreviewUrl(href);
+      if (!safeHref) {
+        return label;
+      }
+      const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+      return `<a href="${escapeHtml(safeHref)}"${titleAttr} rel="noreferrer noopener" target="_blank">${label}</a>`;
+    },
+    image({ href, title, text }) {
+      const safeSrc = sanitizePreviewImageUrl(href);
+      if (!safeSrc) {
+        return escapeHtml(text || "");
+      }
+      const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+      return `<img src="${escapeHtml(safeSrc)}" alt="${escapeHtml(text || "")}"${titleAttr}>`;
+    }
+  }
+});
+
+function sanitizePreviewUrl(raw: string | null | undefined) {
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === "https:" || parsed.protocol === "http:" || parsed.protocol === "mailto:") {
+      return parsed.href;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizePreviewImageUrl(raw: string | null | undefined) {
+  if (!raw) return null;
+  if (/^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(raw.trim())) {
+    return raw.trim();
+  }
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
 async function sendMarkdownPreview(
   response: ServerResponse<IncomingMessage>,
   artifactDir: string
@@ -1080,6 +1137,7 @@ async function sendMarkdownPreview(
   const markdown = await readFile(markdownPath, "utf8");
   response.statusCode = 200;
   response.setHeader("content-type", "text/html; charset=utf-8");
+  response.setHeader("content-security-policy", SAFE_MARKDOWN_PREVIEW_CSP);
   response.end(renderMarkdownPreview(markdown));
 }
 
@@ -1094,7 +1152,8 @@ async function createMarkdownPreviewResponse(artifactDir: string) {
   return new Response(renderMarkdownPreview(markdown), {
     status: 200,
     headers: {
-      "content-type": "text/html; charset=utf-8"
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": SAFE_MARKDOWN_PREVIEW_CSP
     }
   });
 }
@@ -1111,96 +1170,93 @@ async function findMarkdownArtifactPath(artifactDir: string) {
 }
 
 function renderMarkdownPreview(markdown: string) {
-  const html = markdown
-    .split(/\n{2,}/)
-    .map((block) => renderMarkdownBlock(block.trim()))
-    .join("\n");
+  const rendered = safeMarkdownParser.parse(markdown, { async: false });
+  const html = typeof rendered === "string" ? rendered : "";
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="${SAFE_MARKDOWN_PREVIEW_CSP}">
   <title>Markdown Artifact Preview</title>
   <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #ffffff;
+      --fg: #1f2328;
+      --muted: #59636e;
+      --surface: #f6f8fa;
+      --border: #d1d9e0;
+      --link: #0969da;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #8b949e;
+        --surface: #161b22;
+        --border: #30363d;
+        --link: #58a6ff;
+      }
+    }
     body {
-      color: #202124;
+      background: var(--bg);
+      color: var(--fg);
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.6;
+      line-height: 1.65;
       margin: 0 auto;
       max-width: 820px;
       padding: 40px 24px;
     }
+    a { color: var(--link); }
+    h1, h2, h3 { line-height: 1.25; margin-top: 1.5em; }
+    h1, h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
     pre {
-      background: #f6f8fa;
-      border-radius: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
       overflow-x: auto;
       padding: 16px;
     }
     code {
-      background: #f6f8fa;
+      background: var(--surface);
       border-radius: 4px;
-      padding: 0.1em 0.3em;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.9em;
+      padding: 0.15em 0.35em;
     }
     pre code {
       background: transparent;
       padding: 0;
     }
     blockquote {
-      border-left: 4px solid #d0d7de;
-      color: #57606a;
+      border-left: 4px solid var(--border);
+      color: var(--muted);
       margin-left: 0;
       padding-left: 16px;
     }
+    table {
+      border-collapse: collapse;
+      display: block;
+      margin: 16px 0;
+      overflow-x: auto;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th { background: var(--surface); }
+    hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+    img { max-width: 100%; height: auto; border-radius: 6px; }
   </style>
 </head>
 <body>
 ${html}
 </body>
 </html>`;
-}
-
-function renderMarkdownBlock(block: string) {
-  if (!block) {
-    return "";
-  }
-
-  if (block.startsWith("```")) {
-    const code = block.replace(/^```\w*\n?/, "").replace(/```$/, "");
-    return `<pre><code>${escapeHtml(code)}</code></pre>`;
-  }
-
-  const headingMatch = block.match(/^(#{1,6})\s+(.+)$/);
-  if (headingMatch) {
-    const level = headingMatch[1]?.length ?? 1;
-    return `<h${level}>${formatInlineMarkdown(headingMatch[2] ?? "")}</h${level}>`;
-  }
-
-  if (/^[-*]\s+/m.test(block)) {
-    const items = block
-      .split("\n")
-      .filter((line) => /^[-*]\s+/.test(line))
-      .map((line) => `<li>${formatInlineMarkdown(line.replace(/^[-*]\s+/, ""))}</li>`)
-      .join("");
-    return `<ul>${items}</ul>`;
-  }
-
-  if (/^>\s+/m.test(block)) {
-    return `<blockquote>${formatInlineMarkdown(block.replace(/^>\s+/gm, ""))}</blockquote>`;
-  }
-
-  return `<p>${block.split("\n").map(formatInlineMarkdown).join("<br>")}</p>`;
-}
-
-function formatInlineMarkdown(input: string) {
-  return escapeHtml(input)
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(
-      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-      '<a href="$2" rel="noreferrer" target="_blank">$1</a>'
-    );
 }
 
 function sanitizeFilename(filename: string, extension: string) {

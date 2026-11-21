@@ -223,14 +223,23 @@ export function buildSlackHomeDetailsView(
     title = "Remembered about you";
     blocks = [
       section(
-        "Personal details NoBo uses to tailor replies. Manage them in Messages with `show my memory`, `forget …`, or `clear my memory`.",
+        "Personal details NoBo uses to tailor replies. Forget an entry below, or manage in Messages with `remember …` / `clear my memory`.",
       ),
       ...(data.memories.length
         ? data.memories
             .slice(0, 30)
-            .map((memory) => ({
+            .map((memory, index) => ({
               type: "section",
               text: plain(clip(memory, 2800) || "Empty memory"),
+              accessory: {
+                ...button("Forget", "nobo_home_forget_memory", String(index + 1)),
+                confirm: {
+                  title: plain("Forget memory"),
+                  text: plain("Remove this saved personal memory?"),
+                  confirm: plain("Forget"),
+                  deny: plain("Keep"),
+                },
+              },
             }))
         : [
             section(
@@ -266,7 +275,7 @@ export function buildSlackHomeDetailsView(
     title = "My monitors";
     blocks = [
       section(
-        "Use `@NoBo monitors` to manage monitors, or ask NoBo to watch for a condition.",
+        "Cancel an active monitor below, or ask NoBo to watch for a condition in a conversation.",
       ),
       ...data.monitors
         .slice(0, 20)
@@ -275,6 +284,15 @@ export function buildSlackHomeDetailsView(
           text: plain(
             `${singleLine(monitor.summary, 1800)}\nNext check · ${homeTimestamp(monitor.nextRunAt, data.preferences.timeZone)}\nID: ${monitor.id.slice(0, 8)}`,
           ),
+          accessory: {
+            ...button("Cancel", "nobo_home_cancel_monitor", monitor.id),
+            confirm: {
+              title: plain("Cancel monitor"),
+              text: plain("Stop checking this monitor?"),
+              confirm: plain("Cancel monitor"),
+              deny: plain("Keep"),
+            },
+          },
         })),
     ];
     if (!data.monitors.length)
@@ -287,7 +305,7 @@ export function buildSlackHomeDetailsView(
     title = "How to use NoBo";
     blocks = [
       section(
-        "*Start a conversation*\nOpen the Messages tab, or mention `@NoBo` in a channel or thread.",
+        "*Start a conversation*\nOpen the Messages tab, run `/nobo` for the quick launcher, or mention `@NoBo` in a channel or thread.",
       ),
       section(
         "*Work with a thread*\n`@NoBo summarize-thread`\n`@NoBo meeting-notes artifact`\n`@NoBo follow-ups`\n`@NoBo what needs my attention?`\n`@NoBo issues`",

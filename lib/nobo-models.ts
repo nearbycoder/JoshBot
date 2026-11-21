@@ -19,84 +19,100 @@ export const FALLBACK_SLACK_VISION_MODEL = "kimi-k3";
 const OPENCODE_GO_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
 const MODEL_CACHE_MS = 5 * 60 * 1000;
 const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,74}$/;
-// Verified 2026-10-22 against https://opencode.ai/v2/docs/console/go/ and
-// https://github.com/anomalyco/models.dev/tree/dev/providers/opencode-go/models.
+// Verified 2026-11-20 against https://opencode.ai/inference/go/v1/models and
+// @earendil-works/pi-ai@1.6.0 opencodeGoProvider().
 // Discovery is filtered through this catalog so a new ID cannot inherit a guessed
 // wire protocol or capabilities. Retired IDs are not silently mapped to successors.
-// LongCat 2.5 Preview Free still appears in Go's docs, but is deprecated in
-// models.dev and absent from live discovery; do not advertise it as a fallback.
 const IMAGE_INPUT_MODEL_IDS = new Set([
-  "grok-4.7",
-  "glm-5.3-flash",
+  "kimi-k3.1-pro",
+  "kimi-k3",
+  "kimi-k2.7-code",
+  "gemini-4-argon",
+  "claude-haiku-5-5",
   "gpt-6-luna",
   "gpt-5.6-luna",
-  "claude-haiku-5-5",
-  "gemini-4-argon-contributor",
+  "grok-4.7",
   "deepseek-v4.1-flash",
-  "kimi-k2.7-code",
-  "kimi-k3",
-  "step-5-preview",
-  "minimax-m3.1-flash-free",
-  "minimax-m3",
-  "mimo-v2.5",
-  "mimo-v2.6-flash",
-  "mimo-v2.6-pro",
-  "muse-spark-1.3-contributor",
-  "muse-spark-1.2-contributor",
+  "glm-5.3-flash",
+  "qwen4-max",
   "qwen3.8-max",
   "qwen3.8-flash",
-  "qwen3.7-plus"
-]);
-const DATA_TRAINING_OPT_IN_MODEL_IDS = new Set([
-  "gemini-4-argon-contributor",
+  "qwen3.7-plus",
+  "mimo-v2.6-flash",
+  "mimo-v2.6-pro",
+  "minimax-m3",
+  "minimax-m3.1-flash",
+  "step-5-preview",
+  "hy4",
+  "hy4-flash-free",
+  "longcat-2.5-free",
   "muse-spark-1.3-contributor",
   "muse-spark-1.2-contributor"
+]);
+const DATA_TRAINING_OPT_IN_MODEL_IDS = new Set([
+  "iceman-contributor-free",
+  "muse-spark-1.3-contributor",
+  "muse-spark-1.2-contributor"
+]);
+const FEATURED_MODEL_IDS = new Set([
+  "kimi-k3.1-pro",
+  "gemini-4-argon",
+  "claude-haiku-5-5",
+  "gpt-6-luna",
+  "deepseek-v4.1-flash",
+  "glm-5.3",
+  "glm-5.3-flash",
+  "mimo-v2.6-flash",
+  "qwen3.8-flash",
+  "hy4-flash-free",
+  "beam-free",
+  "muse-spark-1.3-contributor"
 ]);
 
 const MODEL_DEFINITIONS = new Map<
   string,
   { name: string; api: OpenCodeGoApi }
 >([
-  ["grok-4.7", { name: "Grok 4.7", api: "openai-responses" }],
-  ["glm-5.3-flash", { name: "GLM-5.3-Flash", api: "openai-completions" }],
-  ["glm-5.3", { name: "GLM-5.3", api: "openai-completions" }],
-  ["glm-5.2", { name: "GLM-5.2", api: "openai-completions" }],
-  ["gpt-6-luna", { name: "GPT 6 Luna", api: "openai-responses" }],
-  ["gpt-5.6-luna", { name: "GPT 5.6 Luna", api: "openai-responses" }],
-  ["claude-haiku-5-5", { name: "Claude Haiku 5.5", api: "anthropic-messages" }],
-  [
-    "gemini-4-argon-contributor",
-    { name: "Gemini 4 Argon Contributor", api: "google-generative-ai" }
-  ],
+  ["kimi-k3.1-pro", { name: "Kimi K3.1 Pro", api: "openai-completions" }],
   ["kimi-k3", { name: "Kimi K3", api: "openai-completions" }],
-  ["kimi-k2.7-code", { name: "Kimi K2.7 Code", api: "openai-completions" }],
-  ["longcat-2.0", { name: "LongCat-2.0", api: "openai-completions" }],
-  ["step-5-preview", { name: "Step 5 Preview", api: "openai-completions" }],
-  ["beam-free", { name: "Beam Free", api: "openai-completions" }],
+  ["gemini-4-argon", { name: "Gemini 4 Argon", api: "google-generative-ai" }],
+  ["claude-haiku-5-5", { name: "Claude Haiku 5.5", api: "anthropic-messages" }],
+  ["gpt-6-luna", { name: "GPT-6 Luna", api: "openai-responses" }],
+  ["deepseek-v4.1-flash", { name: "DeepSeek V4.1 Flash", api: "openai-completions" }],
+  ["glm-5.3", { name: "GLM-5.3", api: "openai-completions" }],
+  ["glm-5.3-flash", { name: "GLM-5.3-Flash", api: "openai-completions" }],
   ["mimo-v2.6-flash", { name: "MiMo-V2.6-Flash", api: "openai-completions" }],
-  ["mimo-v2.6-pro", { name: "MiMo-V2.6-Pro", api: "openai-completions" }],
-  ["mimo-v2.5", { name: "MiMo-V2.5", api: "openai-completions" }],
-  ["mimo-v2.5-pro", { name: "MiMo-V2.5-Pro", api: "openai-completions" }],
-  ["minimax-m3", { name: "MiniMax M3", api: "anthropic-messages" }],
-  [
-    "minimax-m3.1-flash-free",
-    { name: "MiniMax M3.1 Flash Free", api: "openai-completions" }
-  ],
+  ["qwen3.8-flash", { name: "Qwen3.8 Flash", api: "anthropic-messages" }],
+  ["hy4-flash-free", { name: "Hy4 flash Free", api: "openai-completions" }],
+  ["beam-free", { name: "Beam Free", api: "openai-completions" }],
   [
     "muse-spark-1.3-contributor",
     { name: "Muse Spark 1.3 Contributor", api: "openai-responses" }
   ],
+  ["qwen4-max", { name: "Qwen4 Max", api: "anthropic-messages" }],
+  ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", api: "openai-completions" }],
+  ["grok-4.7", { name: "Grok 4.7", api: "openai-responses" }],
+  ["gpt-5.6-luna", { name: "GPT-5.6 Luna", api: "openai-responses" }],
+  ["kimi-k2.7-code", { name: "Kimi K2.7 Code", api: "openai-completions" }],
+  ["mimo-v2.6-pro", { name: "MiMo-V2.6-Pro", api: "openai-completions" }],
+  ["minimax-m3", { name: "MiniMax-M3", api: "anthropic-messages" }],
+  ["minimax-m3.1-flash", { name: "MiniMax M3.1 Flash", api: "openai-completions" }],
+  ["qwen3.8-max", { name: "Qwen3.8 Max", api: "anthropic-messages" }],
+  ["qwen3.7-plus", { name: "Qwen3.7 Plus", api: "anthropic-messages" }],
+  ["step-5-preview", { name: "Step 5 Preview", api: "openai-completions" }],
+  ["hy4", { name: "Hy4", api: "openai-completions" }],
+  ["hy4-preview", { name: "Hy4 preview", api: "openai-completions" }],
+  ["hy3", { name: "Hy3", api: "openai-completions" }],
+  ["longcat-2.5-free", { name: "LongCat 2.5 Free", api: "openai-completions" }],
+  ["longcat-2.0", { name: "LongCat-2.0", api: "openai-completions" }],
+  [
+    "iceman-contributor-free",
+    { name: "Iceman Contributor Free", api: "openai-completions" }
+  ],
   [
     "muse-spark-1.2-contributor",
     { name: "Muse Spark 1.2 Contributor", api: "openai-responses" }
-  ],
-  ["qwen3.8-max", { name: "Qwen3.8 Max", api: "anthropic-messages" }],
-  ["qwen3.8-flash", { name: "Qwen3.8 Flash", api: "anthropic-messages" }],
-  ["qwen3.7-plus", { name: "Qwen3.7 Plus", api: "anthropic-messages" }],
-  ["deepseek-v4-pro", { name: "DeepSeek V4 Pro", api: "openai-completions" }],
-  ["deepseek-v4.1-flash", { name: "DeepSeek V4.1 Flash", api: "openai-completions" }],
-  ["hy4-preview", { name: "Hy4 preview", api: "openai-completions" }],
-  ["hy3", { name: "Hy3", api: "openai-completions" }]
+  ]
 ]);
 
 const FALLBACK_OPENCODE_GO_MODELS: OpenCodeGoModel[] = Array.from(
@@ -188,6 +204,11 @@ export function requiresOpenCodeGoDataTrainingOptIn(
 ) {
   const normalized = normalizeOpenCodeGoSupportedModelId(modelId);
   return normalized ? DATA_TRAINING_OPT_IN_MODEL_IDS.has(normalized) : false;
+}
+
+export function isOpenCodeGoFeaturedModel(modelId: string | undefined | null) {
+  const normalized = normalizeOpenCodeGoSupportedModelId(modelId);
+  return normalized ? FEATURED_MODEL_IDS.has(normalized) : false;
 }
 
 export function listOpenCodeGoModelDefinitions() {

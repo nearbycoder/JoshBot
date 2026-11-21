@@ -31,3 +31,15 @@ export async function getRedisClient() {
 
   return redisClientPromise;
 }
+
+export async function closeRedisClient() {
+  const pending = redisClientPromise;
+  redisClientPromise = null;
+  if (!pending) return;
+  try {
+    const client = await pending;
+    if (client.isOpen) await client.close();
+  } catch {
+    // Ignore close errors during shutdown.
+  }
+}

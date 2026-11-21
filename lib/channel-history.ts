@@ -84,25 +84,38 @@ async function slackApi<T extends { ok: boolean }>({
   token: string;
   path: string;
 }): Promise<Extract<T, { ok: true }>> {
-  const response = await fetch(`https://slack.com/api/${path}`, {
-    method: "GET",
-    headers: {
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json; charset=utf-8"
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetch(`https://slack.com/api/${path}`, {
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json; charset=utf-8"
+      },
+      signal: AbortSignal.timeout(15_000)
+    });
+
+    if (response.status === 429 && attempt < maxAttempts) {
+      const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "1");
+      const delayMs = Math.min(Math.max(Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 1000, 200), 10_000);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`Slack API request failed with HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`Slack API request failed with HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as T;
+
+    if (!payload.ok) {
+      throw new Error(`Slack API error: ${JSON.stringify(payload)}`);
+    }
+
+    return payload as Extract<T, { ok: true }>;
   }
 
-  const payload = (await response.json()) as T;
-
-  if (!payload.ok) {
-    throw new Error(`Slack API error: ${JSON.stringify(payload)}`);
-  }
-
-  return payload as Extract<T, { ok: true }>;
+  throw new Error("Slack API request exhausted rate-limit retries");
 }
 
 function isSummarizableMessage(message: SlackHistoryMessage) {

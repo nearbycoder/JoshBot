@@ -524,6 +524,52 @@ test("extracts supported binary documents from Slack uploads", async (t) => {
   assert.doesNotMatch(content, /limited to Slack-provided previews/);
 });
 
+test("extracts slide text from uploaded PPTX presentations", async (t) => {
+  const originalFetch = globalThis.fetch;
+  const pptxUrl = "https://files.slack.com/files-pri/T123-FPPTX/download/deck.pptx";
+  const bytes = createPptxFixture(["Q4 Roadmap", "Key Risks"]);
+
+  globalThis.fetch = (async () =>
+    new Response(new Uint8Array(bytes), {
+      headers: {
+        "content-length": String(bytes.byteLength),
+        "content-type": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+      }
+    })) as typeof fetch;
+
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const content = await __testing.buildSlackMessageContent("xoxb-test", {
+    files: [
+      {
+        id: "FPPTX",
+        name: "deck.pptx",
+        mimetype: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        filetype: "pptx",
+        pretty_type: "PowerPoint Presentation",
+        url_private_download: pptxUrl
+      }
+    ]
+  });
+
+  assert.match(content, /Slide 1:\nQ4 Roadmap/);
+  assert.match(content, /Slide 2:\nKey Risks/);
+});
+
+test("splits long Slack code blocks cleanly by closing and reopening fences across chunks", () => {
+  const code = "```ts\n" + Array.from({ length: 120 }, (_, i) => `const line_${i} = "${"x".repeat(40)}";`).join("\n") + "\n```";
+  const chunks = __testing.splitSlackSectionBlockText(code);
+
+  assert.ok(chunks.length >= 2);
+  for (const chunk of chunks) {
+    assert.ok(chunk.length <= 2900);
+    const fenceCount = chunk.match(/```/g)?.length ?? 0;
+    assert.equal(fenceCount % 2, 0, "Each Slack chunk must have balanced code fences");
+  }
+});
+
 test("falls back to Slack document previews when binary extraction fails", async (t) => {
   const originalFetch = globalThis.fetch;
 
@@ -757,6 +803,17 @@ function createXlsxFixture(rows: string[][]) {
         .join("")}</sheetData></worksheet>`
     )
   );
+  return zip.toBuffer();
+}
+
+function createPptxFixture(slides: string[]) {
+  const zip = new AdmZip();
+  slides.forEach((text, index) => {
+    zip.addFile(
+      `ppt/slides/slide${index + 1}.xml`,
+      Buffer.from(`<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:sp><p:txBody><a:p><a:r><a:t>${escapeXml(text)}</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>`)
+    );
+  });
   return zip.toBuffer();
 }
 

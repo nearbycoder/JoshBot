@@ -59,7 +59,7 @@ These features run on demand. Calendar input is an explicitly confirmed ICS snap
    npm ci
    ```
 
-   Use Node.js 24 LTS. `.nvmrc`, the package engine, and CI target the same major version.
+   Use Node.js 26 LTS (or Node 24+). `.nvmrc`, `package.json`, and CI target Node 26 LTS.
 
 2. Create env vars:
 
@@ -142,7 +142,7 @@ Create a Slack app and configure:
 
 - Agents: enable the Agent messaging experience (`agent_view`), add an agent description, and optionally configure up to four suggested prompts. Slack adds the required `assistant:write` scope when this feature is enabled; reinstall the app when prompted. NoBo falls back automatically until this is enabled.
 - Event Subscriptions: enable and set the Request URL to `https://your-domain/api/slack/events`
-- Slash Commands: create `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-polls`, `/nobo-poll`, `/nobo-admin`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
+- Slash Commands: create `/nobo` (unified quick-launcher modal and subcommand router, e.g. `/nobo model`, `/nobo reminder`, `/nobo search <query>`, `/nobo polls`, `/nobo agent`, `/nobo tools`) and optionally any direct commands `/nobo-listen`, `/nobo-prefs`, `/nobo-memory`, `/nobo-artifacts`, `/nobo-decisions`, `/nobo-decision`, `/nobo-issues`, `/nobo-search`, `/nobo-polls`, `/nobo-poll`, `/nobo-admin`, `/nobo-help`, `/nobo-status`, `/nobo-news`, `/nobo-hacker-news`, `/nobo-ai-news`, `/nobo-channel-digest`, `/nobo-reminder`, `/nobo-channel-model`, and `/nobo-dad-joke`, all with the Request URL `https://your-domain/api/slack/commands`
 - Interactivity & Shortcuts: enable Interactivity with the Request URL `https://your-domain/api/slack/interactions`
 - X media uploads: add `/nobo-x` at the same commands URL and grant `files:write`; see the [X media command setup](docs/x-media.md). `/nobo-help x <link>` also works through the existing help command.
 - Shortcuts: optional global/message shortcuts can use callback IDs `nobo_reminder`, `nobo_prefs`, `nobo_channel_digest`, and `nobo_artifacts`
@@ -235,7 +235,7 @@ Deny rules win over allow rules. If a user or channel allowlist is non-empty, ma
 
 GitHub Actions installs the lockfile with `npm ci`, audits production dependencies, runs `npm test`, `npm run typecheck`, and `npm run build` on pull requests and pushes to `main`.
 
-Dependencies were refreshed on October 22, 2026. The Flue-scoped MCP client override keeps `@modelcontextprotocol/client` on patched 2.3.1 or newer while Flue still pins 2.0.0. Remove the override when Flue updates its dependency. `@types/node` intentionally stays on 24.x to match the production LTS runtime.
+Dependencies were refreshed on November 20, 2026 on Node 26 LTS (`@types/node` 26.x, `@flue/runtime` 2.3.1, `@earendil-works/pi-ai` 1.6.0, `@slack/web-api` 8.5.0, `croner` 11.0.1, `exa-js` 2.29.0, `hono` 4.13.19, `marked` 18.2.1, `minisearch` 7.2.0, `pdfjs-dist` 6.5.438, `playwright-core` 1.65.1, `redis` 6.3.1, `vite` 8.3.8). The Flue-scoped MCP client override keeps `@modelcontextprotocol/client` on patched 2.4.0 or newer while Flue still pins 2.0.0. Remove the override when Flue updates its dependency.
 
 Railway should check `/healthz` before routing traffic to a new release. Keep one replica for process-local cancellation. Generated documents require a persistent volume mounted at `/app/artifacts` (or an `ARTIFACT_DIR` pointing into a volume); Redis persists memories and schedules, but does not store document files.
 
@@ -320,7 +320,7 @@ NoBo can search recent Slack channel history plus artifacts owned by the request
 - `/nobo-search database migration`
 - `@NoBo semantic-search database migration`
 
-The current backend is `LexicalSemanticSearchProvider`, exposed through the `SemanticSearchProvider` interface. It uses BM25-style lexical ranking so the feature works without embeddings or a vector DB. To swap in embeddings later, add a provider that implements that interface and route `NOBO_SEMANTIC_SEARCH_PROVIDER` to it.
+The current backend is `LexicalSemanticSearchProvider` powered by `minisearch` (BM25+ ranking with prefix matching, fuzzy typo recovery, title boosting, and exact-phrase bonus), exposed through the `SemanticSearchProvider` interface so the feature works without external embeddings or a vector DB. To swap in embeddings later, add a provider that implements that interface and route `NOBO_SEMANTIC_SEARCH_PROVIDER` to it.
 
 ## Polls
 
@@ -422,9 +422,9 @@ NoBo also persists per-channel preferences in Redis at `slack-preferences:channe
 
 The selector loads the current supported OpenCode Go catalog from `https://opencode.ai/inference/go/v1/models` and falls back to the reviewed built-in list if discovery fails. Each model uses its documented OpenAI, Anthropic, or Google inference route. Image-bearing messages use the selected channel/default model when it supports image input; otherwise they use `OPENCODE_GO_VISION_MODEL`.
 
-The October 22, 2026 refresh adds GPT 6 Luna, Claude Haiku 5.5, Gemini 4 Argon Contributor, Step 5 Preview, Beam Free, and MiniMax M3.1 Flash Free. The text and image defaults remain `kimi-k3`. Retired model IDs are excluded; a stored retired channel selection falls back to the default. NoBo supports text and image input, not every audio/video modality advertised by providers. Models require explicit registration and protocol tests before they appear in the selector. See [OpenCode Go](https://opencode.ai/v2/docs/console/go/) and [Models.dev](https://models.dev/) for availability and current billing. SDK metadata supplies context limits, prices, pricing tiers, and protocol compatibility without stale local overrides. LongCat 2.5 Preview Free is omitted because live discovery no longer lists it and Models.dev marks it deprecated, even though the Go documentation still lists it.
+The November 20, 2026 refresh updates the OpenCode Go catalog to 31 active reviewed models (adding Kimi K3.1 Pro, Gemini 4 Argon, Qwen4 Max, Hy4, Hy4 flash Free, LongCat 2.5 Free, MiniMax M3.1 Flash, and Iceman Contributor Free; retiring GLM-5.2, Gemini 4 Argon Contributor, MiniMax M3.1 Flash Free, MiMo V2.5, and MiMo V2.5 Pro) and prioritizes featured models at the top of the Slack selector with a 1-click reset button. The text and image defaults remain `kimi-k3`. Retired model IDs are excluded; a stored retired channel selection falls back to the default. NoBo supports text and image input, not every audio/video modality advertised by providers. Models require explicit registration and protocol tests before they appear in the selector. See [OpenCode Go](https://opencode.ai/v2/docs/console/go/) and [Models.dev](https://models.dev/) for availability and current billing. SDK metadata supplies context limits, prices, pricing tiers, and protocol compatibility without stale local overrides.
 
-Gemini and Muse Contributor models require explicit OpenCode workspace opt-in because prompts and completions may be used for model training. The Slack selector and NoBo runtime context label these models with `training opt-in`. If OpenCode rejects a selected model with `DataPolicyError`, NoBo retries that request once with `kimi-k3`; the channel's selected model remains unchanged for use after opt-in is enabled.
+Contributor models (`iceman-contributor-free`, `muse-spark-1.3-contributor`, `muse-spark-1.2-contributor`) require explicit OpenCode workspace opt-in because prompts and completions may be used for model training. The Slack selector and NoBo runtime context label these models with `training opt-in`. If OpenCode rejects a selected model with `DataPolicyError`, NoBo retries that request once with `kimi-k3`; the channel's selected model remains unchanged for use after opt-in is enabled.
 
 NoBo also keeps shared per-channel memory in Redis. This is channel-owned context, not user-owned memory, and is stored as one JSON value per channel for now.
 
@@ -584,7 +584,7 @@ Attachment limits:
 
 - Images are capped at 5 MB.
 - Text-like files are capped by `SLACK_TEXT_ATTACHMENT_MAX_BYTES` and `SLACK_ATTACHMENT_TEXT_MAX_CHARS`.
-- PDFs, Word docs, and XLSX spreadsheets are downloaded and text-extracted within the configured file-size and text limits. If extraction fails, NoBo falls back to Slack-provided preview text when available, then metadata. CSV/TSV spreadsheet exports and VTT/SRT transcripts are extracted as text.
+- PDFs, Word docs (`.docx`), Excel spreadsheets (`.xlsx`), and PowerPoint decks (`.pptx`) are downloaded and text-extracted within the configured file-size and text limits. If extraction fails, NoBo falls back to Slack-provided preview text when available, then metadata. CSV/TSV spreadsheet exports and VTT/SRT transcripts are extracted as text.
 
 NoBo first uses the selected channel/default model for image-bearing messages when that model is marked image-capable. Otherwise it uses `OPENCODE_GO_VISION_MODEL`, which defaults to `kimi-k3`; a text-only value is ignored in favor of `kimi-k3`. If the chosen image model fails, NoBo retries the request once with `kimi-k3` before falling back to text-only attachment context.
 

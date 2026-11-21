@@ -938,14 +938,29 @@ function indentChannelMemoryContent(content: string) {
 }
 
 function normalizeSlackMrkdwn(input: string) {
-  return input
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "<$2|$1>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "*$1*")
-    .replace(/__(.+?)__/g, "_$1_")
-    .replace(/`{3}(\w+)?\n([\s\S]*?)```/g, (_match, language: string | undefined, code: string) => {
-      const prefix = language ? `${language}\n` : "";
-      return `\`\`\`${prefix}${code.trimEnd()}\`\`\``;
+  // Split out fenced code blocks and inline code spans so syntax inside code
+  // (e.g. **kwargs, 2**8, __init__, Markdown examples) is never mangled.
+  const segments = input.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+  return segments
+    .map((segment, index) => {
+      if (index % 2 === 1) {
+        if (segment.startsWith("```")) {
+          const match = segment.match(/^`{3}(\w+)?\n([\s\S]*?)```$/);
+          if (match) {
+            const prefix = match[1] ? `${match[1]}\n` : "";
+            return `\`\`\`${prefix}${match[2].trimEnd()}\`\`\``;
+          }
+        }
+        return segment;
+      }
+      return segment
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "<$2|$1>")
+        .replace(/^#{1,6}\s+(.+)$/gm, (_match, heading: string) => `*${heading.replace(/^\*\*|\*\*$/g, "").trim()}*`)
+        .replace(/\*\*([^*\n]+)\*\*/g, "*$1*")
+        .replace(/__(.+?)__/g, "_$1_")
+        .replace(/~~([^~\n]+)~~/g, "~$1~");
     })
+    .join("")
     .replace(/\n{3,}/g, "\n\n");
 }
 

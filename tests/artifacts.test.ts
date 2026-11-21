@@ -277,6 +277,40 @@ test("artifact history commands enforce ownership", async () => {
   });
 });
 
+test("markdown previews render GFM tables and task lists while neutralizing raw HTML and unsafe URLs", async () => {
+  await withTempArtifactDir(async () => {
+    const artifact = await createArtifact({
+      kind: "markdown",
+      title: "Safe preview",
+      content: [
+        "# Report",
+        "",
+        "| Name | Status |",
+        "| --- | --- |",
+        "| Build | Green |",
+        "",
+        "- [x] Done",
+        "",
+        "<script>alert(1)</script>",
+        "[Bad](javascript:alert(1)) and [Good](https://example.com)"
+      ].join("\n"),
+      ownerUserId: "U123"
+    });
+
+    const response = await handleArtifactFetchRequest(new Request(artifact.previewUrl));
+    assert.equal(response?.status, 200);
+    assert.match(response?.headers.get("content-security-policy") ?? "", /default-src 'none'/);
+    const html = await response!.text();
+    assert.match(html, /<table>/);
+    assert.match(html, /<td>Build<\/td>/);
+    assert.match(html, /prefers-color-scheme: dark/);
+    assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<script>/i);
+    assert.doesNotMatch(html, /href="javascript:/i);
+    assert.match(html, /href="https:\/\/example\.com\/?"/);
+  });
+});
+
 async function withTempArtifactDir(run: () => Promise<void>) {
   const previousDir = process.env.ARTIFACT_DIR;
   const previousBaseUrl = process.env.ARTIFACT_BASE_URL;

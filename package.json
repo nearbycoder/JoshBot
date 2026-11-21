@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": "24.x"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "dev": "tsx watch server.ts",
@@ -14,31 +14,34 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^1.4.0",
-    "@flue/runtime": "^2.3.0",
-    "@hono/node-server": "^2.1.5",
+    "@earendil-works/pi-ai": "^1.6.0",
+    "@flue/runtime": "^2.3.1",
+    "@hono/node-server": "^2.1.11",
     "@slack/bolt": "^5.1.0",
-    "@slack/web-api": "^8.2.0",
+    "@slack/web-api": "^8.5.0",
     "@sparticuz/chromium": "^153.0.0",
     "adm-zip": "^0.6.1",
-    "croner": "^10.0.1",
-    "dotenv": "^18.0.8",
-    "exa-js": "^2.26.0",
-    "hono": "^4.13.13",
-    "pdfjs-dist": "^6.4.299",
-    "playwright-core": "^1.64.1",
-    "redis": "^6.3.0",
+    "croner": "^11.0.1",
+    "dotenv": "^18.0.10",
+    "exa-js": "^2.29.0",
+    "hono": "^4.13.19",
+    "marked": "^18.2.1",
+    "minisearch": "^7.2.0",
+    "pdfjs-dist": "^6.5.438",
+    "playwright-core": "^1.65.1",
+    "redis": "^6.3.1",
     "valibot": "^1.5.0"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.6",
     "tsx": "^4.23.15",
+    "typebox": "^1.4.7",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5"
+    "vite": "^8.3.8"
   },
   "overrides": {
     "@flue/runtime": {
-      "@modelcontextprotocol/client": "^2.3.1"
+      "@modelcontextprotocol/client": "^2.4.0"
     }
   }
 }

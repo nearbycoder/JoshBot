@@ -34,12 +34,15 @@ test("current time prompt can use user timezone", () => {
   assert.doesNotMatch(prompt, /Timezone: America\/Chicago/);
 });
 
-test("Slack markdown normalization converts Markdown links and bold", () => {
+test("Slack markdown normalization converts Markdown links, headings, strikethrough, and bold while preserving code", () => {
   const normalized = __testing.normalizeSlackMrkdwn(
-    "See [OpenAI](https://openai.com) and **bold** text"
+    "## Summary\nSee [OpenAI](https://openai.com), ~~old~~ and **bold** text.\nUse `def __init__(**kwargs)` and:\n```python\nx = 2**8\n__name__ = '__main__'\n```"
   );
 
-  assert.equal(normalized, "See <https://openai.com|OpenAI> and *bold* text");
+  assert.equal(
+    normalized,
+    "*Summary*\nSee <https://openai.com|OpenAI>, ~old~ and *bold* text.\nUse `def __init__(**kwargs)` and:\n```python\nx = 2**8\n__name__ = '__main__'```"
+  );
 });
 
 test("channel memory prompt is shared channel context", () => {
@@ -206,8 +209,9 @@ test("image-capable channel model handles image messages itself", () => {
 
 test("new and refreshed vision models keep Slack image requests on the selected model", () => {
   for (const model of [
+    "kimi-k3.1-pro", "gemini-4-argon", "qwen4-max", "hy4-flash-free", "minimax-m3.1-flash",
     "grok-4.7", "mimo-v2.6-flash", "mimo-v2.6-pro", "deepseek-v4.1-flash",
-    "gpt-6-luna", "claude-haiku-5-5", "gemini-4-argon-contributor", "glm-5.3-flash", "gpt-5.6-luna", "qwen3.8-max", "qwen3.8-flash"
+    "gpt-6-luna", "claude-haiku-5-5", "glm-5.3-flash", "gpt-5.6-luna", "qwen3.8-max", "qwen3.8-flash"
   ]) {
     assert.equal(__testing.selectSlackModel([{
       role: "user",

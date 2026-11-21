@@ -32,10 +32,10 @@ export function registerSlackAgentEvents(bolt: App) {
       channel_id: event.channel,
       title: "What can NoBo help you with?",
       prompts: [
-        { title: "Models", message: "Which models are configured, which model are you using, and which support images?" },
-        { title: "Catch up", message: "Summarize the key decisions and open questions in this conversation." },
+        { title: "Catch up", message: "Summarize the key decisions, open questions, and action items in this conversation." },
+        { title: "Needs attention", message: "What needs my attention?" },
         { title: "Research", message: "What are the most important AI developments this week? Include sources." },
-        { title: "Dad joke", message: "Tell me a great dad joke." }
+        { title: "Models & shortcuts", message: "Which models are configured, which model are you using, and which support images?" }
       ]
     });
   });

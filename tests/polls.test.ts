@@ -4,6 +4,7 @@ import test, { type TestContext } from "node:test";
 import { createClient } from "redis";
 import {
   __testing,
+  buildSlackPollBlocks,
   closeSlackPoll,
   createSlackPoll,
   formatPollCreated,
@@ -92,6 +93,20 @@ test("formats poll create list and summary text", () => {
   assert.match(formatPollList([basePoll]), /abcdef12 open: Ship Friday \(2 votes\)/);
   assert.match(formatPollSummary(basePoll), /1\. Yes: 1/);
   assert.match(formatPollSummary(basePoll), /Tie: Yes, No \(1\/2\)/);
+});
+
+test("builds interactive Block Kit poll cards with live bars and voting controls", () => {
+  const openJson = JSON.stringify(buildSlackPollBlocks(basePoll));
+  assert.match(openJson, /Ship Friday/);
+  assert.match(openJson, /nobo_poll_vote:1/);
+  assert.match(openJson, /nobo_poll_vote:2/);
+  assert.match(openJson, /nobo_poll_close_decision/);
+  assert.match(openJson, /50% \(1 vote\)/);
+
+  const closedJson = JSON.stringify(buildSlackPollBlocks({ ...basePoll, status: "closed" }, "Ship Friday: Yes"));
+  assert.doesNotMatch(closedJson, /nobo_poll_vote:/);
+  assert.doesNotMatch(closedJson, /nobo_poll_close/);
+  assert.match(closedJson, /Decision logged: \*Ship Friday: Yes\*/);
 });
 
 test("reaction names map to poll choices", () => {

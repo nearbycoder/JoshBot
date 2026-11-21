@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Type, normalizeContext, type Context, type Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
+import { normalizeContext, type Context, type Model } from "@earendil-works/pi-ai";
 import { opencodeGoProvider } from "@earendil-works/pi-ai/providers/opencode-go";
 import { stream as streamCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { stream as streamResponses } from "@earendil-works/pi-ai/api/openai-responses";
@@ -44,8 +45,9 @@ test("retains upstream token limits, pricing tiers, and protocol compatibility",
 for (const { id, path, authHeader, authValue } of [
   { id: "gpt-6-luna", path: "/inference/go/openai/v1/responses", authHeader: "authorization", authValue: "Bearer test-only" },
   { id: "claude-haiku-5-5", path: "/inference/go/anthropic/v1/messages", authHeader: "x-api-key", authValue: "test-only" },
-  { id: "gemini-4-argon-contributor", path: "/inference/go/google/v1beta/models/gemini-4-argon-contributor:streamGenerateContent", authHeader: "x-goog-api-key", authValue: "test-only" },
-  ...["step-5-preview", "beam-free", "minimax-m3.1-flash-free"].map((id) => ({
+  { id: "qwen4-max", path: "/inference/go/anthropic/v1/messages", authHeader: "x-api-key", authValue: "test-only" },
+  { id: "gemini-4-argon", path: "/inference/go/google/v1beta/models/gemini-4-argon:streamGenerateContent", authHeader: "x-goog-api-key", authValue: "test-only" },
+  ...["kimi-k3.1-pro", "step-5-preview", "beam-free", "minimax-m3.1-flash", "hy4-flash-free", "longcat-2.5-free", "iceman-contributor-free"].map((id) => ({
     id, path: "/inference/go/openai/v1/chat/completions", authHeader: "authorization", authValue: "Bearer test-only"
   }))
 ]) {

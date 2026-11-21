@@ -196,6 +196,8 @@ export async function createChannelDigestSlackMessage({
   });
 }
 
+let channelDigestRunnerTimer: ReturnType<typeof setInterval> | null = null;
+
 export function startChannelDigestSubscriptionRunner({
   postSlackMessage
 }: {
@@ -211,11 +213,20 @@ export function startChannelDigestSubscriptionRunner({
     console.error(`Channel digest runner failed: ${summarizeError(error)}`);
   });
 
-  setInterval(() => {
+  channelDigestRunnerTimer = setInterval(() => {
     void runDueChannelDigestSubscriptions({ postSlackMessage }).catch((error) => {
       console.error(`Channel digest runner failed: ${summarizeError(error)}`);
     });
-  }, getChannelDigestRunnerIntervalMs()).unref();
+  }, getChannelDigestRunnerIntervalMs());
+  channelDigestRunnerTimer.unref();
+}
+
+export function stopChannelDigestSubscriptionRunner() {
+  if (channelDigestRunnerTimer) {
+    clearInterval(channelDigestRunnerTimer);
+    channelDigestRunnerTimer = null;
+  }
+  channelDigestRunnerStarted = false;
 }
 
 async function createChannelDigestSubscription({

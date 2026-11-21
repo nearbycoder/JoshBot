@@ -9,6 +9,7 @@ import {
   getSlackImageModel,
   getOpenCodeGoModelApi,
   getOpenCodeGoModelBaseUrl,
+  isOpenCodeGoFeaturedModel,
   listOpenCodeGoModelDefinitions,
   listOpenCodeGoModels,
   normalizeOpenCodeGoSupportedModelId,
@@ -75,7 +76,7 @@ test("tracks image input capabilities and routing", () => {
 
 test("tracks models that require workspace data-training opt-in", () => {
   assert.equal(
-    requiresOpenCodeGoDataTrainingOptIn("opencode-go/GEMINI-4-ARGON-CONTRIBUTOR"),
+    requiresOpenCodeGoDataTrainingOptIn("opencode-go/ICEMAN-CONTRIBUTOR-FREE"),
     true
   );
   assert.equal(
@@ -86,7 +87,16 @@ test("tracks models that require workspace data-training opt-in", () => {
     requiresOpenCodeGoDataTrainingOptIn("muse-spark-1.2-contributor"),
     true
   );
+  assert.equal(requiresOpenCodeGoDataTrainingOptIn("gemini-4-argon"), false);
   assert.equal(requiresOpenCodeGoDataTrainingOptIn("kimi-k3"), false);
+});
+
+test("marks featured models for prioritized Slack selection", () => {
+  assert.equal(isOpenCodeGoFeaturedModel("kimi-k3.1-pro"), true);
+  assert.equal(isOpenCodeGoFeaturedModel("gemini-4-argon"), true);
+  assert.equal(isOpenCodeGoFeaturedModel("claude-haiku-5-5"), true);
+  assert.equal(isOpenCodeGoFeaturedModel("hy4-flash-free"), true);
+  assert.equal(isOpenCodeGoFeaturedModel("hy3"), false);
 });
 
 test("rejects a text-only configured image fallback", () => {
@@ -111,37 +121,40 @@ test("formats authoritative runtime model context for NoBo", () => {
   assert.match(context, /Image fallback model: `kimi-k3`/);
   assert.match(context, /kimi-k2\.7-code \[image\]/);
   assert.match(context, /muse-spark-1\.3-contributor \[image, training opt-in\]/);
-  assert.match(context, /gemini-4-argon-contributor \[image, training opt-in\]/);
+  assert.match(context, /iceman-contributor-free \[training opt-in\]/);
+  assert.match(context, /gemini-4-argon \[image\]/);
   assert.match(context, /deepseek-v4-pro/);
 });
 
 const newModels = [
-  { id: "grok-4.7", name: "Grok 4.7", api: "openai-responses" },
-  { id: "mimo-v2.6-flash", name: "MiMo-V2.6-Flash", api: "openai-completions" },
-  { id: "mimo-v2.6-pro", name: "MiMo-V2.6-Pro", api: "openai-completions" },
-  { id: "deepseek-v4.1-flash", name: "DeepSeek V4.1 Flash", api: "openai-completions" }
+  { id: "kimi-k3.1-pro", name: "Kimi K3.1 Pro", api: "openai-completions" },
+  { id: "gemini-4-argon", name: "Gemini 4 Argon", api: "google-generative-ai" },
+  { id: "qwen4-max", name: "Qwen4 Max", api: "anthropic-messages" },
+  { id: "hy4-flash-free", name: "Hy4 flash Free", api: "openai-completions" },
+  { id: "minimax-m3.1-flash", name: "MiniMax M3.1 Flash", api: "openai-completions" }
 ];
 
-// Active documented Go models checked against live discovery and models.dev on
-// 2026-10-22. The docs still advertise deprecated LongCat 2.5 Preview Free.
+// Active documented Go models checked against live discovery and pi-ai@1.6.0 on 2026-11-20.
 const currentModelsByApi = {
-  "anthropic-messages": ["claude-haiku-5-5", "minimax-m3", "qwen3.7-plus", "qwen3.8-flash", "qwen3.8-max"],
-  "google-generative-ai": ["gemini-4-argon-contributor"],
+  "anthropic-messages": ["claude-haiku-5-5", "minimax-m3", "qwen3.7-plus", "qwen3.8-flash", "qwen3.8-max", "qwen4-max"],
+  "google-generative-ai": ["gemini-4-argon"],
   "openai-completions": [
-    "beam-free", "deepseek-v4-pro", "deepseek-v4.1-flash", "glm-5.2", "glm-5.3", "glm-5.3-flash",
-    "hy3", "hy4-preview", "kimi-k2.7-code", "kimi-k3", "longcat-2.0", "mimo-v2.5", "mimo-v2.5-pro",
-    "mimo-v2.6-flash", "mimo-v2.6-pro", "minimax-m3.1-flash-free", "step-5-preview"
+    "beam-free", "deepseek-v4-pro", "deepseek-v4.1-flash", "glm-5.3", "glm-5.3-flash",
+    "hy3", "hy4", "hy4-flash-free", "hy4-preview", "iceman-contributor-free",
+    "kimi-k2.7-code", "kimi-k3", "kimi-k3.1-pro", "longcat-2.0", "longcat-2.5-free",
+    "mimo-v2.6-flash", "mimo-v2.6-pro", "minimax-m3.1-flash", "step-5-preview"
   ],
   "openai-responses": ["gpt-5.6-luna", "gpt-6-luna", "grok-4.7", "muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]
 };
 
 const retiredModels = [
-  "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "glm-5.1", "grok-4.6", "kimi-k2.6",
-  "longcat-2.5-preview-free", "minimax-m2.7", "qwen3.6-plus", "qwen3.7-max"
+  "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "gemini-4-argon-contributor",
+  "glm-5.1", "glm-5.2", "grok-4.6", "kimi-k2.6", "longcat-2.5-preview-free",
+  "mimo-v2.5", "mimo-v2.5-pro", "minimax-m2.7", "minimax-m3.1-flash-free", "qwen3.6-plus", "qwen3.7-max"
 ];
 
-test("registers the active October catalog with each documented wire protocol", () => {
-  assert.equal(listOpenCodeGoModelDefinitions().length, 28);
+test("registers the active November 2026 catalog with each documented wire protocol", () => {
+  assert.equal(listOpenCodeGoModelDefinitions().length, 31);
   for (const [api, ids] of Object.entries(currentModelsByApi)) {
     assert.deepEqual(
       listOpenCodeGoModelDefinitions().filter((model) => model.api === api).map(({ id }) => id).sort(),
@@ -154,21 +167,24 @@ test("registers the active October catalog with each documented wire protocol", 
 test("uses protocol-specific inference routes without confusing them with discovery", () => {
   for (const [id, expected] of [
     ["gpt-6-luna", "https://opencode.ai/inference/go/openai/v1"],
-    ["minimax-m3.1-flash-free", "https://opencode.ai/inference/go/openai/v1"],
+    ["minimax-m3.1-flash", "https://opencode.ai/inference/go/openai/v1"],
     ["claude-haiku-5-5", "https://opencode.ai/inference/go/anthropic"],
-    ["opencode-go/GEMINI-4-ARGON-CONTRIBUTOR", "https://opencode.ai/inference/go/google/v1beta"]
+    ["qwen4-max", "https://opencode.ai/inference/go/anthropic"],
+    ["opencode-go/GEMINI-4-ARGON", "https://opencode.ai/inference/go/google/v1beta"]
   ]) assert.equal(getOpenCodeGoModelBaseUrl(id!), expected);
   assert.equal(getOpenCodeGoModelBaseUrl("unknown-model"), null);
 });
 
 test("new vision models retain image routing and contributor consent", () => {
-  for (const id of ["gpt-6-luna", "claude-haiku-5-5", "gemini-4-argon-contributor", "step-5-preview", "minimax-m3.1-flash-free"]) {
+  for (const id of ["kimi-k3.1-pro", "gpt-6-luna", "claude-haiku-5-5", "gemini-4-argon", "qwen4-max", "step-5-preview", "minimax-m3.1-flash", "hy4-flash-free"]) {
     assert.equal(supportsOpenCodeGoImageInput(id), true);
     assert.equal(getSlackImageModel(id), id);
-    assert.equal(requiresOpenCodeGoDataTrainingOptIn(id), id === "gemini-4-argon-contributor");
+    assert.equal(requiresOpenCodeGoDataTrainingOptIn(id), false);
   }
   assert.equal(supportsOpenCodeGoImageInput("beam-free"), false);
   assert.equal(supportsOpenCodeGoImageInput("deepseek-v4-pro"), false);
+  assert.equal(supportsOpenCodeGoImageInput("iceman-contributor-free"), false);
+  assert.equal(requiresOpenCodeGoDataTrainingOptIn("iceman-contributor-free"), true);
   assert.equal(requiresOpenCodeGoDataTrainingOptIn("beam-free"), false);
 });
 
@@ -208,13 +224,13 @@ test("fetches only vetted active models from the current discovery route and cac
   const fetch = t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
     assert.equal(url, "https://opencode.ai/inference/go/v1/models");
     return Response.json({ data: [
-      { id: "gpt-6-luna" }, { id: "gemini-4-argon-contributor" }, { id: "beam-free" },
+      { id: "gpt-6-luna" }, { id: "gemini-4-argon" }, { id: "beam-free" },
       { id: "gpt-6-luna" }, { id: "longcat-2.5-preview-free" }, { id: "omen-alpha" }, null, { id: 42 }
     ] });
   });
   const expected = [
-    { id: "gpt-6-luna", name: "GPT 6 Luna" },
-    { id: "gemini-4-argon-contributor", name: "Gemini 4 Argon Contributor" },
+    { id: "gpt-6-luna", name: "GPT-6 Luna" },
+    { id: "gemini-4-argon", name: "Gemini 4 Argon" },
     { id: "beam-free", name: "Beam Free" }
   ];
   assert.deepEqual(await listOpenCodeGoModels(), expected);
