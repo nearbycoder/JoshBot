@@ -7,7 +7,8 @@ loadEnv();
 const service = await startNoboServer({
   signingSecret: requireEnv("SLACK_SIGNING_SECRET"),
   token: requireEnv("SLACK_BOT_TOKEN"),
-  port: Number(process.env.PORT ?? 3000)
+  port: Number(process.env.PORT ?? 3000),
+  backgroundRunners: process.env.NOBO_BACKGROUND_RUNNERS !== "false"
 });
 let stopping = false;
 async function shutdown() {

@@ -237,9 +237,9 @@ GitHub Actions installs the lockfile with `npm ci`, audits production dependenci
 
 Dependencies were refreshed on November 20, 2026 on Node 26 LTS (`@types/node` 26.x, `@flue/runtime` 2.3.1, `@earendil-works/pi-ai` 1.6.0, `@slack/web-api` 8.5.0, `croner` 11.0.1, `exa-js` 2.29.0, `hono` 4.13.19, `marked` 18.2.1, `minisearch` 7.2.0, `pdfjs-dist` 6.5.438, `playwright-core` 1.65.1, `redis` 6.3.1, `vite` 8.3.8). The Flue-scoped MCP client override keeps `@modelcontextprotocol/client` on patched 2.4.0 or newer while Flue still pins 2.0.0. Remove the override when Flue updates its dependency.
 
-Railway should check `/healthz` before routing traffic to a new release. Keep one replica for process-local cancellation. Generated documents require a persistent volume mounted at `/app/artifacts` (or an `ARTIFACT_DIR` pointing into a volume); Redis persists memories and schedules, but does not store document files.
+Coolify checks `/healthz` before routing traffic to a new release. Set `NOBO_BACKGROUND_RUNNERS=false` on a staging instance that shares production Slack credentials. Keep one replica for process-local cancellation. Generated documents require a persistent volume mounted at `/app/artifacts` (or an `ARTIFACT_DIR` pointing into a volume); Redis persists memories and schedules, but does not store document files.
 
-For Railway GitHub autodeploys, enable `Wait for CI` on the NoBo service deploy trigger so Railway waits for the GitHub Actions check to pass before deploying `main`.
+The signed GitHub push webhook deploys `main` to Coolify.
 
 ## Files to edit first
 
